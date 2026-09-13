@@ -1,0 +1,147 @@
+@theme {
+  /* Colors */
+  --color-ecto-green: #58cc02;
+  --color-lingot-lime: #a5ed6e;
+  --color-eel-light: #d7ffb8;
+  --color-macaw-blue: #1cb0f6;
+  --color-eel-dark-blue: #042c60;
+  --color-midnight: #000437;
+  --color-graphite: #3c3c3c;
+  --color-ash: #777777;
+  --color-charcoal: #4b4b4b;
+  --color-paper: #ffffff;
+  --color-ink: #000000;
+
+  /* Typography */
+  --font-din-round: 'din-round', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-feather: 'feather', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+
+  /* Typography — Scale */
+  --text-caption: 13px;
+  --leading-caption: 1.23;
+  --tracking-caption: 0.69px;
+  --text-body: 15px;
+  --leading-body: 1.47;
+  --tracking-body: 0.8px;
+  --text-heading-sm: 19px;
+  --leading-heading-sm: 1.33;
+  --tracking-heading-sm: 1.01px;
+  --text-heading: 32px;
+  --leading-heading: 1.21;
+  --tracking-heading: 1.7px;
+  --text-display: 64px;
+  --leading-display: 1.2;
+  --tracking-display: -1.28px;
+
+  /* Spacing */
+  --spacing-8: 8px;
+  --spacing-12: 12px;
+  --spacing-16: 16px;
+  --spacing-24: 24px;
+  --spacing-32: 32px;
+  --spacing-40: 40px;
+  --spacing-48: 48px;
+  --spacing-64: 64px;
+  --spacing-80: 80px;
+  --spacing-96: 96px;
+
+  /* Border Radius */
+  --radius-xl: 12px;
+}
+
+/* ==========================================================================
+   Dark mode semantic layer
+   --------------------------------------------------------------------------
+   The original @theme values above are intentionally unchanged.
+   Components should consume these semantic roles instead of hard-coding
+   light-only primitives.
+   ========================================================================== */
+
+:root {
+  /* Theme-agnostic semantic roles — light mode preserves the existing system */
+  --surface-app: var(--color-paper);
+  --surface-raised: var(--color-paper);
+  --surface-elevated: #f7f7f7;
+  --surface-pressed: #eeeeee;
+
+  --text-primary: var(--color-graphite);
+  --text-secondary: var(--color-ash);
+  --text-tertiary: #9a9a9a;
+
+  --border-strong: var(--color-graphite);
+  --border-subtle: #e5e5e5;
+
+  --action-primary: var(--color-ecto-green);
+  --action-primary-pressed: #4cae02;
+  --action-primary-text: var(--color-midnight);
+
+  --action-secondary: var(--color-macaw-blue);
+  --action-secondary-surface: #eaf8ff;
+
+  --progress-track: #d8dee2;
+  --progress-fill: var(--color-ecto-green);
+
+  --state-disabled: #e1e5e8;
+  --state-disabled-text: #8a9399;
+
+  --surface-feature-purple: #8c62c9;
+}
+
+[data-theme="dark"],
+.dark {
+  /* Duolingo-style dark canvas */
+  --surface-app: #111e22;
+  --surface-raised: #1b2b31;
+  --surface-elevated: #22343b;
+  --surface-pressed: #2a3d45;
+
+  /* Cool near-white hierarchy */
+  --text-primary: #f7f9fa;
+  --text-secondary: #9aaab2;
+  --text-tertiary: #6f8089;
+
+  /* Visible but quiet structural outlines */
+  --border-strong: #354852;
+  --border-subtle: #273940;
+
+  /* Bright brand-green CTA/progress treatment */
+  --action-primary: #93de28;
+  --action-primary-pressed: #7cc01f;
+  --action-primary-text: #132126;
+
+  /* Cyan selection / secondary treatment */
+  --action-secondary: #49b5ef;
+  --action-secondary-surface: #203640;
+
+  --progress-track: #354852;
+  --progress-fill: #8ddb27;
+
+  --state-disabled: #3a4a53;
+  --state-disabled-text: #6b7b84;
+
+  /* Feature-specific Quests surface */
+  --surface-feature-purple: #8c62c9;
+}
+
+/* Explicit aliases for applications that prefer dark-prefixed tokens. */
+:root {
+  --dark-surface-app: #111e22;
+  --dark-surface-raised: #1b2b31;
+  --dark-surface-elevated: #22343b;
+  --dark-surface-pressed: #2a3d45;
+  --dark-text-primary: #f7f9fa;
+  --dark-text-secondary: #9aaab2;
+  --dark-text-tertiary: #6f8089;
+  --dark-border-strong: #354852;
+  --dark-border-subtle: #273940;
+  --dark-action-primary: #93de28;
+  --dark-action-primary-pressed: #7cc01f;
+  --dark-action-primary-text: #132126;
+  --dark-action-secondary: #49b5ef;
+  --dark-action-secondary-surface: #203640;
+  --dark-progress-track: #354852;
+  --dark-progress-fill: #8ddb27;
+  --dark-state-disabled: #3a4a53;
+  --dark-state-disabled-text: #6b7b84;
+  --dark-quest-purple: #8c62c9;
+}
