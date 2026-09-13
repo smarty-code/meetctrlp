@@ -4,7 +4,17 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "pnpm --filter printUserWebapp dev",
+    "build": "pnpm --filter printUserWebapp build",
+    "start": "pnpm --filter printUserWebapp start",
+    "lint": "pnpm --filter printUserWebapp lint",
+    "format": "pnpm --filter printUserWebapp format",
+    "typecheck": "pnpm --filter printUserWebapp typecheck",
+    "dev:all": "turbo run dev",
+    "build:all": "turbo run build",
+    "lint:all": "turbo run lint",
+    "format:all": "turbo run format",
+    "typecheck:all": "turbo run typecheck"
   },
   "keywords": [],
   "author": "",
