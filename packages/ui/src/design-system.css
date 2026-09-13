@@ -50,19 +50,10 @@
   --tracking-heading: 1.7px;
   --tracking-display: -1.28px;
 
+  --spacing: 4px;
   --spacing-unit: 4px;
-  --spacing-8: 8px;
-  --spacing-12: 12px;
-  --spacing-16: 16px;
-  --spacing-24: 24px;
-  --spacing-32: 32px;
-  --spacing-40: 40px;
-  --spacing-48: 48px;
-  --spacing-64: 64px;
-  --spacing-80: 80px;
-  --spacing-96: 96px;
-
   --radius-xl: 12px;
+  --radius-lg: 12px;
   --radius-buttons: 12px;
   --radius-links: 12px;
   --radius-pills: 12px;
@@ -70,6 +61,17 @@
 }
 
 :root {
+  --spacing: 4px;
+  --ds-spacing-8: 8px;
+  --ds-spacing-12: 12px;
+  --ds-spacing-16: 16px;
+  --ds-spacing-24: 24px;
+  --ds-spacing-32: 32px;
+  --ds-spacing-40: 40px;
+  --ds-spacing-48: 48px;
+  --ds-spacing-64: 64px;
+  --ds-spacing-80: 80px;
+  --ds-spacing-96: 96px;
   --color-background: var(--color-paper);
   --color-foreground: var(--color-charcoal);
   --color-primary: var(--color-ecto-green);

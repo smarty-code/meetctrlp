@@ -2,7 +2,8 @@
 @import "tw-animate-css";
 @import "@ctrlp/ui/shadcn.css";
 
-@source "../../../packages/ui/src";
+@source "../";
+@source "../../../../packages/ui/src";
 
 @custom-variant dark (&:is(.dark *));
 
