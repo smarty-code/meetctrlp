@@ -20,13 +20,13 @@ export const PromiseSection: React.FC = () => {
       {/* Decorative Accents Floating */}
       <div className="relative max-w-[360px] mx-auto">
         {/* Blue craft scissors from assets */}
-        <div className="absolute -left-5 top-27 z-20 pointer-events-none w-22">
+        {/* <div className="absolute -left-5 top-27 z-20 pointer-events-none w-22">
           <img
             src="/assets/scissors.png"
             alt=""
             className="w-full h-auto object-contain transform -rotate-12 drop-shadow-xs"
           />
-        </div>
+        </div> */}
 
         {/* Tape roll accent */}
         <div className="absolute -left-1 bottom-1 z-20 pointer-events-none transform rotate-12 scale-90">
