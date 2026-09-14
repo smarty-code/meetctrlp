@@ -1,445 +1,280 @@
-"use client"
+'use client';
 
-import React, {
-  forwardRef,
-  useCallback,
-  useImperativeHandle,
-  useRef,
-  useState,
-} from "react"
-import { ConfigurableDocument } from "../../types/upload"
-import { DocumentPreview } from "./document-preview"
+import React, { useRef, useState, useCallback, useImperativeHandle, forwardRef } from 'react';
+import { ConfigurableDocument } from '../../types/upload';
+import { DocumentPreview } from './document-preview';
 
 export interface PreviewCarouselHandle {
-  slideLeft: () => void
-  slideRight: () => void
+  slideLeft: () => void;
+  slideRight: () => void;
 }
 
 interface PreviewCarouselProps {
-  documents: ConfigurableDocument[]
-  selectedId: string
-  previewPage: number
-  onSelectDocument: (id: string) => void
-  onPreviewPage: (page: number) => void
-  onSwipeLeft: () => void
-  onSwipeRight: () => void
-  onRemove?: () => void
-  onPageCountDetected?: (docId: string, count: number) => void
+  documents: ConfigurableDocument[];
+  selectedId: string;
+  previewPage: number;
+  onSelectDocument: (id: string) => void;
+  onPreviewPage: (page: number) => void;
+  onSwipeLeft: () => void;
+  onSwipeRight: () => void;
+  onRemove?: () => void;
+  onPageCountDetected?: (docId: string, count: number) => void;
 }
 
-type Direction = "left" | "right"
-type TransitionKind = "document" | "page" | null
-
-const TRANSITION_MS = 380
-
-export const PreviewCarousel = forwardRef<
-  PreviewCarouselHandle,
-  PreviewCarouselProps
->(function PreviewCarousel(
-  {
-    documents,
-    selectedId,
-    previewPage,
-    onSelectDocument,
-    onPreviewPage,
-    onSwipeLeft,
-    onSwipeRight,
-    onRemove,
-    onPageCountDetected,
-  },
-  ref
-) {
-  const activeDoc =
-    documents.find((item) => item.id === selectedId) ?? documents[0]
-  const currentIndex = documents.findIndex((item) => item.id === activeDoc.id)
-  const prevDoc = currentIndex > 0 ? documents[currentIndex - 1] : null
-  const nextDoc =
-    currentIndex < documents.length - 1 ? documents[currentIndex + 1] : null
-
-  const trackRef = useRef<HTMLDivElement>(null)
-  const startXRef = useRef<number | null>(null)
-  const startYRef = useRef<number | null>(null)
-  const startTimeRef = useRef(0)
-  const axisRef = useRef<"x" | "y" | null>(null)
-  const transitionRef = useRef<TransitionKind>(null)
-  const directionRef = useRef<Direction | null>(null)
-  const callbackRef = useRef<(() => void) | null>(null)
-  const isAnimatingRef = useRef(false)
-  const didDragRef = useRef(false)
-
-  const [dragX, setDragX] = useState(0)
-  const [cardStep, setCardStep] = useState(276)
-  const [isDragging, setIsDragging] = useState(false)
-  const [isAnimating, setIsAnimating] = useState(false)
-  const [isResetting, setIsResetting] = useState(false)
-  const [isPageExiting, setIsPageExiting] = useState(false)
-  const [pageDirection, setPageDirection] = useState<Direction>("left")
-
-  const getCardStep = useCallback(() => {
-    const cards = trackRef.current?.querySelectorAll<HTMLElement>(
-      "[data-carousel-card]"
-    )
-    if (cards && cards.length > 1) {
-      const step = Math.abs(
-        cards[1].getBoundingClientRect().left -
-          cards[0].getBoundingClientRect().left
-      )
-      if (step > 0) return step
-    }
-    return 276
-  }, [])
-
-  const finish = useCallback(() => {
-    setIsResetting(true)
-    setDragX(0)
-    requestAnimationFrame(() => {
-      setIsResetting(false)
-      setIsAnimating(false)
-      isAnimatingRef.current = false
-    })
-  }, [])
-
-  const startDocumentTransition = useCallback(
-    (direction: Direction, callback: () => void) => {
-      if (isAnimatingRef.current) return
-      isAnimatingRef.current = true
-      transitionRef.current = "document"
-      directionRef.current = direction
-      callbackRef.current = callback
-      setIsDragging(false)
-      setIsAnimating(true)
-      const step = getCardStep()
-      setCardStep(step)
-      setDragX(direction === "left" ? -step : step)
-    },
-    [getCardStep]
-  )
-
-  const startPageTransition = useCallback(
-    (direction: Direction, callback: () => void) => {
-      if (isAnimatingRef.current) return
-      isAnimatingRef.current = true
-      transitionRef.current = "page"
-      directionRef.current = direction
-      callbackRef.current = callback
-      setIsDragging(false)
-      setIsAnimating(true)
-      setPageDirection(direction)
-      setIsPageExiting(true)
-    },
-    []
-  )
-
-  const slide = useCallback(
-    (direction: Direction) => {
-      const isPageTurn =
-        direction === "left"
-          ? previewPage < activeDoc.pageCount
-          : previewPage > 1
-
-      if (isPageTurn) {
-        startPageTransition(
-          direction,
-          direction === "left" ? onSwipeLeft : onSwipeRight
-        )
-        return
-      }
-
-      const adjacentDoc = direction === "left" ? nextDoc : prevDoc
-      if (!adjacentDoc) {
-        setDragX(0)
-        return
-      }
-
-      startDocumentTransition(
-        direction,
-        direction === "left" ? onSwipeLeft : onSwipeRight
-      )
-    },
-    [
-      activeDoc.pageCount,
-      nextDoc,
+export const PreviewCarousel = forwardRef<PreviewCarouselHandle, PreviewCarouselProps>(
+  function PreviewCarousel(
+    {
+      documents,
+      selectedId,
+      previewPage,
+      onSelectDocument,
+      onPreviewPage,
       onSwipeLeft,
       onSwipeRight,
-      previewPage,
-      prevDoc,
-      startDocumentTransition,
-      startPageTransition,
-    ]
-  )
+      onRemove,
+      onPageCountDetected,
+    },
+    ref
+  ) {
+    const activeDoc = documents.find((item) => item.id === selectedId) ?? documents[0];
+    const currentIndex = documents.findIndex((item) => item.id === activeDoc.id);
 
-  const slideLeft = useCallback(() => slide("left"), [slide])
-  const slideRight = useCallback(() => slide("right"), [slide])
+    // Track drag offset and transition states
+    const [dragX, setDragX] = useState(0);
+    const [isDragging, setIsDragging] = useState(false);
+    const [isTransitioning, setIsTransitioning] = useState(false);
 
-  useImperativeHandle(ref, () => ({ slideLeft, slideRight }), [
-    slideLeft,
-    slideRight,
-  ])
+    // Refs to track gestures without stale closures
+    const startXRef = useRef<number | null>(null);
+    const startYRef = useRef<number | null>(null);
+    const startTimeRef = useRef<number>(0);
+    const axisLockedRef = useRef<'x' | 'y' | null>(null);
+    const wheelLockRef = useRef(false);
 
-  const clearGesture = () => {
-    startXRef.current = null
-    startYRef.current = null
-    axisRef.current = null
-    setIsDragging(false)
-  }
+    // Determine side peek documents (only when documents > 1)
+    const hasMultipleDocs = documents.length > 1;
+    const prevIndex = hasMultipleDocs
+      ? (currentIndex - 1 + documents.length) % documents.length
+      : -1;
+    const nextIndex = hasMultipleDocs ? (currentIndex + 1) % documents.length : -1;
 
-  const handlePointerDown = (event: React.PointerEvent) => {
-    if (isAnimatingRef.current) return
-    if (event.pointerType === "mouse" && event.button !== 0) return
-    startXRef.current = event.clientX
-    startYRef.current = event.clientY
-    startTimeRef.current = performance.now()
-    axisRef.current = null
-    didDragRef.current = false
-    event.currentTarget.setPointerCapture?.(event.pointerId)
-  }
+    const prevDoc = prevIndex >= 0 ? documents[prevIndex] : null;
+    const nextDoc = nextIndex >= 0 ? documents[nextIndex] : null;
 
-  const handlePointerMove = (event: React.PointerEvent) => {
-    if (startXRef.current === null || startYRef.current === null) return
-    const deltaX = event.clientX - startXRef.current
-    const deltaY = event.clientY - startYRef.current
+    // Trigger smooth animated transition in a given direction
+    const triggerSlide = useCallback(
+      (direction: 'left' | 'right', callback: () => void) => {
+        if (isTransitioning) return;
+        setIsTransitioning(true);
+        setIsDragging(false);
 
-    if (!axisRef.current) {
-      if (Math.abs(deltaY) > Math.abs(deltaX) && Math.abs(deltaY) > 8) {
-        clearGesture()
-        setDragX(0)
-        return
+        // Slide distance: 160px gives a punchy, smooth card transition
+        const targetOffset = direction === 'left' ? -160 : 160;
+        setDragX(targetOffset);
+
+        setTimeout(() => {
+          callback();
+          // Reset drag position instantly with transition disabled briefly
+          setDragX(0);
+          setTimeout(() => {
+            setIsTransitioning(false);
+          }, 50);
+        }, 220);
+      },
+      [isTransitioning]
+    );
+
+    // Expose slide methods to parent (e.g. for pagination buttons)
+    useImperativeHandle(
+      ref,
+      () => ({
+        slideLeft: () => triggerSlide('left', onSwipeLeft),
+        slideRight: () => triggerSlide('right', onSwipeRight),
+      }),
+      [triggerSlide, onSwipeLeft, onSwipeRight]
+    );
+
+    // Click handler for side peek cards
+    const handleSelectPrev = () => {
+      if (!prevDoc || isTransitioning) return;
+      triggerSlide('right', () => {
+        onSelectDocument(prevDoc.id);
+        onPreviewPage(1);
+      });
+    };
+
+    const handleSelectNext = () => {
+      if (!nextDoc || isTransitioning) return;
+      triggerSlide('left', () => {
+        onSelectDocument(nextDoc.id);
+        onPreviewPage(1);
+      });
+    };
+
+    // 1. Pointer Down (Touch / Mouse)
+    const handlePointerDown = (e: React.PointerEvent) => {
+      if (isTransitioning) return;
+      // Only handle primary button for mouse
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+
+      startXRef.current = e.clientX;
+      startYRef.current = e.clientY;
+      startTimeRef.current = Date.now();
+      axisLockedRef.current = null;
+      setIsDragging(true);
+    };
+
+    // 2. Pointer Move
+    const handlePointerMove = (e: React.PointerEvent) => {
+      if (!isDragging || startXRef.current === null || startYRef.current === null) return;
+
+      const deltaX = e.clientX - startXRef.current;
+      const deltaY = e.clientY - startYRef.current;
+
+      // Detect axis lock to preserve natural vertical page scrolling on mobile
+      if (!axisLockedRef.current) {
+        if (Math.abs(deltaY) > Math.abs(deltaX) && Math.abs(deltaY) > 8) {
+          axisLockedRef.current = 'y';
+          setIsDragging(false);
+          setDragX(0);
+          return;
+        }
+        if (Math.abs(deltaX) > 8) {
+          axisLockedRef.current = 'x';
+        }
       }
-      if (Math.abs(deltaX) > 8) {
-        axisRef.current = "x"
-        didDragRef.current = true
-        setIsDragging(true)
+
+      if (axisLockedRef.current === 'x') {
+        // Apply slight resistance when dragging beyond single-document boundaries
+        let offset = deltaX;
+        if (!hasMultipleDocs && activeDoc.pageCount <= 1) {
+          offset = deltaX * 0.3; // Rubber-band effect
+        }
+        setDragX(offset);
       }
-    }
+    };
 
-    if (axisRef.current !== "x") return
-    const atBoundary =
-      (deltaX > 0 && previewPage === 1 && !prevDoc) ||
-      (deltaX < 0 && previewPage === activeDoc.pageCount && !nextDoc)
-    setDragX(deltaX * (atBoundary ? 0.22 : 0.78))
-  }
+    // 3. Pointer Up / End
+    const handlePointerEnd = (e: React.PointerEvent) => {
+      if (!isDragging || startXRef.current === null) {
+        setIsDragging(false);
+        setDragX(0);
+        return;
+      }
 
-  const handlePointerEnd = (event: React.PointerEvent) => {
-    if (startXRef.current === null) {
-      clearGesture()
-      return
-    }
+      const endX = e.clientX;
+      const deltaX = endX - startXRef.current;
+      const duration = Date.now() - startTimeRef.current;
+      const velocity = deltaX / Math.max(duration, 1);
 
-    const deltaX = event.clientX - startXRef.current
-    const velocity =
-      deltaX / Math.max(performance.now() - startTimeRef.current, 1)
-    const wasHorizontalDrag = axisRef.current === "x"
-    clearGesture()
-    if (!wasHorizontalDrag) return
+      startXRef.current = null;
+      startYRef.current = null;
+      setIsDragging(false);
 
-    if (deltaX < -56 || (velocity < -0.45 && deltaX < -18)) {
-      slideLeft()
-    } else if (deltaX > 56 || (velocity > 0.45 && deltaX > 18)) {
-      slideRight()
-    } else {
-      setDragX(0)
-    }
-  }
+      // Check if swipe condition met (distance threshold or flick velocity)
+      const isSwipeLeft = deltaX < -40 || (velocity < -0.35 && deltaX < -15);
+      const isSwipeRight = deltaX > 40 || (velocity > 0.35 && deltaX > 15);
 
-  const handleWheel = (event: React.WheelEvent) => {
-    if (isAnimatingRef.current) return
-    if (Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return
-    if (Math.abs(event.deltaX) < 18) return
-    event.preventDefault()
-    if (event.deltaX > 0) slideLeft()
-    else slideRight()
-  }
+      if (isSwipeLeft) {
+        triggerSlide('left', onSwipeLeft);
+      } else if (isSwipeRight) {
+        triggerSlide('right', onSwipeRight);
+      } else {
+        // Smoothly spring back to center
+        setDragX(0);
+      }
+    };
 
-  const handleTrackTransitionEnd = (
-    event: React.TransitionEvent<HTMLDivElement>
-  ) => {
-    if (
-      event.target !== event.currentTarget ||
-      event.propertyName !== "transform"
-    ) {
-      return
-    }
-    if (transitionRef.current !== "document") return
-    const callback = callbackRef.current
-    transitionRef.current = null
-    directionRef.current = null
-    callbackRef.current = null
-    callback?.()
-    finish()
-  }
+    // 4. Trackpad / Wheel Horizontal Scroll
+    const handleWheel = (e: React.WheelEvent) => {
+      if (Math.abs(e.deltaX) > 30 && !wheelLockRef.current && !isTransitioning) {
+        wheelLockRef.current = true;
+        if (e.deltaX > 0) {
+          triggerSlide('left', onSwipeLeft);
+        } else {
+          triggerSlide('right', onSwipeRight);
+        }
+        setTimeout(() => {
+          wheelLockRef.current = false;
+        }, 400);
+      }
+    };
 
-  const handlePageTransitionEnd = (
-    event: React.TransitionEvent<HTMLDivElement>
-  ) => {
-    if (
-      event.target !== event.currentTarget ||
-      event.propertyName !== "opacity"
-    ) {
-      return
-    }
-    if (transitionRef.current !== "page" || !isPageExiting) return
-    const callback = callbackRef.current
-    transitionRef.current = null
-    directionRef.current = null
-    callbackRef.current = null
-    callback?.()
-    setIsPageExiting(false)
-    requestAnimationFrame(() => {
-      setIsAnimating(false)
-      isAnimatingRef.current = false
-    })
-  }
-
-  const handleSelectAdjacent = (
-    direction: Direction,
-    document: ConfigurableDocument
-  ) => {
-    if (didDragRef.current) {
-      didDragRef.current = false
-      return
-    }
-    startDocumentTransition(direction, () => {
-      onSelectDocument(document.id)
-      onPreviewPage(1)
-    })
-  }
-
-  const progress = Math.min(Math.abs(dragX) / cardStep, 1)
-  const nextScale = dragX < 0 ? 0.9 + progress * 0.1 : 0.9
-  const prevScale = dragX > 0 ? 0.9 + progress * 0.1 : 0.9
-  const activeScale = 1 - progress * 0.1
-  const nextOpacity = dragX < 0 ? 0.7 + progress * 0.3 : 0.7
-  const prevOpacity = dragX > 0 ? 0.7 + progress * 0.3 : 0.7
-  const activeOpacity = 1 - progress * 0.3
-  const cardTransition = isDragging
-    ? "none"
-    : `transform ${TRANSITION_MS}ms cubic-bezier(0.22, 1, 0.36, 1), opacity ${TRANSITION_MS}ms ease`
-  const pageShift = pageDirection === "left" ? -20 : 20
-
-  return (
-    <div
-      className="relative mx-auto w-full max-w-[360px] touch-pan-y overflow-hidden py-1 select-none sm:max-w-[400px]"
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerEnd}
-      onPointerCancel={handlePointerEnd}
-      onWheel={handleWheel}
-      role="region"
-      aria-label="Document preview carousel"
-      aria-busy={isAnimating}
-    >
+    return (
       <div
-        ref={trackRef}
-        className="flex cursor-grab items-center justify-center will-change-transform active:cursor-grabbing"
-        onTransitionEnd={handleTrackTransitionEnd}
-        style={{
-          transform: `translate3d(${dragX}px, 0, 0)`,
-          transition:
-            isDragging || isResetting
-              ? "none"
-              : `transform ${TRANSITION_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`,
-          backfaceVisibility: "hidden",
-        }}
+        className="relative w-full max-w-[360px] sm:max-w-[400px] overflow-hidden mx-auto py-1 select-none touch-pan-y"
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerEnd}
+        onPointerCancel={handlePointerEnd}
+        onWheel={handleWheel}
+        role="region"
+        aria-label="Document preview carousel"
       >
-        {prevDoc ? (
-          <AdjacentPreview
-            direction="right"
-            document={prevDoc}
-            opacity={prevOpacity}
-            scale={prevScale}
-            transition={cardTransition}
-            onSelect={() => handleSelectAdjacent("right", prevDoc)}
-          />
-        ) : nextDoc ? (
-          <CardSpacer />
-        ) : null}
-
+        {/* Animated Carousel Track */}
         <div
-          data-carousel-card
-          className="z-20 w-[240px] shrink-0 will-change-transform sm:w-[260px]"
-          onTransitionEnd={handlePageTransitionEnd}
+          className="flex items-center justify-center will-change-transform cursor-grab active:cursor-grabbing"
           style={{
-            transform: `translate3d(${isPageExiting ? pageShift : 0}px, 0, 0) scale(${activeScale})`,
-            opacity: isPageExiting ? 0 : activeOpacity,
-            transition: isPageExiting
-              ? `transform ${TRANSITION_MS / 2}ms ease, opacity ${TRANSITION_MS / 2}ms ease`
-              : cardTransition,
+            transform: `translateX(${dragX}px)`,
+            transition:
+              isDragging || isTransitioning
+                ? isDragging
+                  ? 'none'
+                  : 'transform 220ms cubic-bezier(0.2, 0, 0, 1)'
+                : 'transform 260ms cubic-bezier(0.2, 0, 0, 1)',
           }}
         >
-          <DocumentPreview
-            document={activeDoc}
-            previewPage={previewPage}
-            onRemove={onRemove}
-            onPageCountDetected={(count) =>
-              onPageCountDetected?.(activeDoc.id, count)
-            }
-            className="w-full"
-          />
+          {/* Left Side Peek Card (Shown only when multiple documents exist) */}
+          {prevDoc && (
+            <div
+              onClick={(e) => {
+                e.stopPropagation();
+                handleSelectPrev();
+              }}
+              className="shrink-0 w-[240px] sm:w-[260px] mr-3 sm:mr-4 scale-[0.88] opacity-65 hover:opacity-90 active:scale-[0.85] transition-all duration-200 cursor-pointer pointer-events-auto"
+              aria-label={`Switch to previous document: ${prevDoc.name}`}
+              title={`Switch to: ${prevDoc.name}`}
+            >
+              <DocumentPreview
+                document={prevDoc}
+                previewPage={1}
+                className="w-full pointer-events-none"
+              />
+            </div>
+          )}
+
+          {/* Center Active Document Card */}
+          <div className="shrink-0 w-[240px] sm:w-[260px] z-20">
+            <DocumentPreview
+              document={activeDoc}
+              previewPage={previewPage}
+              onRemove={onRemove}
+              onPageCountDetected={(count) => onPageCountDetected?.(activeDoc.id, count)}
+              className="w-full"
+            />
+          </div>
+
+          {/* Right Side Peek Card (Shown only when multiple documents exist) */}
+          {nextDoc && (
+            <div
+              onClick={(e) => {
+                e.stopPropagation();
+                handleSelectNext();
+              }}
+              className="shrink-0 w-[240px] sm:w-[260px] ml-3 sm:ml-4 scale-[0.88] opacity-65 hover:opacity-90 active:scale-[0.85] transition-all duration-200 cursor-pointer pointer-events-auto"
+              aria-label={`Switch to next document: ${nextDoc.name}`}
+              title={`Switch to: ${nextDoc.name}`}
+            >
+              <DocumentPreview
+                document={nextDoc}
+                previewPage={1}
+                className="w-full pointer-events-none"
+              />
+            </div>
+          )}
         </div>
-
-        {nextDoc ? (
-          <AdjacentPreview
-            direction="left"
-            document={nextDoc}
-            opacity={nextOpacity}
-            scale={nextScale}
-            transition={cardTransition}
-            onSelect={() => handleSelectAdjacent("left", nextDoc)}
-          />
-        ) : prevDoc ? (
-          <CardSpacer side="right" />
-        ) : null}
       </div>
-    </div>
-  )
-})
+    );
+  }
+);
 
-function AdjacentPreview({
-  direction,
-  document,
-  opacity,
-  scale,
-  transition,
-  onSelect,
-}: {
-  direction: Direction
-  document: ConfigurableDocument
-  opacity: number
-  scale: number
-  transition: string
-  onSelect: () => void
-}) {
-  return (
-    <div
-      data-carousel-card
-      className={`z-10 w-[240px] shrink-0 cursor-pointer will-change-transform sm:w-[260px] ${
-        direction === "right" ? "mr-3 sm:mr-4" : "ml-3 sm:ml-4"
-      }`}
-      onClick={(event) => {
-        event.stopPropagation()
-        onSelect()
-      }}
-      style={{ transform: `scale(${scale})`, opacity, transition }}
-      aria-label={`Switch to ${direction === "right" ? "previous" : "next"} document: ${document.name}`}
-      title={`Switch to: ${document.name}`}
-    >
-      <DocumentPreview
-        document={document}
-        previewPage={1}
-        className="pointer-events-none w-full"
-      />
-    </div>
-  )
-}
-
-function CardSpacer({ side = "left" }: { side?: "left" | "right" }) {
-  return (
-    <div
-      data-carousel-card
-      className={`pointer-events-none invisible w-[240px] shrink-0 sm:w-[260px] ${
-        side === "left" ? "mr-3 sm:mr-4" : "ml-3 sm:ml-4"
-      }`}
-      aria-hidden="true"
-    />
-  )
-}
