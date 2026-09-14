@@ -1,40 +1,36 @@
 import { cert, getApps, initializeApp, type App } from "firebase-admin/app";
 
 import {
-  assertExplicitCredentials,
-  getFirebaseConfig,
-  hasExplicitCredentials,
+	assertFirebaseCredentials,
+	getFirebaseConfig,
+	hasFirebaseCredentials,
 } from "./config.js";
 
-const defaultAppName = "ctrlp";
+const appName = "ctrlp";
 
 export function getFirebaseApp(): App {
-  const existingApp = getApps().find((app) => app.name === defaultAppName);
+	const existingApp = getApps().find((app) => app.name === appName);
 
-  if (existingApp) {
-    return existingApp;
-  }
+	if (existingApp) {
+		return existingApp;
+	}
 
-  const config = getFirebaseConfig();
+	const config = getFirebaseConfig();
 
-  if (hasExplicitCredentials(config)) {
-    assertExplicitCredentials(config);
+	if (!hasFirebaseCredentials(config)) {
+		return initializeApp(undefined, appName);
+	}
 
-    return initializeApp(
-      {
-        credential: cert({
-          projectId: config.projectId,
-          clientEmail: config.clientEmail,
-          privateKey: config.privateKey,
-        }),
-        storageBucket: config.storageBucket,
-      },
-      defaultAppName,
-    );
-  }
+	assertFirebaseCredentials(config);
 
-  return initializeApp(
-    { storageBucket: config.storageBucket },
-    defaultAppName,
-  );
+	return initializeApp(
+		{
+			credential: cert({
+				projectId: config.projectId,
+				clientEmail: config.clientEmail,
+				privateKey: config.privateKey,
+			}),
+		},
+		appName,
+	);
 }

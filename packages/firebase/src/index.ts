@@ -1,13 +1,18 @@
 export { getFirebaseApp } from "./app.js";
 export {
-  assertExplicitCredentials,
+  assertFirebaseCredentials,
   getFirebaseConfig,
-  hasExplicitCredentials,
+  getS3Config,
+  hasFirebaseCredentials,
   type FirebaseConfig,
+  type S3Config,
 } from "./config.js";
 export { getFirebaseAuth } from "./auth.js";
 export { getFirebaseFirestore } from "./firestore.js";
 export {
-  getFirebaseStorageBucket,
-  type FirebaseStorageBucket,
+  createPresignedDownloadUrl,
+  createPresignedUploadUrl,
+  deleteObject,
+  getS3StorageClient,
+  uploadObject,
 } from "./storage.js";

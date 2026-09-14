@@ -25,6 +25,30 @@ export interface UploadedFileItem {
   previewUrl?: string;
 }
 
+export type ColorMode = 'color' | 'bw';
+export type PageSelectionMode = 'all' | 'selected';
+
+export interface PrintConfiguration {
+  copies: number;
+  colorMode: ColorMode;
+  paperSize: string;
+  pageSelection: {
+    mode: PageSelectionMode;
+    expression: string;
+    pages: number[];
+  };
+}
+
+export interface ConfigurableDocument {
+  id: string;
+  name: string;
+  size: number;
+  type: string;
+  pageCount: number;
+  status: 'ready' | 'processing' | 'error';
+  configuration: PrintConfiguration;
+}
+
 export interface FAQItem {
   id: string;
   question: string;
