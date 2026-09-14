@@ -35,18 +35,18 @@ export function OrderStatusBanner({
   const renderIcon = () => {
     switch (presentation.iconName) {
       case "package-check":
-        return <PackageCheck className="size-7 stroke-[2.5]" />;
+        return <PackageCheck className="size-5 stroke-[2.5]" />;
       case "printer":
-        return <Printer className="size-7 stroke-[2.5]" />;
+        return <Printer className="size-5 stroke-[2.5]" />;
       case "clock":
-        return <Clock className="size-7 stroke-[2.5]" />;
+        return <Clock className="size-5 stroke-[2.5]" />;
       case "alert-circle":
-        return <AlertCircle className="size-7 stroke-[2.5]" />;
+        return <AlertCircle className="size-5 stroke-[2.5]" />;
       case "x-circle":
-        return <XCircle className="size-7 stroke-[2.5]" />;
+        return <XCircle className="size-5 stroke-[2.5]" />;
       case "check-circle":
       default:
-        return <CheckCircle2 className="size-7 stroke-[2.5]" />;
+        return <CheckCircle2 className="size-5 stroke-[2.5]" />;
     }
   };
 
@@ -71,53 +71,60 @@ export function OrderStatusBanner({
 
   return (
     <div
-      className={`rounded-xl border-2 p-5 text-center transition-colors sm:p-6 ${containerBorderClass}`}
+      className={`rounded-xl border-2 p-4 transition-colors sm:p-5 ${containerBorderClass}`}
     >
-      <div
-        className={`mx-auto flex size-14 items-center justify-center rounded-full ${iconBgClass}`}
-        aria-hidden="true"
-      >
-        {renderIcon()}
-      </div>
+      <div className="flex flex-col gap-3.5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3 sm:items-center">
+          <div
+            className={`flex size-10 shrink-0 items-center justify-center rounded-xl ${iconBgClass}`}
+            aria-hidden="true"
+          >
+            {renderIcon()}
+          </div>
 
-      <h2 className="mt-3.5 text-heading leading-tight font-bold text-midnight">
-        {presentation.headline}
-      </h2>
+          <div>
+            <h2 className="text-body font-bold text-midnight sm:text-heading-sm leading-tight">
+              {presentation.headline}
+            </h2>
+            <p className="mt-0.5 text-caption leading-normal text-charcoal">
+              {presentation.customerDescription}
+            </p>
+          </div>
+        </div>
 
-      <p className="mx-auto mt-2 max-w-md text-body leading-relaxed text-charcoal">
-        {presentation.customerDescription}
-      </p>
-
-      {/* Order Reference Pill with Copy Action */}
-      <div className="mt-4 inline-flex items-center gap-2">
-        <button
-          type="button"
-          onClick={onCopyReference}
-          aria-label={
-            copied
-              ? TRACKING_COPY.copiedFeedback
-              : `${TRACKING_COPY.copyOrderNumber}: ${order.displayReference}`
-          }
-          className="group inline-flex cursor-pointer items-center gap-2 rounded-full border-2 border-graphite/20 bg-paper px-3.5 py-1.5 font-mono text-body font-bold text-midnight transition-colors hover:border-graphite/40"
-        >
-          <Hash className="size-4 text-ash transition-colors group-hover:text-charcoal" />
-          <span>{order.displayReference}</span>
-          <span className="flex items-center gap-1 border-l border-graphite/20 pl-2 font-sans text-caption font-medium text-ash transition-colors group-hover:text-midnight">
-            {copied ? (
-              <>
-                <Check className="size-3.5 stroke-[3] text-ecto-green" />
-                <span className="font-bold text-ecto-green">
-                  {TRACKING_COPY.copiedFeedback}
-                </span>
-              </>
-            ) : (
-              <>
-                <Copy className="size-3.5" />
-                <span>Copy</span>
-              </>
-            )}
-          </span>
-        </button>
+        {/* Compact Order Reference Pill with Copy Action */}
+        <div className="sm:shrink-0">
+          <button
+            type="button"
+            onClick={onCopyReference}
+            aria-label={
+              copied
+                ? TRACKING_COPY.copiedFeedback
+                : `${TRACKING_COPY.copyOrderNumber}: ${order.displayReference}`
+            }
+            className="group inline-flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg border-2 border-graphite/20 bg-paper px-3 py-1.5 font-mono text-caption font-bold text-midnight transition-colors hover:border-graphite/40 sm:w-auto"
+          >
+            <div className="flex items-center gap-1.5">
+              <Hash className="size-3.5 text-ash transition-colors group-hover:text-charcoal" />
+              <span>{order.displayReference}</span>
+            </div>
+            <span className="flex items-center gap-1 border-l border-graphite/20 pl-2 font-sans text-caption font-medium text-ash transition-colors group-hover:text-midnight">
+              {copied ? (
+                <>
+                  <Check className="size-3 stroke-[3] text-ecto-green" />
+                  <span className="font-bold text-ecto-green">
+                    {TRACKING_COPY.copiedFeedback}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <Copy className="size-3" />
+                  <span>Copy</span>
+                </>
+              )}
+            </span>
+          </button>
+        </div>
       </div>
     </div>
   );
