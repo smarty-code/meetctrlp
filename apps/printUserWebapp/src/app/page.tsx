@@ -112,35 +112,33 @@ export default function PrintUserUploadPage() {
   const hasUploadedFiles = uploadedFiles.some((f) => f.status === 'success');
 
   return (
-    <div className="min-h-screen bg-[#edf2f7] flex justify-center selection:bg-macaw-blue selection:text-paper">
-      {/* Mobile-first viewport container: max 430px, paper surface, flat borders */}
+    <div className="min-h-screen bg-paper flex flex-col selection:bg-macaw-blue selection:text-paper">
+      {/* Root fluid responsive shell - supports mobile up to 1200px desktop */}
       <main
-        className={`w-full max-w-[430px] min-h-screen bg-paper flex flex-col relative border-x border-graphite/15 ${
-          hasUploadedFiles ? 'pb-20' : 'pb-0'
+        className={`w-full min-h-screen bg-paper flex flex-col relative ${
+          hasUploadedFiles ? 'pb-24 md:pb-12' : 'pb-0'
         }`}
       >
         {/* Sticky Notification Toast */}
         {notification && (
-          <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-midnight text-paper text-caption font-bold rounded-xl border border-graphite/30 transition-all animate-fadeIn">
+          <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-midnight text-paper text-caption font-bold rounded-xl border border-graphite/30 transition-all animate-fadeIn shadow-lg">
             {notification}
           </div>
         )}
 
-        {/* 1. Header (Side arrow and share removed) */}
-        <div className="bg-[#0283fd]">
-          <MobileHeader
-            onSearch={() => showToast('Search services coming soon')}
-          />
-        </div>
+        {/* 1. Universal Responsive Header */}
+        <MobileHeader
+          onSearch={() => showToast('Search services coming soon')}
+        />
 
-        {/* 2. Hero Section */}
+        {/* 2. Responsive Hero Section */}
         <HeroSection
           isAvailable={isAvailable}
           shopName={shop.name}
           stickerText="Print it. Pick it. Done."
         />
 
-        {/* 3. Documents Upload Card */}
+        {/* 3. Responsive Documents Upload Card */}
         <DocumentsUploadCard
           isAvailable={isAvailable}
           startingPrice={shop.startingPriceA4}
@@ -151,16 +149,16 @@ export default function PrintUserUploadPage() {
           isUploadingOverall={isUploadingOverall}
         />
 
-        {/* 5. We Promise Section */}
+        {/* 4. Responsive We Promise Section (1 col mobile -> 3 cols tablet/desktop) */}
         <PromiseSection />
 
-        {/* 6. FAQ Section (unwanted bottom line removed) */}
+        {/* 5. Responsive FAQ Section */}
         <FAQSection items={faqList} />
 
-        {/* 7. Brand Promotional Footer (excessive white space and duplicate line removed) */}
+        {/* 6. Responsive Brand Promotional Footer */}
         <BrandFooter />
 
-        {/* 8. Persistent Floating Order Indicator */}
+        {/* 7. Responsive Floating Order Indicator (mobile bottom bar, desktop bottom-right widget) */}
         <FloatingOrderIndicator
           files={uploadedFiles}
           onContinue={handleContinueToConfig}

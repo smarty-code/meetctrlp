@@ -46,24 +46,26 @@ export const DocumentsUploadCard: React.FC<DocumentsUploadCardProps> = ({
   };
 
   return (
-    <div className="w-full px-4 mt-6">
-      {/* 12px radius, flat border, paper surface */}
-      <div className="w-full bg-paper rounded-xl p-5 border-2 border-graphite/15">
+    <div className="w-full max-w-xl md:max-w-2xl lg:max-w-3xl mx-auto px-4 sm:px-6 mt-4 sm:mt-6 md:mt-8">
+      {/* Paper surface, rounded card, subtle border matching design */}
+      <div className="w-full bg-paper rounded-2xl p-5 sm:p-7 md:p-8 border border-graphite/20 shadow-xs">
         {/* Card Header & Collage Artwork */}
-        <div className="flex items-start justify-between gap-2">
+        <div className="flex items-start justify-between gap-4">
           <div className="flex-1 pr-1">
-            <h2 className="font-heading text-heading-sm text-midnight tracking-heading-sm leading-snug">
+            <h2 className="font-heading text-heading-sm sm:text-heading text-midnight tracking-heading-sm leading-snug">
               Documents
             </h2>
-            <p className="mt-1 text-body font-medium text-charcoal">
+            <p className="mt-1 text-body sm:text-[16px] font-medium text-charcoal">
               A4 B/W and Color prints
             </p>
-            <p className="text-body font-bold text-midnight">
+            <p className="mt-0.5 text-body sm:text-[16px] font-bold text-midnight">
               Starts at ₹{startingPrice} per page
             </p>
           </div>
 
-          <DocumentCollageIllustration />
+          <div className="shrink-0 transform scale-95 sm:scale-105 md:scale-110 origin-top-right">
+            <DocumentCollageIllustration />
+          </div>
         </div>
 
         {/* Hidden Native File Input */}
@@ -78,22 +80,22 @@ export const DocumentsUploadCard: React.FC<DocumentsUploadCardProps> = ({
         />
 
         {/* Primary CTA using design-system @ctrlp/ui Button */}
-        <div className="mt-4">
+        <div className="mt-5 sm:mt-6">
           <Button
             type="button"
             onClick={handleButtonClick}
             disabled={!isAvailable || isUploadingOverall}
             size="default"
-            className="w-full h-12 rounded-xl text-[15px] font-bold"
+            className="w-full h-12 sm:h-13 md:h-14 rounded-xl text-[15px] sm:text-[16px] md:text-[17px] font-bold"
           >
             {isUploadingOverall ? (
               <span className="flex items-center gap-2">
-                <Loader2 className="size-4 animate-spin" />
+                <Loader2 className="size-5 animate-spin" />
                 <span>Uploading documents...</span>
               </span>
             ) : (
               <span className="flex items-center gap-2">
-                <Upload className="size-4 stroke-[2.5]" />
+                <Upload className="size-5 stroke-[2.5]" />
                 <span>{uploadedFiles.length > 0 ? 'Upload More Documents' : 'Upload Document'}</span>
               </span>
             )}
@@ -102,24 +104,24 @@ export const DocumentsUploadCard: React.FC<DocumentsUploadCardProps> = ({
 
         {/* Uploaded File List */}
         {uploadedFiles.length > 0 && (
-          <div className="mt-4 pt-4 border-t border-graphite/15 flex flex-col gap-2.5">
+          <div className="mt-5 sm:mt-6 pt-5 sm:pt-6 border-t border-graphite/15 flex flex-col gap-3">
             <div className="flex items-center justify-between text-caption font-bold text-ash uppercase tracking-caption px-1">
               <span>Selected Files ({uploadedFiles.length})</span>
               <span>Status</span>
             </div>
 
-            <div className="flex flex-col gap-2 max-h-56 overflow-y-auto pr-0.5">
+            <div className="flex flex-col gap-2.5 max-h-64 overflow-y-auto pr-0.5">
               {uploadedFiles.map((item) => (
                 <div
                   key={item.id}
-                  className="flex items-center justify-between gap-3 p-3 rounded-xl bg-paper border border-graphite/20 text-body"
+                  className="flex items-center justify-between gap-3 p-3 sm:p-3.5 rounded-xl bg-paper border border-graphite/20 text-body"
                 >
-                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                    <div className="size-8 rounded-lg bg-eel-light text-midnight flex items-center justify-center shrink-0 border border-ecto-green/40">
-                      <FileText className="size-4 stroke-[2.2]" />
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <div className="size-9 sm:size-10 rounded-lg bg-eel-light text-midnight flex items-center justify-center shrink-0 border border-ecto-green/40">
+                      <FileText className="size-4 sm:size-5 stroke-[2.2]" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="font-bold text-midnight text-[14px] truncate">
+                      <p className="font-bold text-midnight text-[14px] sm:text-[15px] truncate">
                         {item.name}
                       </p>
                       <div className="flex items-center gap-2 text-caption text-ash font-medium">
@@ -128,7 +130,7 @@ export const DocumentsUploadCard: React.FC<DocumentsUploadCardProps> = ({
                           <span className="text-macaw-blue font-bold">{item.progress}%</span>
                         )}
                         {item.status === 'error' && (
-                          <span className="text-destructive font-bold truncate max-w-[120px]">
+                          <span className="text-destructive font-bold truncate max-w-[140px]">
                             {item.errorMessage || 'Upload failed'}
                           </span>
                         )}
@@ -137,12 +139,12 @@ export const DocumentsUploadCard: React.FC<DocumentsUploadCardProps> = ({
                   </div>
 
                   {/* Right Status Actions */}
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="flex items-center gap-2 shrink-0">
                     {item.status === 'uploading' && (
                       <Loader2 className="size-4 text-macaw-blue animate-spin" />
                     )}
                     {item.status === 'success' && (
-                      <span className="inline-flex items-center gap-1 text-caption font-bold text-midnight bg-eel-light border border-ecto-green/50 px-2 py-0.5 rounded-lg">
+                      <span className="inline-flex items-center gap-1 text-caption font-bold text-midnight bg-eel-light border border-ecto-green/50 px-2.5 py-1 rounded-lg">
                         <CheckCircle2 className="size-3.5 text-ecto-green" />
                         Uploaded
                       </span>
@@ -151,7 +153,7 @@ export const DocumentsUploadCard: React.FC<DocumentsUploadCardProps> = ({
                       <button
                         type="button"
                         onClick={() => onRetryFile(item.id)}
-                        className="inline-flex items-center gap-1 text-caption font-bold text-destructive bg-destructive/10 border border-destructive/30 px-2 py-0.5 rounded-lg active:translate-y-px"
+                        className="inline-flex items-center gap-1 text-caption font-bold text-destructive bg-destructive/10 border border-destructive/30 px-2.5 py-1 rounded-lg active:translate-y-px"
                       >
                         <RefreshCw className="size-3" />
                         Retry
@@ -161,7 +163,7 @@ export const DocumentsUploadCard: React.FC<DocumentsUploadCardProps> = ({
                       type="button"
                       onClick={() => onRemoveFile(item.id)}
                       aria-label={`Remove ${item.name}`}
-                      className="size-7 flex items-center justify-center rounded-lg text-ash hover:text-midnight hover:bg-graphite/10 transition-colors ml-0.5"
+                      className="size-8 flex items-center justify-center rounded-lg text-ash hover:text-midnight hover:bg-graphite/10 transition-colors ml-0.5"
                     >
                       <X className="size-4" />
                     </button>

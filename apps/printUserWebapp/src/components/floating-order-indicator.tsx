@@ -19,20 +19,20 @@ export const FloatingOrderIndicator: React.FC<FloatingOrderIndicatorProps> = ({
   return (
     <aside
       aria-label="Order summary"
-      className="fixed bottom-5 inset-x-0 z-50 px-4 max-w-[420px] mx-auto pointer-events-none"
+      className="fixed bottom-5 inset-x-0 md:inset-x-auto md:right-8 md:bottom-8 z-50 px-4 md:px-0 w-full max-w-[420px] md:max-w-[360px] mx-auto md:mx-0 pointer-events-none"
     >
       {/* 12px radius, flat 3D pressable bottom border, no drop shadow */}
       <button
         type="button"
         onClick={onContinue}
-        className="w-full pointer-events-auto bg-macaw-blue hover:bg-macaw-blue/90 active:translate-y-px transition-all text-paper rounded-xl p-3 px-4 border-b-[3px] border-b-[#0284c7] border-t border-x border-macaw-blue/40 flex items-center justify-between gap-3 select-none"
+        className="w-full pointer-events-auto bg-macaw-blue hover:bg-macaw-blue/90 active:translate-y-px transition-all text-paper rounded-xl p-3.5 px-4 sm:px-5 border-b-[3px] border-b-[#0284c7] border-t border-x border-macaw-blue/40 flex items-center justify-between gap-3 select-none shadow-md md:shadow-lg"
       >
         {/* Left order label & count */}
         <div className="text-left flex flex-col justify-center">
           <span className="text-[11px] font-bold uppercase tracking-caption text-paper/90 font-sans">
             PRINT ORDER
           </span>
-          <span className="text-[15px] font-black text-paper leading-tight font-sans">
+          <span className="text-[15px] sm:text-[16px] font-black text-paper leading-tight font-sans">
             {successFiles.length} {successFiles.length === 1 ? 'FILE' : 'FILES'}
           </span>
         </div>
@@ -44,7 +44,7 @@ export const FloatingOrderIndicator: React.FC<FloatingOrderIndicatorProps> = ({
             return (
               <div
                 key={file.id}
-                className="size-8 rounded-lg bg-paper border-2 border-macaw-blue flex items-center justify-center text-charcoal shrink-0"
+                className="size-8 sm:size-8.5 rounded-lg bg-paper border-2 border-macaw-blue flex items-center justify-center text-charcoal shrink-0"
                 title={file.name}
               >
                 {isImage ? (
@@ -65,7 +65,7 @@ export const FloatingOrderIndicator: React.FC<FloatingOrderIndicatorProps> = ({
         {/* Right Arrow / Continue action */}
         <div className="flex items-center gap-1.5 text-paper shrink-0">
           <span className="text-caption font-bold hidden xs:inline">Next</span>
-          <div className="size-7 rounded-lg bg-paper/20 flex items-center justify-center">
+          <div className="size-7 sm:size-7.5 rounded-lg bg-paper/20 flex items-center justify-center">
             <ChevronRight className="size-4 stroke-[3]" />
           </div>
         </div>
