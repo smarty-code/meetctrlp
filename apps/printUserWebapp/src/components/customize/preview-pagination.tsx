@@ -31,8 +31,8 @@ export function PreviewPagination({
   const isMultipleDocs = documentCount > 1;
   const isMultiplePages = totalPages > 1;
 
-  const canGoPrev = currentPage > 1 || (isMultipleDocs && documentIndex > 1) || isMultipleDocs;
-  const canGoNext = currentPage < totalPages || (isMultipleDocs && documentIndex < documentCount) || isMultipleDocs;
+  const canGoPrev = currentPage > 1 || documentIndex > 1;
+  const canGoNext = currentPage < totalPages || documentIndex < documentCount;
 
   const handlePrev = () => {
     if (currentPage > 1) {
