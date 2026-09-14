@@ -82,7 +82,7 @@ export default function CustomizePage() {
   const totalPrice = useMemo(() => documents.reduce((total, document) => total + selectedPageCount(document) * document.configuration.copies * customizeConfig.pricePerPage[document.configuration.colorMode], 0), [documents]);
   const canContinue = documents.length > 0 && documents.every((document) => document.status === 'ready' && (document.configuration.pageSelection.mode === 'all' || isPageSelectionValid(document.configuration.pageSelection.expression, document.pageCount))) && !isUpdatingPrice;
 
-  return <main className="min-h-screen bg-paper pb-36 text-charcoal"><div className="mx-auto w-full max-w-300 px-4 sm:px-6">
+  return <main className="min-h-screen overflow-x-hidden bg-paper pb-[calc(11rem+env(safe-area-inset-bottom))] text-charcoal sm:pb-36"><div className="mx-auto w-full max-w-300 min-w-0 px-4 sm:px-6">
     <CustomizeHeader onBack={() => router.push('/')} onAddFiles={handleAddFiles} fileInputRef={fileInputRef} />
     {notification && <div className="mt-4 border-2 border-ecto-green bg-eel-light px-4 py-3 text-body font-bold text-midnight">{notification}</div>}
     {selectedDocument ? <>
