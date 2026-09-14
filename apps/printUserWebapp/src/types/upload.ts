@@ -26,12 +26,14 @@ export interface UploadedFileItem {
 }
 
 export type ColorMode = 'color' | 'bw';
+export type Orientation = 'portrait' | 'landscape';
 export type PageSelectionMode = 'all' | 'selected';
 
 export interface PrintConfiguration {
   copies: number;
   colorMode: ColorMode;
-  paperSize: string;
+  orientation: Orientation;
+  paperSize?: string;
   pageSelection: {
     mode: PageSelectionMode;
     expression: string;
@@ -45,6 +47,8 @@ export interface ConfigurableDocument {
   size: number;
   type: string;
   pageCount: number;
+  previewUrl?: string;
+  file?: File;
   status: 'ready' | 'processing' | 'error';
   configuration: PrintConfiguration;
 }

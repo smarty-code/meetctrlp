@@ -15,6 +15,11 @@ export const customizeCopy = {
   decreaseCopies: 'Decrease copies',
   increaseCopies: 'Increase copies',
   colorLegend: 'Choose print color',
+  orientationLegend: 'Page orientation',
+  portrait: 'Portrait',
+  landscape: 'Landscape',
+  portraitHint: '3:4',
+  landscapeHint: '4:3',
   paperLegend: 'Paper size',
   standardPaper: 'Standard paper',
   pageSelectionLegend: 'Page selection',
@@ -41,7 +46,7 @@ export const customizeCopy = {
   blackAndWhite: 'B&W',
   perPage: (price: number) => `₹${price}/page`,
   fileMeta: (pageCount: number, size: string) => `${pageCount} pages · ${size}`,
-  previewPageCount: (page: number, count: number) => `Preview page ${page} of ${count}`,
+  previewPageCount: (page: number, count: number) => `Page ${page} of ${count}`,
   documentPosition: (current: number, total: number) => `${current} / ${total}`,
   paperSizeHint: 'Standard paper',
 } as const;
@@ -59,6 +64,7 @@ export const customizeConfig = {
 export const defaultPrintConfiguration: PrintConfiguration = {
   copies: 1,
   colorMode: 'bw',
+  orientation: 'portrait',
   paperSize: customizeCopy.paperSize,
   pageSelection: { mode: 'all', expression: '', pages: [] },
 };
