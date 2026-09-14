@@ -46,9 +46,9 @@ export const DocumentsUploadCard: React.FC<DocumentsUploadCardProps> = ({
   };
 
   return (
-    <div className="w-full max-w-xl md:max-w-2xl lg:max-w-3xl mx-auto px-4 sm:px-6 mt-6 md:mt-8">
-      {/* 12px radius, flat border, paper surface */}
-      <div className="w-full bg-paper rounded-xl p-5 sm:p-7 md:p-8 border-2 border-graphite/15 shadow-xs">
+    <div className="w-full max-w-xl md:max-w-2xl lg:max-w-3xl mx-auto px-4 sm:px-6 mt-4 sm:mt-6 md:mt-8">
+      {/* Paper surface, rounded card, subtle border matching design */}
+      <div className="w-full bg-paper rounded-2xl p-5 sm:p-7 md:p-8 border border-graphite/20 shadow-xs">
         {/* Card Header & Collage Artwork */}
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 pr-1">
