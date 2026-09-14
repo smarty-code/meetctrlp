@@ -32,7 +32,7 @@ export function DocumentSelector({
   const handleSwipeLeft = () => {
     if (previewPage < document.pageCount) {
       onPreviewPage(previewPage + 1);
-    } else if (documents.length > 1 && onMove) {
+    } else if (position < documents.length && onMove) {
       onMove(1);
     }
   };
@@ -40,7 +40,7 @@ export function DocumentSelector({
   const handleSwipeRight = () => {
     if (previewPage > 1) {
       onPreviewPage(previewPage - 1);
-    } else if (documents.length > 1 && onMove) {
+    } else if (position > 1 && onMove) {
       onMove(-1);
     }
   };

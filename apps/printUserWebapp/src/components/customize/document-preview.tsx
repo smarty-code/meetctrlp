@@ -21,12 +21,15 @@ export function DocumentPreview({
   const isImage = document.type.startsWith('image/');
   const isPdf =
     document.type === 'application/pdf' || document.name.toLowerCase().endsWith('.pdf');
+  const isLandscape = document.configuration?.orientation === 'landscape';
   const previewUrl = document.previewUrl;
 
   return (
     <div
-      className={`relative aspect-3/4 w-full overflow-hidden rounded-xl border-2 border-graphite bg-paper text-midnight select-none flex flex-col shadow-xs ${
-        className ?? 'max-w-72 sm:max-w-80'
+      className={`relative ${
+        isLandscape ? 'aspect-4/3' : 'aspect-3/4'
+      } w-full overflow-hidden rounded-xl border-2 border-graphite bg-paper text-midnight select-none flex flex-col shadow-xs transition-all duration-300 ${
+        className ?? (isLandscape ? 'max-w-88 sm:max-w-96' : 'max-w-72 sm:max-w-80')
       }`}
     >
       {/* Remove Cross Button placed directly on the main canvas */}

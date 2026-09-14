@@ -137,8 +137,11 @@ export default function CustomizePage() {
   const moveDocument = (offset: number) => {
     if (documents.length < 1) return;
     const currentIndex = documents.findIndex((document) => document.id === selectedId);
-    setSelectedId(documents[(currentIndex + offset + documents.length) % documents.length].id);
-    setPreviewPage(1);
+    const targetIndex = currentIndex + offset;
+    if (targetIndex >= 0 && targetIndex < documents.length) {
+      setSelectedId(documents[targetIndex].id);
+      setPreviewPage(1);
+    }
   };
 
   const applyToAll = () => {
