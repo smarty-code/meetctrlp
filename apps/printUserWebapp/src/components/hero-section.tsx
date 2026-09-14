@@ -13,7 +13,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
   stickerText = 'Print it. Pick it. Done.',
 }) => {
   return (
-    <div className="relative w-full overflow-hidden select-none bg-gradient-to-b from-[#0283fd] via-[#0283fd] to-paper pb-2 sm:pb-4 md:pb-6 min-h-[290px] sm:min-h-[360px] md:min-h-[460px] lg:min-h-[500px]">
+    <div className="relative w-full overflow-hidden select-none bg-paper lg:bg-linear-to-b lg:from-[#0283fd] lg:via-[#0283fd] lg:to-paper pb-2 sm:pb-4 md:pb-6 min-h-[290px] sm:min-h-[360px] md:min-h-[460px] lg:min-h-[500px]">
       {/* 1. Mobile Background Image: fitted from top so sky gradient starts at header and desk blends into white page */}
       <div className="md:hidden absolute inset-x-0 top-0 w-full pointer-events-none z-0">
         <img
