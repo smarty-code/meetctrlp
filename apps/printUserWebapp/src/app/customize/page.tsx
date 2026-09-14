@@ -28,6 +28,11 @@ import { ConfigurableDocument, PrintConfiguration } from "../../types/upload"
 function readInitialDocuments(): ConfigurableDocument[] {
   if (typeof window === "undefined") return mockConfigurationDocuments
   try {
+    const configured = window.sessionStorage.getItem("ctrlp-configured-documents")
+    if (configured) {
+      const parsed = JSON.parse(configured)
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed
+    }
     const stored = window.sessionStorage.getItem("ctrlp-uploaded-files")
     return stored
       ? mapStoredFilesToDocuments(JSON.parse(stored), "uploaded")
@@ -52,6 +57,18 @@ export default function CustomizePage() {
   const [notification, setNotification] = useState<string | null>(null)
   const selectedDocument =
     documents.find((document) => document.id === selectedId) ?? documents[0]
+
+  // Detect selectedId from query params when returning from Screen 03 (Review Order)
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search)
+      const targetId = params.get("selectedId")
+      if (targetId && documents.some((doc) => doc.id === targetId)) {
+        setSelectedId(targetId)
+        setPreviewPage(1)
+      }
+    }
+  }, [documents])
 
   // Restore cached files and object URLs from IndexedDB if navigating directly or after reload
   useEffect(() => {
@@ -225,6 +242,17 @@ export default function CustomizePage() {
     documents.every((document) => document.status === "ready") &&
     !isUpdatingPrice
 
+  const handleContinueToReview = () => {
+    if (!canContinue) return
+    try {
+      window.sessionStorage.setItem(
+        "ctrlp-configured-documents",
+        JSON.stringify(documents)
+      )
+    } catch {}
+    router.push("/review")
+  }
+
   return (
     <main className="min-h-screen overflow-x-hidden bg-paper pb-[calc(11rem+env(safe-area-inset-bottom))] text-charcoal sm:pb-36">
       <div className="mx-auto w-full max-w-300 min-w-0 px-4 sm:px-6">
@@ -294,7 +322,7 @@ export default function CustomizePage() {
         totalPrice={totalPrice}
         isUpdating={isUpdatingPrice}
         canContinue={canContinue}
-        onContinue={() => setNotification(customizeCopy.reviewReady)}
+        onContinue={handleContinueToReview}
       />
     </main>
   )
