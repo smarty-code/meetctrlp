@@ -6,10 +6,10 @@ import { TapeRollIcon, PolaroidPhoto, PromiseUnderline } from './illustrations/c
 
 export const PromiseSection: React.FC = () => {
   return (
-    <section className="w-full px-4 pt-8 pb-4 relative select-none">
+    <section className="w-full max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 pt-10 sm:pt-14 pb-6 relative select-none">
       {/* Centered Heading */}
-      <div className="flex flex-col items-center justify-center text-center mb-6">
-        <h3 className="font-heading text-heading-sm uppercase tracking-heading-sm text-midnight">
+      <div className="flex flex-col items-center justify-center text-center mb-8">
+        <h3 className="font-heading text-heading-sm sm:text-heading uppercase tracking-heading-sm text-midnight">
           WE PROMISE
         </h3>
         <div className="mt-1">
@@ -17,78 +17,71 @@ export const PromiseSection: React.FC = () => {
         </div>
       </div>
 
-      {/* Decorative Accents Floating */}
-      <div className="relative max-w-[360px] mx-auto">
-        {/* Blue craft scissors from assets */}
-        {/* <div className="absolute -left-5 top-27 z-20 pointer-events-none w-22">
-          <img
-            src="/assets/scissors.png"
-            alt=""
-            className="w-full h-auto object-contain transform -rotate-12 drop-shadow-xs"
-          />
-        </div> */}
-
+      {/* Decorative Accents Container */}
+      <div className="relative max-w-4xl mx-auto">
         {/* Tape roll accent */}
-        <div className="absolute -left-1 bottom-1 z-20 pointer-events-none transform rotate-12 scale-90">
+        <div className="absolute -left-2 -bottom-3 z-20 pointer-events-none transform rotate-12 scale-90 sm:scale-100 hidden sm:block">
           <TapeRollIcon className="w-11 h-11" />
         </div>
 
         {/* Polaroid photo accent floating on the right */}
-        <div className="absolute -right-2 top-32 z-20 pointer-events-none transform rotate-12 scale-90">
+        <div className="absolute -right-3 -top-6 z-20 pointer-events-none transform rotate-12 scale-90 sm:scale-100 hidden sm:block">
           <PolaroidPhoto className="w-14 h-18" />
         </div>
 
-        {/* Sticky Notes Grid (12px radius, flat 2px border, no drop shadows) */}
-        <div className="flex flex-col gap-3 relative z-10">
-          {/* Top Two Sticky Notes */}
-          <div className="grid grid-cols-2 gap-3">
-            {/* Note 1: Safety */}
-            <div className="relative bg-[#fff07c] text-midnight p-4 rounded-xl border-2 border-midnight/20 transform -rotate-1 hover:rotate-0 transition-transform">
-              {/* Tape strip top */}
-              <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 w-10 h-4 bg-paper/60 rounded-sm border border-midnight/20 -rotate-2" />
+        {/* Sticky Notes Grid: 1 column on mobile, 3 columns on tablet/desktop */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-5 md:gap-6 relative z-10">
+          {/* Note 1: Safety */}
+          <div className="relative bg-[#fff07c] text-midnight p-5 rounded-xl border-2 border-midnight/20 transform sm:-rotate-1 hover:rotate-0 transition-transform flex flex-col justify-between min-h-[140px]">
+            {/* Tape strip top */}
+            <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 w-12 h-4 bg-paper/60 rounded-sm border border-midnight/20 -rotate-2" />
 
-              <div className="size-7 rounded-lg bg-midnight/10 flex items-center justify-center mb-2 text-midnight">
-                <ShieldCheck className="size-4 stroke-[2.5]" />
+            <div>
+              <div className="size-8 rounded-lg bg-midnight/10 flex items-center justify-center mb-3 text-midnight">
+                <ShieldCheck className="size-4.5 stroke-[2.5]" />
               </div>
-              <h4 className="font-heading text-[15px] text-midnight leading-tight">
+              <h4 className="font-heading text-[16px] sm:text-[17px] text-midnight leading-tight">
                 Safety
               </h4>
-              <p className="mt-1 text-caption leading-snug font-medium text-midnight/90">
+              <p className="mt-1.5 text-caption sm:text-body leading-snug font-medium text-midnight/90">
                 Documents are deleted once printed!
               </p>
             </div>
+          </div>
 
-            {/* Note 2: Security */}
-            <div className="relative bg-[#fff07c] text-midnight p-4 rounded-xl border-2 border-midnight/20 transform rotate-1 hover:rotate-0 transition-transform">
-              {/* Tape strip top */}
-              <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 w-10 h-4 bg-paper/60 rounded-sm border border-midnight/20 rotate-2" />
+          {/* Note 2: Security */}
+          <div className="relative bg-[#fff07c] text-midnight p-5 rounded-xl border-2 border-midnight/20 transform sm:rotate-1 hover:rotate-0 transition-transform flex flex-col justify-between min-h-[140px]">
+            {/* Tape strip top */}
+            <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 w-12 h-4 bg-paper/60 rounded-sm border border-midnight/20 rotate-2" />
 
-              <div className="size-7 rounded-lg bg-midnight/10 flex items-center justify-center mb-2 text-midnight">
-                <Lock className="size-4 stroke-[2.5]" />
+            <div>
+              <div className="size-8 rounded-lg bg-midnight/10 flex items-center justify-center mb-3 text-midnight">
+                <Lock className="size-4.5 stroke-[2.5]" />
               </div>
-              <h4 className="font-heading text-[15px] text-midnight leading-tight">
+              <h4 className="font-heading text-[16px] sm:text-[17px] text-midnight leading-tight">
                 Security
               </h4>
-              <p className="mt-1 text-caption leading-snug font-medium text-midnight/90">
+              <p className="mt-1.5 text-caption sm:text-body leading-snug font-medium text-midnight/90">
                 Prints are sealed before pickup
               </p>
             </div>
           </div>
 
-          {/* Bottom Sticky Note: No Peek Policy */}
-          <div className="relative bg-[#fff07c] text-midnight p-4 rounded-xl border-2 border-midnight/20 ml-8 mr-2 transform -rotate-0.5 hover:rotate-0 transition-transform">
-            <div className="flex items-start gap-3">
-              <div className="size-7 rounded-lg bg-midnight/10 flex items-center justify-center shrink-0 mt-0.5 text-midnight">
-                <EyeOff className="size-4 stroke-[2.5]" />
+          {/* Note 3: No Peek Policy */}
+          <div className="relative bg-[#fff07c] text-midnight p-5 rounded-xl border-2 border-midnight/20 transform sm:-rotate-0.5 hover:rotate-0 transition-transform sm:col-span-2 md:col-span-1 flex flex-col justify-between min-h-[140px]">
+            {/* Tape strip top */}
+            <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 w-12 h-4 bg-paper/60 rounded-sm border border-midnight/20 -rotate-1" />
+
+            <div>
+              <div className="size-8 rounded-lg bg-midnight/10 flex items-center justify-center mb-3 text-midnight">
+                <EyeOff className="size-4.5 stroke-[2.5]" />
               </div>
-              <div>
-                <h4 className="font-heading text-[15px] text-midnight leading-tight">
-                  No Peek Policy
-                </h4>
-                <p className="mt-1 text-caption leading-snug font-medium text-midnight/90">
-                  Our staff will not look at your Documents
-                </p>
-              </div>
+              <h4 className="font-heading text-[16px] sm:text-[17px] text-midnight leading-tight">
+                No Peek Policy
+              </h4>
+              <p className="mt-1.5 text-caption sm:text-body leading-snug font-medium text-midnight/90">
+                Our staff will not look at your Documents
+              </p>
             </div>
           </div>
         </div>
