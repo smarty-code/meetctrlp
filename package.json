@@ -10,6 +10,7 @@
     "lint": "pnpm --filter printUserWebapp lint",
     "format": "pnpm --filter printUserWebapp format",
     "typecheck": "pnpm --filter printUserWebapp typecheck",
+    "firebase:typecheck": "pnpm --filter @ctrlp/firebase typecheck",
     "dev:all": "turbo run dev",
     "build:all": "turbo run build",
     "lint:all": "turbo run lint",
