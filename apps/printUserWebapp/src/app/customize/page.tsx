@@ -82,8 +82,34 @@ export default function CustomizePage() {
   };
 
   const handleAddFiles = (fileList: FileList | null) => {
-    if (!fileList) return;
-    setDocuments((current) => [...current, ...mapFileListToDocuments(fileList, `added-${Date.now()}`)]);
+    if (!fileList || fileList.length === 0) return;
+    const newDocs = mapFileListToDocuments(fileList, `added-${Date.now()}`);
+    if (newDocs.length === 0) return;
+
+    setDocuments((current) => {
+      const next = [...current, ...newDocs];
+      try {
+        window.sessionStorage.setItem(
+          'ctrlp-uploaded-files',
+          JSON.stringify(
+            next.map(({ id, name, size, type, previewUrl }) => ({
+              id,
+              name,
+              size,
+              type,
+              previewUrl,
+            }))
+          )
+        );
+      } catch {}
+      return next;
+    });
+
+    // Auto-select the first newly added document so it immediately appears in the queue
+    setSelectedId(newDocs[0].id);
+    setPreviewPage(1);
+    setNotification(`Added ${newDocs.length} document${newDocs.length > 1 ? 's' : ''}`);
+    window.setTimeout(() => setNotification(null), customizeConfig.notificationDuration);
   };
 
   const removeSelected = () => {
@@ -91,6 +117,21 @@ export default function CustomizePage() {
     const remaining = documents.filter((document) => document.id !== selectedDocument.id);
     setDocuments(remaining);
     setSelectedId(remaining[0]?.id ?? '');
+    setPreviewPage(1);
+    try {
+      window.sessionStorage.setItem(
+        'ctrlp-uploaded-files',
+        JSON.stringify(
+          remaining.map(({ id, name, size, type, previewUrl }) => ({
+            id,
+            name,
+            size,
+            type,
+            previewUrl,
+          }))
+        )
+      );
+    } catch {}
   };
 
   const moveDocument = (offset: number) => {
@@ -137,10 +178,34 @@ export default function CustomizePage() {
         <PaperSizeSelector />
         <ApplyToAll onApply={applyToAll} />
       </section>
-    </> : <EmptyState onAdd={() => fileInputRef.current?.click()} />}
+    </> : <EmptyState onAddFiles={handleAddFiles} />}
   </div><OrderSummaryBar totalPages={totalPages} totalPrice={totalPrice} isUpdating={isUpdatingPrice} canContinue={canContinue} onContinue={() => setNotification(customizeCopy.reviewReady)} /></main>;
 }
 
-function EmptyState({ onAdd }: { onAdd: () => void }) {
-  return <div className="mx-auto max-w-md py-24 text-center"><FileText className="mx-auto size-12 text-ash" /><h1 className="mt-4 text-heading-sm font-bold text-midnight">{customizeCopy.emptyTitle}</h1><p className="mt-2 text-body text-ash">{customizeCopy.emptyDescription}</p><Button className="mt-6" onClick={onAdd}><Upload /> {customizeCopy.addDocument}</Button></div>;
+function EmptyState({ onAddFiles }: { onAddFiles: (files: FileList | null) => void }) {
+  return (
+    <div className="mx-auto max-w-md py-24 text-center">
+      <FileText className="mx-auto size-12 text-ash" />
+      <h1 className="mt-4 text-heading-sm font-bold text-midnight">{customizeCopy.emptyTitle}</h1>
+      <p className="mt-2 text-body text-ash">{customizeCopy.emptyDescription}</p>
+      <label
+        htmlFor="empty-state-file-input"
+        className="mt-6 inline-flex items-center justify-center gap-2 rounded-xl bg-ecto-green hover:bg-ecto-green/90 text-midnight font-bold px-6 py-3 cursor-pointer select-none active:scale-95 transition-all shadow-xs"
+      >
+        <Upload className="size-5 stroke-[2.5]" />
+        <span>{customizeCopy.addDocument}</span>
+      </label>
+      <input
+        id="empty-state-file-input"
+        type="file"
+        multiple
+        accept={customizeConfig.acceptedFileTypes}
+        className="hidden"
+        onChange={(e) => {
+          onAddFiles(e.target.files);
+          e.target.value = '';
+        }}
+      />
+    </div>
+  );
 }

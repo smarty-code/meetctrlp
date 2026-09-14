@@ -8,6 +8,7 @@ interface DocumentPreviewProps {
   previewPage?: number;
   onRemove?: () => void;
   onPageCountDetected?: (count: number) => void;
+  className?: string;
 }
 
 export function DocumentPreview({
@@ -15,6 +16,7 @@ export function DocumentPreview({
   previewPage = 1,
   onRemove,
   onPageCountDetected,
+  className,
 }: DocumentPreviewProps) {
   const isImage = document.type.startsWith('image/');
   const isPdf =
@@ -22,7 +24,11 @@ export function DocumentPreview({
   const previewUrl = document.previewUrl;
 
   return (
-    <div className="relative aspect-3/4 w-full max-w-72 sm:max-w-80 overflow-hidden rounded-xl border-2 border-graphite bg-paper text-midnight select-none flex flex-col shadow-xs">
+    <div
+      className={`relative aspect-3/4 w-full overflow-hidden rounded-xl border-2 border-graphite bg-paper text-midnight select-none flex flex-col shadow-xs ${
+        className ?? 'max-w-72 sm:max-w-80'
+      }`}
+    >
       {/* Remove Cross Button placed directly on the main canvas */}
       {onRemove && (
         <button
