@@ -286,7 +286,7 @@
       "$description": "Surface level 1: Primary CTA fill and large heading emphasis blocks"
     },
     "midnight-surface": {
-      "$value": "#100f3",
+      "$value": "#000437",
       "$type": "color",
       "$description": "Surface level 2: Dark mode sections and inverted hero panels"
     }
