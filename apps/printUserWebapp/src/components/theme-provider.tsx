@@ -3,6 +3,21 @@
 import * as React from "react"
 import { ThemeProvider as NextThemesProvider, useTheme } from "next-themes"
 
+// React 19 flags inline <script> tags injected by next-themes for FOUC prevention.
+// Suppress this specific benign development warning to avoid triggering Next.js dev error overlays.
+if (process.env.NODE_ENV === "development") {
+  const origError = console.error
+  console.error = (...args: unknown[]) => {
+    if (
+      typeof args[0] === "string" &&
+      args[0].includes("Encountered a script tag")
+    ) {
+      return
+    }
+    origError.apply(console, args)
+  }
+}
+
 function ThemeProvider({
   children,
   ...props

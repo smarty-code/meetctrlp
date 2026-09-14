@@ -1,19 +1,19 @@
-'use client';
+"use client"
 
-import React from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import React from "react"
+import { ChevronLeft, ChevronRight } from "lucide-react"
 
 interface PreviewPaginationProps {
-  currentPage: number;
-  totalPages: number;
-  onPageChange: (page: number) => void;
-  documentCount?: number;
-  documentIndex?: number;
-  documents?: { id: string; name: string }[];
-  selectedDocId?: string;
-  onSelectDocument?: (id: string) => void;
-  onPrev?: () => void;
-  onNext?: () => void;
+  currentPage: number
+  totalPages: number
+  onPageChange: (page: number) => void
+  documentCount?: number
+  documentIndex?: number
+  documents?: { id: string; name: string }[]
+  selectedDocId?: string
+  onSelectDocument?: (id: string) => void
+  onPrev?: () => void
+  onNext?: () => void
 }
 
 export function PreviewPagination({
@@ -23,41 +23,46 @@ export function PreviewPagination({
   documentCount = 1,
   documentIndex = 1,
   documents = [],
-  selectedDocId = '',
+  selectedDocId = "",
   onSelectDocument,
   onPrev,
   onNext,
 }: PreviewPaginationProps) {
-  const isMultipleDocs = documentCount > 1;
-  const isMultiplePages = totalPages > 1;
+  const isMultipleDocs = documentCount > 1
+  const isMultiplePages = totalPages > 1
 
-  const canGoPrev = currentPage > 1 || documentIndex > 1;
-  const canGoNext = currentPage < totalPages || documentIndex < documentCount;
+  const canGoPrev = currentPage > 1 || documentIndex > 1
+  const canGoNext = currentPage < totalPages || documentIndex < documentCount
 
   const handlePrev = () => {
     if (currentPage > 1) {
-      onPageChange(currentPage - 1);
+      onPageChange(currentPage - 1)
     } else if (onPrev) {
-      onPrev();
+      onPrev()
     }
-  };
+  }
 
   const handleNext = () => {
     if (currentPage < totalPages) {
-      onPageChange(currentPage + 1);
+      onPageChange(currentPage + 1)
     } else if (onNext) {
-      onNext();
+      onNext()
     }
-  };
+  }
 
   return (
-    <div className="flex flex-col items-center select-none mt-2">
+    <div className="mt-2 flex flex-col items-center select-none">
       {/* 1. Pill & Dot Indicators matching previous design and color */}
-      <div className="flex items-center justify-center gap-2 flex-wrap max-w-xs" aria-label="Select item">
+      <div
+        className="flex max-w-xs flex-wrap items-center justify-center gap-2"
+        aria-label="Select item"
+      >
         {isMultipleDocs ? (
           // If multiple documents, render a dot for each document with active green pill
           documents.map((doc, idx) => {
-            const isSelected = doc.id ? doc.id === selectedDocId : idx === documentIndex - 1;
+            const isSelected = doc.id
+              ? doc.id === selectedDocId
+              : idx === documentIndex - 1
             return (
               <button
                 key={doc.id || idx}
@@ -65,16 +70,18 @@ export function PreviewPagination({
                 aria-label={`Document ${idx + 1}`}
                 aria-pressed={isSelected}
                 onClick={() => onSelectDocument?.(doc.id)}
-                className={`h-2.5 rounded-full border border-graphite transition-all cursor-pointer ${
-                  isSelected ? 'w-8 bg-ecto-green' : 'w-2.5 bg-paper hover:bg-graphite/10'
+                className={`h-2.5 cursor-pointer rounded-full border border-graphite transition-all ${
+                  isSelected
+                    ? "w-8 bg-ecto-green"
+                    : "w-2.5 bg-paper hover:bg-graphite/10"
                 }`}
               />
-            );
+            )
           })
         ) : isMultiplePages ? (
           // If 1 document with multiple pages, render a dot for each page with active green pill
           Array.from({ length: totalPages }).map((_, idx) => {
-            const isSelected = idx === currentPage - 1;
+            const isSelected = idx === currentPage - 1
             return (
               <button
                 key={idx}
@@ -82,15 +89,17 @@ export function PreviewPagination({
                 aria-label={`Page ${idx + 1}`}
                 aria-pressed={isSelected}
                 onClick={() => onPageChange(idx + 1)}
-                className={`h-2.5 rounded-full border border-graphite transition-all cursor-pointer ${
-                  isSelected ? 'w-8 bg-ecto-green' : 'w-2.5 bg-paper hover:bg-graphite/10'
+                className={`h-2.5 cursor-pointer rounded-full border border-graphite transition-all ${
+                  isSelected
+                    ? "w-8 bg-ecto-green"
+                    : "w-2.5 bg-paper hover:bg-graphite/10"
                 }`}
               />
-            );
+            )
           })
         ) : (
           // Default single active pill
-          <span className="w-8 h-2.5 rounded-full border border-graphite bg-ecto-green" />
+          <span className="h-2.5 w-8 rounded-full border border-graphite bg-ecto-green" />
         )}
       </div>
 
@@ -101,15 +110,15 @@ export function PreviewPagination({
           aria-label="Previous"
           onClick={handlePrev}
           disabled={!canGoPrev}
-          className="size-8 sm:size-8.5 rounded-full border border-ecto-green bg-paper text-graphite flex items-center justify-center hover:bg-eel-light active:scale-95 disabled:opacity-35 disabled:cursor-not-allowed transition-all shadow-2xs cursor-pointer"
+          className="flex size-8 cursor-pointer items-center justify-center rounded-full border border-ecto-green bg-paper text-graphite shadow-2xs transition-all hover:bg-eel-light active:scale-95 disabled:cursor-not-allowed disabled:opacity-35 sm:size-8.5"
         >
           <ChevronLeft className="size-4 stroke-[2.2]" />
         </button>
 
-        <span className="text-xs sm:text-sm font-bold text-graphite/80 tracking-tight">
+        <span className="text-xs font-bold tracking-tight text-graphite/80 sm:text-sm">
           Preview page {currentPage} of {totalPages}
           {documentCount > 1 && (
-            <span className="text-ash font-medium ml-1.5">
+            <span className="ml-1.5 font-medium text-ash">
               (Doc {documentIndex}/{documentCount})
             </span>
           )}
@@ -120,11 +129,11 @@ export function PreviewPagination({
           aria-label="Next"
           onClick={handleNext}
           disabled={!canGoNext}
-          className="size-8 sm:size-8.5 rounded-full border border-ecto-green bg-paper text-graphite flex items-center justify-center hover:bg-eel-light active:scale-95 disabled:opacity-35 disabled:cursor-not-allowed transition-all shadow-2xs cursor-pointer"
+          className="flex size-8 cursor-pointer items-center justify-center rounded-full border border-ecto-green bg-paper text-graphite shadow-2xs transition-all hover:bg-eel-light active:scale-95 disabled:cursor-not-allowed disabled:opacity-35 sm:size-8.5"
         >
           <ChevronRight className="size-4 stroke-[2.2]" />
         </button>
       </div>
     </div>
-  );
+  )
 }

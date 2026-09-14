@@ -4,6 +4,6 @@ export {
   customizeCopy,
   defaultPrintConfiguration,
   mockConfigurationDocuments,
-} from './customize-repository';
+} from "./customize-repository"
 
-export { mapFilesToConfigurationDocuments as createConfigurationDocuments } from './customize-mapper';
+export { mapFilesToConfigurationDocuments as createConfigurationDocuments } from "./customize-mapper"
