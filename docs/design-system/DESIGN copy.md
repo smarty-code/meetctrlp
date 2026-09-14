@@ -169,7 +169,7 @@ Two-column layout: text on one side (headline + paragraph + optional ghost butto
 |-------|------|-------|---------|
 | 0 | Paper White | `#ffffff` | Base page canvas and all card surfaces — the entire site sits on pure white |
 | 1 | Ecto Green Surface | `#58cc02` | Primary CTA fill and large heading emphasis blocks |
-| 2 | Midnight Surface | `#100f3` | Dark mode sections and inverted hero panels |
+| 2 | Midnight Surface | `#000437` | Dark mode sections and inverted hero panels |
 
 ## Elevation
 
@@ -284,7 +284,7 @@ Full-bleed white page with no contained max-width frame — content blocks sit d
   /* Surfaces */
   --surface-paper-white: #ffffff;
   --surface-ecto-green-surface: #58cc02;
-  --surface-midnight-surface: #100f3;
+  --surface-midnight-surface: #000437;
 }
 ```
 

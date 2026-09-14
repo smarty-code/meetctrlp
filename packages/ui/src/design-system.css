@@ -52,12 +52,28 @@
 
   --spacing: 4px;
   --spacing-unit: 4px;
+  --radius: 12px;
+  --radius-sm: 12px;
+  --radius-md: 12px;
   --radius-xl: 12px;
+  --radius-2xl: 12px;
+  --radius-3xl: 12px;
+  --radius-4xl: 12px;
   --radius-lg: 12px;
   --radius-buttons: 12px;
   --radius-links: 12px;
   --radius-pills: 12px;
   --radius-cards: 12px;
+
+  /* Flat design-system depth: structure comes from borders, not shadows. */
+  --shadow-2xs: 0 0 transparent;
+  --shadow: 0 0 transparent;
+  --shadow-xs: 0 0 transparent;
+  --shadow-sm: 0 0 transparent;
+  --shadow-md: 0 0 transparent;
+  --shadow-lg: 0 0 transparent;
+  --shadow-xl: 0 0 transparent;
+  --shadow-2xl: 0 0 transparent;
 }
 
 :root {
