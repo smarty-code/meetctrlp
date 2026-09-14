@@ -1,84 +1,124 @@
 "use client"
 
-import React, { useEffect, useState } from "react"
+import React from "react"
 import { useRouter } from "next/navigation"
-import { ArrowLeft, CheckCircle2, CreditCard } from "lucide-react"
-import { OrderDraft } from "../../types/order"
-import { loadOrderDraft } from "../../data/order-repository"
-import { formatCurrency } from "../../lib/currency"
-import { REVIEW_ROUTES } from "../../data/review-constants"
+import { usePayment } from "../../hooks/use-payment"
+import { PaymentHeader } from "../../components/payment/payment-header"
+import { PaymentOrderSummary } from "../../components/payment/payment-order-summary"
+import { PaymentMethodSelector } from "../../components/payment/payment-method-selector"
+import { PaymentStatusFeedback } from "../../components/payment/payment-status-feedback"
+import { PaymentActionFooter } from "../../components/payment/payment-action-footer"
+import { PaymentLoadingSkeleton } from "../../components/payment/payment-loading-skeleton"
+import { PaymentErrorState } from "../../components/payment/payment-error-state"
+import { PAYMENT_ROUTES } from "../../data/payment-constants"
 
-export default function PaymentStubPage() {
+export default function PaymentPage() {
   const router = useRouter()
-  const [draft, setDraft] = useState<OrderDraft | null>(null)
+  const {
+    draft,
+    isLoading,
+    isSubmitting,
+    selectedMethod,
+    availableMethods,
+    paymentState,
+    errorMessage,
+    priceNotice,
+    setSelectedMethod,
+    handlePaymentSubmit,
+    handleRetry,
+    handleBack,
+    handleDismissPriceNotice,
+    canSubmit,
+  } = usePayment()
 
-  useEffect(() => {
-    loadOrderDraft().then(setDraft)
-  }, [])
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-paper text-charcoal">
+        <PaymentHeader onBack={handleBack} />
+        <main className="mx-auto w-full max-w-lg py-6">
+          <PaymentLoadingSkeleton />
+        </main>
+      </div>
+    )
+  }
+
+  if (!draft) {
+    return (
+      <div className="min-h-screen bg-paper text-charcoal">
+        <PaymentHeader onBack={handleBack} />
+        <main className="mx-auto w-full max-w-lg py-12">
+          <PaymentErrorState
+            isEmpty
+            onBackToReview={() => router.push(PAYMENT_ROUTES.REVIEW)}
+            onReturnHome={() => router.push(PAYMENT_ROUTES.HOME)}
+          />
+        </main>
+      </div>
+    )
+  }
 
   return (
-    <div className="flex min-h-screen flex-col bg-paper text-charcoal">
-      {/* Header */}
-      <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b-2 border-graphite/20 bg-paper/95 px-4 backdrop-blur-xs sm:px-6">
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => router.push(REVIEW_ROUTES.REVIEW)}
-            aria-label="Back to order review"
-            className="flex size-10 items-center justify-center rounded-xl border-2 border-graphite/30 bg-paper text-midnight transition-colors hover:border-graphite hover:bg-eel-light/30 focus-visible:ring-2 focus-visible:ring-macaw-blue focus-visible:outline-hidden"
-          >
-            <ArrowLeft className="size-5 stroke-[2.5]" />
-          </button>
-          <h1 className="text-heading-sm font-bold tracking-heading-sm text-midnight">
-            Payment
-          </h1>
-        </div>
-      </header>
+    <div className="flex min-h-screen flex-col bg-paper text-charcoal selection:bg-macaw-blue selection:text-paper">
+      {/* 1. Established CtrlP Header */}
+      <PaymentHeader onBack={handleBack} />
 
-      {/* Main Container */}
-      <main className="mx-auto flex w-full max-w-lg flex-1 flex-col items-center justify-center p-6 text-center">
-        <div className="flex size-16 items-center justify-center rounded-2xl border-2 border-ecto-green/50 bg-eel-light text-midnight">
-          <CreditCard className="size-8 stroke-[2.5]" />
-        </div>
+      {/* Main Content Area */}
+      <main className="mx-auto w-full max-w-lg flex-1 px-4 py-4 pb-28 sm:px-6 sm:pb-8">
+        <div className="space-y-6">
+          {/* Order Summary & Prominent Amount Due */}
+          <PaymentOrderSummary
+            orderId={draft.orderId}
+            shop={draft.shop}
+            totalAmount={draft.pricing.total}
+            totalDocuments={draft.documents.length}
+            totalCopies={draft.pricing.totalCopies}
+            currency={draft.pricing.currency}
+          />
 
-        <span className="mt-4 rounded-full bg-eel-light px-3 py-1 text-caption font-bold text-midnight">
-          Screen 04 — Payment
-        </span>
+          {/* Dynamic Status Feedback (Loading, Pending, Verification, Errors, Price Notice) */}
+          <PaymentStatusFeedback
+            paymentState={paymentState}
+            errorMessage={errorMessage}
+            priceNotice={priceNotice}
+            onRetry={handleRetry}
+            onDismissPriceNotice={handleDismissPriceNotice}
+          />
 
-        <h2 className="mt-3 text-heading-sm font-bold text-midnight">
-          Order Ready for Payment
-        </h2>
+          {/* Payment Method Selector */}
+          <PaymentMethodSelector
+            methods={availableMethods}
+            selectedMethod={selectedMethod}
+            onSelectMethod={setSelectedMethod}
+            disabled={isSubmitting}
+          />
 
-        {draft && (
-          <div className="mt-6 w-full rounded-xl border-2 border-graphite/20 bg-paper p-5 text-left space-y-2">
-            <div className="flex justify-between text-caption text-ash">
-              <span>Order ID:</span>
-              <span className="font-mono font-bold text-midnight">
-                {draft.orderId}
-              </span>
-            </div>
-            <div className="flex justify-between text-caption text-ash">
-              <span>Shop:</span>
-              <span className="font-bold text-midnight">{draft.shop.name}</span>
-            </div>
-            <div className="flex justify-between text-caption text-ash">
-              <span>Documents:</span>
-              <span className="font-bold text-midnight">
-                {draft.documents.length}
-              </span>
-            </div>
-            <div className="border-t border-graphite/10 pt-2 flex justify-between text-body font-bold text-midnight">
-              <span>Amount Due:</span>
-              <span>{formatCurrency(draft.pricing.total)}</span>
-            </div>
+          {/* Desktop/Tablet Action Container */}
+          <div className="hidden sm:block">
+            <PaymentActionFooter
+              totalAmount={draft.pricing.total}
+              currency={draft.pricing.currency}
+              selectedMethod={selectedMethod}
+              paymentState={paymentState}
+              isSubmitting={isSubmitting}
+              canSubmit={canSubmit}
+              onSubmit={handlePaymentSubmit}
+            />
           </div>
-        )}
-
-        <div className="mt-6 flex items-center gap-2 text-caption text-charcoal">
-          <CheckCircle2 className="size-4 text-ecto-green" />
-          <span>Screen 03 transitioned successfully to Screen 04</span>
         </div>
       </main>
+
+      {/* Mobile Sticky Action Footer */}
+      <div className="sm:hidden">
+        <PaymentActionFooter
+          totalAmount={draft.pricing.total}
+          currency={draft.pricing.currency}
+          selectedMethod={selectedMethod}
+          paymentState={paymentState}
+          isSubmitting={isSubmitting}
+          canSubmit={canSubmit}
+          onSubmit={handlePaymentSubmit}
+        />
+      </div>
     </div>
   )
 }
