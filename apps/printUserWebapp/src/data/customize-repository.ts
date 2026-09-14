@@ -15,6 +15,11 @@ export const customizeCopy = {
   decreaseCopies: 'Decrease copies',
   increaseCopies: 'Increase copies',
   colorLegend: 'Choose print color',
+  orientationLegend: 'Page orientation',
+  portrait: 'Portrait',
+  landscape: 'Landscape',
+  portraitHint: 'Vertical layout',
+  landscapeHint: 'Horizontal layout',
   paperLegend: 'Paper size',
   standardPaper: 'Standard paper',
   pageSelectionLegend: 'Page selection',
@@ -59,6 +64,7 @@ export const customizeConfig = {
 export const defaultPrintConfiguration: PrintConfiguration = {
   copies: 1,
   colorMode: 'bw',
+  orientation: 'portrait',
   paperSize: customizeCopy.paperSize,
   pageSelection: { mode: 'all', expression: '', pages: [] },
 };

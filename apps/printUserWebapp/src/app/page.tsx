@@ -9,34 +9,41 @@ import { PromiseSection } from '../components/promise-section';
 import { FAQSection } from '../components/faq-section';
 import { BrandFooter } from '../components/brand-footer';
 import { FloatingOrderIndicator } from '../components/floating-order-indicator';
+import { cacheUploadedFile, getCachedFileUrl } from '../lib/file-store';
 import { mockShop, faqList } from '../data/mock-shop';
 import { UploadedFileItem } from '../types/upload';
 
-export default function PrintUserUploadPage() {
+export default function Home() {
   const router = useRouter();
   const [shop] = useState(mockShop);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFileItem[]>([]);
   const [isUploadingOverall, setIsUploadingOverall] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
 
+  // Quick toast helper
   const showToast = (msg: string) => {
     setNotification(msg);
     setTimeout(() => setNotification(null), 3000);
   };
 
-  // Handle native file selection
+  // Handle files selected from DocumentsUploadCard
   const handleFilesSelected = (files: FileList | null) => {
     if (!files || files.length === 0) return;
 
-    const newItems: UploadedFileItem[] = Array.from(files).map((file, idx) => ({
-      id: `file_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 7)}`,
-      file,
-      name: file.name,
-      size: file.size,
-      type: file.type || 'application/octet-stream',
-      progress: 0,
-      status: 'uploading',
-    }));
+    const newItems: UploadedFileItem[] = Array.from(files).map((file, idx) => {
+      const id = `file_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 7)}`;
+      const previewUrl = cacheUploadedFile(id, file);
+      return {
+        id,
+        file,
+        name: file.name,
+        size: file.size,
+        type: file.type || 'application/octet-stream',
+        progress: 0,
+        status: 'uploading',
+        previewUrl,
+      };
+    });
 
     setUploadedFiles((prev) => [...prev, ...newItems]);
     setIsUploadingOverall(true);
@@ -107,9 +114,22 @@ export default function PrintUserUploadPage() {
   const handleContinueToConfig = () => {
     const validFiles = uploadedFiles.filter((f) => f.status === 'success');
     if (validFiles.length === 0) return;
+    validFiles.forEach((f) => {
+      if (f.file) {
+        cacheUploadedFile(f.id, f.file);
+      }
+    });
     window.sessionStorage.setItem(
       'ctrlp-uploaded-files',
-      JSON.stringify(validFiles.map(({ id, name, size, type }) => ({ id, name, size, type }))),
+      JSON.stringify(
+        validFiles.map(({ id, name, size, type }) => ({
+          id,
+          name,
+          size,
+          type,
+          previewUrl: getCachedFileUrl(id) || undefined,
+        }))
+      )
     );
     router.push('/customize');
   };
