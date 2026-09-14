@@ -15,6 +15,7 @@
     "server:start": "pnpm --filter server start",
     "server:lint": "pnpm --filter server lint",
     "server:typecheck": "pnpm --filter server typecheck",
+    "firebase:typecheck": "pnpm --filter @ctrlp/firebase typecheck",
     "@ctrlp/ui:typecheck": "pnpm --filter @ctrlp/ui typecheck",
     "dev": "pnpm run webapp:dev",
     "build": "pnpm run webapp:build",
