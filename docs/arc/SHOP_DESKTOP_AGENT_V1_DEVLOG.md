@@ -25,6 +25,7 @@ Update this file after each implementation phase. Keep the entries chronological
 | CI: Windows installer release | Complete | GitHub Actions workflow builds and publishes draft `.exe` and `.msi` installers on `shop-desktop-v*` tags. |
 | CI: Windows spooler linker fix | Complete | The Windows build now links the SDK import library as `winspool.lib` instead of looking for the invalid `winspool.drv.lib`. |
 | Phase 5: Local document print path | Complete | File picker, hidden PowerShell discovery, selected-printer document submission, and local PDF/image testing are implemented. |
+| CI: Windows CommandExt scope fix | Complete | `CommandExt` is imported inside the nested Windows printer module where `creation_flags` is called. |
 
 ## Phase 1: Printer Discovery and Native Boundary
 
@@ -346,3 +347,23 @@ cargo test
 ```
 
 Result: compilation succeeded and all 8 tests passed. The next release must be created from a commit containing this fix, not from the earlier failing tag.
+
+### Windows compile incident: `creation_flags`
+
+The release build then failed with:
+
+```text
+error[E0599]: no method named `creation_flags` found for struct `std::process::Command`
+```
+
+`CommandExt` had been imported in the parent `platform` module, while `creation_flags` was called in the nested `platform::windows` module. Rust trait imports are scoped per module, so the nested module could not resolve the extension method. The import now sits beside `std::process::Command` inside `platform::windows`.
+
+Local verification after the fix:
+
+```bash
+cargo fmt --check
+cargo check
+cargo test
+```
+
+Result: compilation succeeded and all 8 tests passed. Create the next Windows release from the commit containing this scope fix.

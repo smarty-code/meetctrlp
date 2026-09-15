@@ -63,14 +63,12 @@ impl PrinterBackend for LocalPrinterBackend {
 
 #[cfg(windows)]
 mod platform {
-    use std::{os::windows::process::CommandExt, process::Command};
-
     pub mod windows {
-        use super::Command;
         use crate::domain::{
             DocumentSource, PrintJob, PrintTestJob, Printer, PrinterBackendType,
             PrinterCapabilities, PrinterStatus,
         };
+        use std::{os::windows::process::CommandExt, process::Command};
 
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
