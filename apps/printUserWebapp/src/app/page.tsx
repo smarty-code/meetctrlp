@@ -10,6 +10,8 @@ import { FAQSection } from "../components/faq-section"
 import { BrandFooter } from "../components/brand-footer"
 import { FloatingOrderIndicator } from "../components/floating-order-indicator"
 import { cacheUploadedFile, getCachedFileUrl } from "../lib/file-store"
+import { Info } from "lucide-react"
+import { ShopInfoDrawer } from "../components/shop-info-drawer"
 import { mockShop, faqList } from "../data/mock-shop"
 import { UploadedFileItem } from "../types/upload"
 
@@ -19,6 +21,7 @@ export default function Home() {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFileItem[]>([])
   const [isUploadingOverall, setIsUploadingOverall] = useState(false)
   const [notification, setNotification] = useState<string | null>(null)
+  const [isShopInfoOpen, setIsShopInfoOpen] = useState(false)
 
   // Quick toast helper
   const showToast = (msg: string) => {
@@ -171,6 +174,36 @@ export default function Home() {
           stickerText="Print it. Pick it. Done."
         />
 
+        {/* 2.5 Shop Context Bar with "Shop Info" trigger leading to Screen 06 secondary sheet */}
+        <div className="mx-auto w-full max-w-xl px-4 pt-3 sm:max-w-2xl sm:px-6 md:max-w-3xl">
+          <div className="flex items-center justify-between gap-2 rounded-xl border border-graphite/20 bg-paper px-3.5 py-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <span
+                className={`size-2.5 shrink-0 rounded-full ${
+                  isAvailable ? "bg-ecto-green animate-pulse" : "bg-amber-500"
+                }`}
+                aria-hidden="true"
+              />
+              <span className="truncate text-caption font-bold text-midnight">
+                Printing at {shop.name}
+              </span>
+              <span className="hidden text-[11px] font-bold text-ash sm:inline-block">
+                • {isAvailable ? "Open" : "Closed"}
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setIsShopInfoOpen(true)}
+              aria-label={`Open shop information for ${shop.name}`}
+              className="flex shrink-0 cursor-pointer items-center gap-1 rounded-lg border border-lingot-lime bg-eel-light/30 px-2.5 py-1 text-caption font-bold text-midnight transition-colors hover:bg-eel-light/60 active:translate-y-px"
+            >
+              <Info className="size-3.5 text-midnight" />
+              <span>Shop Info</span>
+            </button>
+          </div>
+        </div>
+
         {/* 3. Responsive Documents Upload Card */}
         <DocumentsUploadCard
           isAvailable={isAvailable}
@@ -195,6 +228,13 @@ export default function Home() {
         <FloatingOrderIndicator
           files={uploadedFiles}
           onContinue={handleContinueToConfig}
+        />
+
+        {/* 8. Optional Nested Screen 06: Shop Information Drawer */}
+        <ShopInfoDrawer
+          isOpen={isShopInfoOpen}
+          onClose={() => setIsShopInfoOpen(false)}
+          shop={shop}
         />
       </main>
     </div>

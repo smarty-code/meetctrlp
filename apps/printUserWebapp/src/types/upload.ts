@@ -10,6 +10,9 @@ export interface ShopContext {
   startingPriceA4: number
   openTime?: string
   closeTime?: string
+  phone?: string
+  mapUrl?: string
+  services?: string[]
 }
 
 export interface UploadedFileItem {

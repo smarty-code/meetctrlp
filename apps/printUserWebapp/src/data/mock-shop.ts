@@ -10,6 +10,14 @@ export const mockShop: ShopContext = {
   startingPriceA4: 3,
   openTime: "08:00 AM",
   closeTime: "09:00 PM",
+  phone: "+91 98765 43210",
+  mapUrl: "https://maps.google.com/?q=North+Campus",
+  services: [
+    "High-speed laser printing",
+    "A4 Black & White and Full Color",
+    "Instant counter collection",
+    "Encrypted document handling",
+  ],
 }
 
 export const faqList: FAQItem[] = [
