@@ -12,6 +12,8 @@ import { PriceChangedBanner } from "../../components/review/price-changed-banner
 import { ReviewOrderFooter } from "../../components/review/review-order-footer"
 import { ReviewLoadingSkeleton } from "../../components/review/review-loading-skeleton"
 import { ReviewErrorState } from "../../components/review/review-error-state"
+import { PaymentMethodSelector } from "../../components/payment/payment-method-selector"
+import { PaymentStatusFeedback } from "../../components/payment/payment-status-feedback"
 import { REVIEW_ROUTES } from "../../data/review-constants"
 
 export default function ReviewPage() {
@@ -21,15 +23,21 @@ export default function ReviewPage() {
     isLoading,
     isValidating,
     isSubmitting,
-    canContinue,
+    canSubmit,
     validationError,
     loadError,
+    paymentError,
     priceNotice,
+    selectedMethod,
+    availableMethods,
+    paymentState,
+    setSelectedMethod,
     handleBack,
     handleEditDocument,
     handleUpdateCopies,
     handleDeleteDocument,
-    handleProceedToPayment,
+    handlePaymentSubmit,
+    handlePaymentRetry,
     handleDismissPriceNotice,
     retry,
   } = useReviewOrder()
@@ -116,7 +124,7 @@ export default function ReviewPage() {
             />
           </div>
 
-          {/* Right Column: Price Summary & CTA */}
+          {/* Right Column: Price Summary, Payment Selection & Direct Checkout */}
           <div className="space-y-4 lg:col-span-5">
             <div className="sticky top-20 space-y-4">
               {/* Structured Data-Driven Price Summary */}
@@ -125,16 +133,34 @@ export default function ReviewPage() {
                 totalDocuments={draft.documents.length}
               />
 
+              {/* Payment Method Selector */}
+              <PaymentMethodSelector
+                methods={availableMethods}
+                selectedMethod={selectedMethod}
+                onSelectMethod={setSelectedMethod}
+                disabled={isSubmitting}
+              />
+
+              {/* In-Flight & Failure Feedback */}
+              <PaymentStatusFeedback
+                paymentState={paymentState}
+                errorMessage={paymentError}
+                onRetry={handlePaymentRetry}
+              />
+
               {/* Desktop CTA Action Box */}
               <div className="hidden sm:block">
                 <ReviewOrderFooter
                   totalAmount={draft.pricing.total}
+                  currency={draft.pricing.currency}
                   totalDocuments={draft.documents.length}
                   totalCopies={draft.pricing.totalCopies}
+                  selectedMethod={selectedMethod}
+                  paymentState={paymentState}
                   isValidating={isValidating}
                   isSubmitting={isSubmitting}
-                  canContinue={canContinue}
-                  onContinue={handleProceedToPayment}
+                  canContinue={canSubmit}
+                  onContinue={handlePaymentSubmit}
                 />
               </div>
             </div>
@@ -146,14 +172,18 @@ export default function ReviewPage() {
       <div className="sm:hidden">
         <ReviewOrderFooter
           totalAmount={draft.pricing.total}
+          currency={draft.pricing.currency}
           totalDocuments={draft.documents.length}
           totalCopies={draft.pricing.totalCopies}
+          selectedMethod={selectedMethod}
+          paymentState={paymentState}
           isValidating={isValidating}
           isSubmitting={isSubmitting}
-          canContinue={canContinue}
-          onContinue={handleProceedToPayment}
+          canContinue={canSubmit}
+          onContinue={handlePaymentSubmit}
         />
       </div>
     </div>
   )
 }
+
