@@ -137,6 +137,11 @@ export function useReviewOrder() {
       )
       if (match) return userSelectedMethod
     }
+    // Default to UPI / ONLINE if enabled, otherwise first enabled
+    const upiMethod = availableMethods.find(
+      (m) => m.id === "ONLINE" && m.enabled
+    )
+    if (upiMethod) return "ONLINE"
     const firstEnabled = availableMethods.find((m) => m.enabled)
     return firstEnabled ? firstEnabled.id : "ONLINE"
   }, [userSelectedMethod, availableMethods])
