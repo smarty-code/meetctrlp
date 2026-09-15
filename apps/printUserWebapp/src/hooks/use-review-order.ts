@@ -1,49 +1,150 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { OrderDraft } from "../types/order"
 import {
+  PaymentMethodId,
+  PaymentMethodItem,
+  PaymentState,
+  PaymentTransaction,
+} from "../types/payment"
+import {
   calculateOrderPricing,
   loadOrderDraft,
-  refreshPriceAuthoritatively,
   saveOrderDraft,
   validateOrderDraft,
 } from "../data/order-repository"
+import {
+  getAvailablePaymentMethods,
+  initiateOnlinePaymentTransaction,
+  verifyPaymentTransaction,
+  submitCashPaymentOrder,
+  submitOnlinePaidOrder,
+  getActiveTransaction,
+  clearActiveTransaction,
+} from "../data/payment-repository"
+import { PAYMENT_COPY } from "../data/payment-constants"
 import { REVIEW_ROUTES } from "../data/review-constants"
 
 export function useReviewOrder() {
   const router = useRouter()
   const [draft, setDraft] = useState<OrderDraft | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [isValidating, setIsValidating] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const isValidating = false
   const [validationError, setValidationError] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [paymentError, setPaymentError] = useState<string | null>(null)
+  const [userSelectedMethod, setUserSelectedMethod] =
+    useState<PaymentMethodId | null>(null)
+  const [paymentState, setPaymentState] = useState<PaymentState>("NOT_STARTED")
+  const [activeTransaction, setActiveTransaction] =
+    useState<PaymentTransaction | null>(null)
   const [priceNotice, setPriceNotice] = useState<{
     previousTotal: number
     newTotal: number
   } | null>(null)
 
-  const fetchDraft = useCallback(async () => {
-    setIsLoading(true)
-    setLoadError(null)
-    setValidationError(null)
+  const isMountedRef = useRef(true)
+  const isSubmittingRef = useRef(false)
 
-    try {
-      const loaded = await loadOrderDraft()
-      setDraft(loaded)
-    } catch (err) {
-      console.error("Failed to load order draft:", err)
-      setLoadError("Unable to retrieve your order details.")
-    } finally {
-      setIsLoading(false)
-    }
+  // 1. Initial Load of Draft and Session Recovery
+  const loadDraft = useCallback(() => {
+    loadOrderDraft()
+      .then((loaded) => {
+        if (!isMountedRef.current) return
+        setDraft(loaded)
+        setLoadError(null)
+        setValidationError(null)
+        setPaymentError(null)
+
+        // Restore existing in-flight transaction if matching order ID
+        const existingTx = getActiveTransaction()
+        if (existingTx && existingTx.orderId === loaded.orderId) {
+          setActiveTransaction(existingTx)
+          setPaymentState(existingTx.state)
+          setUserSelectedMethod(existingTx.method)
+        } else {
+          setPaymentState("METHOD_SELECTED")
+        }
+      })
+      .catch((err) => {
+        if (!isMountedRef.current) return
+        console.error("Failed to load order draft:", err)
+        setLoadError("Unable to retrieve your order details.")
+      })
+      .finally(() => {
+        if (isMountedRef.current) {
+          setIsLoading(false)
+        }
+      })
   }, [])
 
   useEffect(() => {
-    fetchDraft()
-  }, [fetchDraft])
+    isMountedRef.current = true
+
+    loadOrderDraft()
+      .then((loaded) => {
+        if (!isMountedRef.current) return
+        setDraft(loaded)
+        setLoadError(null)
+        setValidationError(null)
+        setPaymentError(null)
+
+        // Restore existing in-flight transaction if matching order ID
+        const existingTx = getActiveTransaction()
+        if (existingTx && existingTx.orderId === loaded.orderId) {
+          setActiveTransaction(existingTx)
+          setPaymentState(existingTx.state)
+          setUserSelectedMethod(existingTx.method)
+        } else {
+          setPaymentState("METHOD_SELECTED")
+        }
+      })
+      .catch((err) => {
+        if (!isMountedRef.current) return
+        console.error("Failed to load order draft:", err)
+        setLoadError("Unable to retrieve your order details.")
+      })
+      .finally(() => {
+        if (isMountedRef.current) {
+          setIsLoading(false)
+        }
+      })
+
+    return () => {
+      isMountedRef.current = false
+    }
+  }, [])
+
+  const retry = useCallback(() => {
+    setIsLoading(true)
+    loadDraft()
+  }, [loadDraft])
+
+  // Derive Available Payment Methods from Shop Context
+  const availableMethods = useMemo<PaymentMethodItem[]>(() => {
+    if (!draft?.shop) return []
+    return getAvailablePaymentMethods(draft.shop)
+  }, [draft])
+
+  // Derive active selected payment method safely
+  const selectedMethod = useMemo<PaymentMethodId>(() => {
+    if (userSelectedMethod) {
+      const match = availableMethods.find(
+        (m) => m.id === userSelectedMethod && m.enabled
+      )
+      if (match) return userSelectedMethod
+    }
+    // Default to UPI / ONLINE if enabled, otherwise first enabled
+    const upiMethod = availableMethods.find(
+      (m) => m.id === "ONLINE" && m.enabled
+    )
+    if (upiMethod) return "ONLINE"
+    const firstEnabled = availableMethods.find((m) => m.enabled)
+    return firstEnabled ? firstEnabled.id : "ONLINE"
+  }, [userSelectedMethod, availableMethods])
 
   const handleBack = useCallback(() => {
     if (draft) {
@@ -116,10 +217,18 @@ export function useReviewOrder() {
     setPriceNotice(null)
   }, [])
 
-  const handleProceedToPayment = useCallback(async () => {
-    if (!draft || isSubmitting || isValidating) return
+  const handlePaymentRetry = useCallback(() => {
+    clearActiveTransaction()
+    setActiveTransaction(null)
+    setPaymentError(null)
+    setPaymentState("METHOD_SELECTED")
+  }, [])
+
+  const handlePaymentSubmit = useCallback(async () => {
+    if (!draft || isSubmittingRef.current || isValidating) return
 
     setValidationError(null)
+    setPaymentError(null)
 
     // 1. Client pre-validation
     const validation = validateOrderDraft(draft)
@@ -128,63 +237,164 @@ export function useReviewOrder() {
       return
     }
 
-    setIsValidating(true)
+    isSubmittingRef.current = true
+    setIsSubmitting(true)
 
     try {
-      // 2. Authoritative price refresh & validation
-      const refreshResult = await refreshPriceAuthoritatively(draft)
+      const idempotencyKey = `idemp_pay_${draft.orderId}_${Date.now()}`
 
-      if (refreshResult.hasChanged) {
-        const updatedDraft: OrderDraft = {
-          ...draft,
-          pricing: refreshResult.pricing,
-          metadata: {
-            ...draft.metadata,
-            updatedAt: new Date().toISOString(),
-          },
+      if (selectedMethod === "ONLINE") {
+        setPaymentState("INITIATING")
+
+        // 1. Authoritative price verification & transaction initiation
+        const initResult = await initiateOnlinePaymentTransaction(
+          draft,
+          idempotencyKey
+        )
+
+        if (!isMountedRef.current) return
+
+        if (initResult.priceChanged) {
+          const updatedDraft: OrderDraft = {
+            ...draft,
+            pricing: {
+              ...draft.pricing,
+              total: initResult.authoritativeTotal,
+            },
+            metadata: {
+              ...draft.metadata,
+              updatedAt: new Date().toISOString(),
+            },
+          }
+          setDraft(updatedDraft)
+          saveOrderDraft(updatedDraft)
+          setPriceNotice({
+            previousTotal: draft.pricing.total,
+            newTotal: initResult.authoritativeTotal,
+          })
+          setPaymentState("FAILED")
+          setPaymentError(PAYMENT_COPY.priceChangedDescription)
+          isSubmittingRef.current = false
+          setIsSubmitting(false)
+          return
         }
-        setDraft(updatedDraft)
-        saveOrderDraft(updatedDraft)
-        setPriceNotice({
-          previousTotal: refreshResult.previousTotal,
-          newTotal: refreshResult.pricing.total,
-        })
-        setIsValidating(false)
-        return
+
+        setActiveTransaction(initResult.transaction)
+        setPaymentState("VERIFICATION_PENDING")
+
+        // 2. Gateway verification roundtrip
+        const verifyResult = await verifyPaymentTransaction(
+          initResult.transaction
+        )
+
+        if (!isMountedRef.current) return
+
+        if (verifyResult.success) {
+          setActiveTransaction(verifyResult.verifiedTransaction)
+          setPaymentState("SUCCESS")
+
+          // 3. Persist order
+          await submitOnlinePaidOrder(draft, verifyResult.verifiedTransaction)
+
+          setTimeout(() => {
+            if (isMountedRef.current) {
+              router.push(
+                `${REVIEW_ROUTES.ORDER_STATUS}?orderId=${encodeURIComponent(
+                  draft.orderId
+                )}`
+              )
+            }
+          }, 500)
+        } else {
+          setPaymentState("FAILED")
+          setPaymentError(PAYMENT_COPY.paymentFailedDescription)
+        }
+      } else if (selectedMethod === "CASH") {
+        setPaymentState("CASH_PENDING")
+
+        await submitCashPaymentOrder(draft, idempotencyKey)
+
+        if (!isMountedRef.current) return
+
+        setPaymentState("SUCCESS")
+
+        setTimeout(() => {
+          if (isMountedRef.current) {
+            router.push(
+              `${REVIEW_ROUTES.ORDER_STATUS}?orderId=${encodeURIComponent(
+                draft.orderId
+              )}`
+            )
+          }
+        }, 500)
       }
-
-      // 3. Price confirmed -> proceed to Screen 04
-      setIsSubmitting(true)
-      saveOrderDraft(draft)
-      router.push(REVIEW_ROUTES.PAYMENT)
     } catch (err) {
-      console.error("Price verification failed:", err)
-      setValidationError("Could not verify the current order price. Please try again.")
-      setIsValidating(false)
+      if (!isMountedRef.current) return
+      console.error("Payment transaction error:", err)
+      setPaymentState("FAILED")
+      setPaymentError(PAYMENT_COPY.paymentFailedDescription)
+    } finally {
+      if (isMountedRef.current) {
+        isSubmittingRef.current = false
+        setIsSubmitting(false)
+      }
     }
-  }, [draft, isSubmitting, isValidating, router])
+  }, [draft, isValidating, selectedMethod, router])
 
-  const canContinue =
-    Boolean(draft && draft.documents.length > 0) &&
-    !isLoading &&
-    !isValidating &&
-    !isSubmitting
+  const canSubmit = useMemo(() => {
+    if (
+      isLoading ||
+      isSubmitting ||
+      isValidating ||
+      !draft ||
+      draft.documents.length === 0
+    ) {
+      return false
+    }
+    if (
+      paymentState === "INITIATING" ||
+      paymentState === "VERIFICATION_PENDING" ||
+      paymentState === "SUCCESS"
+    ) {
+      return false
+    }
+    const currentMethodObj = availableMethods.find((m) => m.id === selectedMethod)
+    return Boolean(currentMethodObj?.enabled)
+  }, [
+    isLoading,
+    isSubmitting,
+    isValidating,
+    draft,
+    paymentState,
+    availableMethods,
+    selectedMethod,
+  ])
 
   return {
     draft,
     isLoading,
     isValidating,
     isSubmitting,
-    canContinue,
+    canContinue: canSubmit,
+    canSubmit,
     validationError,
     loadError,
+    paymentError,
     priceNotice,
+    selectedMethod,
+    availableMethods,
+    paymentState,
+    activeTransaction,
+    setSelectedMethod: setUserSelectedMethod,
     handleBack,
     handleEditDocument,
     handleUpdateCopies,
     handleDeleteDocument,
-    handleProceedToPayment,
+    handleProceedToPayment: handlePaymentSubmit,
+    handlePaymentSubmit,
+    handlePaymentRetry,
     handleDismissPriceNotice,
-    retry: fetchDraft,
+    retry,
   }
 }
+

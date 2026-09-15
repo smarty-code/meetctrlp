@@ -3,6 +3,7 @@ export const REVIEW_ROUTES = {
   CUSTOMIZE: "/customize",
   REVIEW: "/review",
   PAYMENT: "/payment",
+  ORDER_STATUS: "/order-status",
 } as const
 
 export const STORAGE_KEYS = {

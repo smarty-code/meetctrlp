@@ -21,12 +21,12 @@ export function PaymentMethodSelector({
   return (
     <section
       aria-labelledby="payment-methods-heading"
-      className="space-y-3"
+      className="space-y-2"
     >
       <div className="flex items-center justify-between">
         <h2
           id="payment-methods-heading"
-          className="text-body font-bold text-midnight"
+          className="text-caption font-bold tracking-wide uppercase text-ash"
         >
           {PAYMENT_COPY.choosePaymentTitle}
         </h2>
@@ -35,7 +35,7 @@ export function PaymentMethodSelector({
       <div
         role="radiogroup"
         aria-labelledby="payment-methods-heading"
-        className="space-y-3"
+        className="grid grid-cols-2 gap-2.5 sm:gap-3"
       >
         {methods.map((method) => (
           <PaymentMethodCard
