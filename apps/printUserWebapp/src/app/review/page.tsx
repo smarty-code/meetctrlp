@@ -1,6 +1,6 @@
 "use client"
 
-import React from "react"
+import React, { useState } from "react"
 import { useRouter } from "next/navigation"
 import { AlertCircle } from "lucide-react"
 import { useReviewOrder } from "../../hooks/use-review-order"
@@ -12,12 +12,13 @@ import { PriceChangedBanner } from "../../components/review/price-changed-banner
 import { ReviewOrderFooter } from "../../components/review/review-order-footer"
 import { ReviewLoadingSkeleton } from "../../components/review/review-loading-skeleton"
 import { ReviewErrorState } from "../../components/review/review-error-state"
-import { PaymentMethodSelector } from "../../components/payment/payment-method-selector"
+import { PaymentMethodDrawer } from "../../components/payment/payment-method-drawer"
 import { PaymentStatusFeedback } from "../../components/payment/payment-status-feedback"
 import { REVIEW_ROUTES } from "../../data/review-constants"
 
 export default function ReviewPage() {
   const router = useRouter()
+  const [isMethodDrawerOpen, setIsMethodDrawerOpen] = useState(false)
   const {
     draft,
     isLoading,
@@ -124,21 +125,13 @@ export default function ReviewPage() {
             />
           </div>
 
-          {/* Right Column: Price Summary, Payment Selection & Direct Checkout */}
+          {/* Right Column: Price Summary & Direct Checkout with Change Method Trigger */}
           <div className="space-y-4 lg:col-span-5">
             <div className="sticky top-20 space-y-4">
               {/* Structured Data-Driven Price Summary */}
               <PriceSummaryCard
                 pricing={draft.pricing}
                 totalDocuments={draft.documents.length}
-              />
-
-              {/* Payment Method Selector */}
-              <PaymentMethodSelector
-                methods={availableMethods}
-                selectedMethod={selectedMethod}
-                onSelectMethod={setSelectedMethod}
-                disabled={isSubmitting}
               />
 
               {/* In-Flight & Failure Feedback */}
@@ -148,7 +141,7 @@ export default function ReviewPage() {
                 onRetry={handlePaymentRetry}
               />
 
-              {/* Desktop CTA Action Box */}
+              {/* Desktop CTA Action Box with split Change Method & Place Order */}
               <div className="hidden sm:block">
                 <ReviewOrderFooter
                   totalAmount={draft.pricing.total}
@@ -161,6 +154,7 @@ export default function ReviewPage() {
                   isSubmitting={isSubmitting}
                   canContinue={canSubmit}
                   onContinue={handlePaymentSubmit}
+                  onChangeMethod={() => setIsMethodDrawerOpen(true)}
                 />
               </div>
             </div>
@@ -181,9 +175,21 @@ export default function ReviewPage() {
           isSubmitting={isSubmitting}
           canContinue={canSubmit}
           onContinue={handlePaymentSubmit}
+          onChangeMethod={() => setIsMethodDrawerOpen(true)}
         />
       </div>
+
+      {/* Payment Method Selection Bottom Sheet Drawer */}
+      <PaymentMethodDrawer
+        isOpen={isMethodDrawerOpen}
+        onClose={() => setIsMethodDrawerOpen(false)}
+        methods={availableMethods}
+        selectedMethod={selectedMethod}
+        onSelectMethod={setSelectedMethod}
+        disabled={isSubmitting}
+      />
     </div>
   )
 }
+
 
