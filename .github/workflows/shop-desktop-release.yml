@@ -1,0 +1,90 @@
+name: Shop Desktop Release
+
+on:
+  push:
+    tags:
+      - "shop-desktop-v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing tag to build and release, for example shop-desktop-v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  DESKTOP_PATH: apps/shopPartnerDesktopApp
+  RUST_BACKTRACE: 1
+
+jobs:
+  build-windows-installer:
+    name: Build Windows installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.27.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable-x86_64-pc-windows-msvc
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check Rust formatting
+        working-directory: ${{ env.DESKTOP_PATH }}/src-tauri
+        shell: bash
+        run: cargo fmt --check
+
+      - name: Run Rust tests
+        working-directory: ${{ env.DESKTOP_PATH }}/src-tauri
+        shell: bash
+        run: cargo test
+
+      - name: Build and publish Windows installers
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Add these secrets later when signed update artifacts are needed:
+          # TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: ${{ env.DESKTOP_PATH }}
+          tagName: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+          releaseName: "PrintKro Shop Desktop ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}"
+          releaseBody: |
+            Windows installers for the PrintKro Shop Desktop Agent.
+
+            Install the `.exe` NSIS installer for the normal Windows setup experience, or use the `.msi` package for managed deployment.
+          releaseDraft: true
+          prerelease: false
+
+      - name: Collect installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: printkro-shop-desktop-windows-installers
+          if-no-files-found: error
+          path: |
+            ${{ env.DESKTOP_PATH }}/src-tauri/target/release/bundle/nsis/*.exe
+            ${{ env.DESKTOP_PATH }}/src-tauri/target/release/bundle/msi/*.msi
