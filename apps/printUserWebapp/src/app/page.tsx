@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { MobileHeader } from '../components/mobile-header';
 import { HeroSection } from '../components/hero-section';
 import { DocumentsUploadCard } from '../components/documents-upload-card';
@@ -12,6 +13,7 @@ import { mockShop, faqList } from '../data/mock-shop';
 import { UploadedFileItem } from '../types/upload';
 
 export default function PrintUserUploadPage() {
+  const router = useRouter();
   const [shop] = useState(mockShop);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFileItem[]>([]);
   const [isUploadingOverall, setIsUploadingOverall] = useState(false);
@@ -105,7 +107,11 @@ export default function PrintUserUploadPage() {
   const handleContinueToConfig = () => {
     const validFiles = uploadedFiles.filter((f) => f.status === 'success');
     if (validFiles.length === 0) return;
-    showToast(`Continuing to Screen 02 with ${validFiles.length} file(s)...`);
+    window.sessionStorage.setItem(
+      'ctrlp-uploaded-files',
+      JSON.stringify(validFiles.map(({ id, name, size, type }) => ({ id, name, size, type }))),
+    );
+    router.push('/customize');
   };
 
   const isAvailable = shop.status === 'OPEN' || shop.status === 'BUSY';
