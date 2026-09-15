@@ -18,7 +18,7 @@ export function OrderTimelineItem({ step, isLast }: OrderTimelineItemProps) {
   return (
     <li
       aria-current={isCurrent ? "step" : undefined}
-      className={`relative flex items-start gap-3.5 sm:gap-4 ${
+      className={`relative flex items-start gap-2.5 sm:gap-3 ${
         isUpcoming ? "opacity-50" : "opacity-100"
       }`}
     >
@@ -26,7 +26,7 @@ export function OrderTimelineItem({ step, isLast }: OrderTimelineItemProps) {
       {!isLast && (
         <div
           aria-hidden="true"
-          className={`absolute top-8 -bottom-6 left-4 -ml-px w-0.5 ${
+          className={`absolute top-7 -bottom-3.5 left-3.5 -ml-px w-0.5 ${
             isCompleted
               ? "bg-ecto-green"
               : isFailed
@@ -38,25 +38,25 @@ export function OrderTimelineItem({ step, isLast }: OrderTimelineItemProps) {
 
       {/* Step indicator node */}
       <div
-        className={`relative z-10 flex size-8 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
+        className={`relative z-10 flex size-7 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
           isCompleted
             ? "border-ecto-green bg-ecto-green text-paper"
             : isCurrent
-              ? "border-ecto-green bg-eel-light text-midnight ring-4 ring-eel-light/50"
+              ? "border-ecto-green bg-eel-light text-midnight ring-3 ring-eel-light/50"
               : isFailed
                 ? "border-amber-500 bg-amber-100 text-amber-900"
                 : "border-graphite/30 bg-paper text-ash"
         }`}
       >
-        {isCompleted && <Check className="size-4 stroke-[3]" />}
+        {isCompleted && <Check className="size-3.5 stroke-[3]" />}
         {isCurrent && (
-          <CircleDot className="size-4 stroke-[2.5] text-midnight" />
+          <CircleDot className="size-3.5 stroke-[2.5] text-midnight" />
         )}
         {isFailed && (
-          <AlertCircle className="size-4 stroke-[2.5] text-amber-700" />
+          <AlertCircle className="size-3.5 stroke-[2.5] text-amber-700" />
         )}
         {isUpcoming && (
-          <span className="size-2 rounded-full bg-graphite/40" />
+          <span className="size-1.5 rounded-full bg-graphite/40" />
         )}
       </div>
 
@@ -64,7 +64,7 @@ export function OrderTimelineItem({ step, isLast }: OrderTimelineItemProps) {
       <div className="min-w-0 flex-1 pt-0.5">
         <div className="flex flex-wrap items-center justify-between gap-1">
           <p
-            className={`text-body leading-tight font-bold ${
+            className={`text-caption sm:text-body leading-tight font-bold ${
               isCurrent
                 ? "font-black text-midnight"
                 : isFailed
@@ -77,7 +77,7 @@ export function OrderTimelineItem({ step, isLast }: OrderTimelineItemProps) {
 
           {/* Accessible state badge */}
           <span
-            className={`rounded-full px-2 py-0.5 text-[11px] font-bold tracking-wider uppercase ${
+            className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold tracking-wider uppercase ${
               isCompleted
                 ? "border border-ecto-green/40 bg-eel-light text-midnight"
                 : isCurrent
@@ -97,13 +97,13 @@ export function OrderTimelineItem({ step, isLast }: OrderTimelineItemProps) {
           </span>
         </div>
 
-        <p className="mt-1 text-caption leading-relaxed text-charcoal">
+        <p className="mt-0.5 text-[12px] leading-tight text-charcoal">
           {step.description}
         </p>
 
         {step.timestamp && (
-          <p className="mt-1 flex items-center gap-1 text-[11px] font-medium text-ash">
-            <Clock className="size-3 text-ash" />
+          <p className="mt-0.5 flex items-center gap-1 text-[10px] font-medium text-ash">
+            <Clock className="size-2.5 text-ash" />
             <span>Updated just now</span>
           </p>
         )}

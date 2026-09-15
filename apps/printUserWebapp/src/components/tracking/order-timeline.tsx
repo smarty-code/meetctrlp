@@ -13,19 +13,19 @@ export function OrderTimeline({ steps }: OrderTimelineProps) {
   return (
     <section
       aria-labelledby="timeline-heading"
-      className="rounded-xl border-2 border-graphite/20 bg-paper p-5 sm:p-6"
+      className="rounded-xl border-2 border-graphite/20 bg-paper p-3.5 sm:p-4"
     >
-      <div className="mb-5">
+      <div className="mb-3">
         <h3
           id="timeline-heading"
-          className="text-body text-caption font-bold tracking-wide text-midnight uppercase"
+          className="text-caption font-bold tracking-wide text-midnight uppercase"
         >
           {TRACKING_COPY.orderTimelineTitle}
         </h3>
       </div>
 
       <ol
-        className="relative space-y-6 sm:space-y-7"
+        className="relative space-y-3 sm:space-y-3.5"
         aria-label="Order progress"
       >
         {steps.map((step, idx) => (

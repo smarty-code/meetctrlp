@@ -71,29 +71,29 @@ export function OrderStatusBanner({
 
   return (
     <div
-      className={`rounded-xl border-2 p-4 transition-colors sm:p-5 ${containerBorderClass}`}
+      className={`rounded-xl border-2 p-3 sm:p-4 transition-colors ${containerBorderClass}`}
     >
-      <div className="flex flex-col gap-3.5 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-start gap-3 sm:items-center">
+      <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2.5">
           <div
-            className={`flex size-10 shrink-0 items-center justify-center rounded-xl ${iconBgClass}`}
+            className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${iconBgClass}`}
             aria-hidden="true"
           >
             {renderIcon()}
           </div>
 
-          <div>
-            <h2 className="text-body font-bold text-midnight sm:text-heading-sm leading-tight">
+          <div className="min-w-0">
+            <h2 className="text-body font-bold text-midnight leading-tight">
               {presentation.headline}
             </h2>
-            <p className="mt-0.5 text-caption leading-normal text-charcoal">
+            <p className="text-[12px] sm:text-caption leading-tight text-charcoal">
               {presentation.customerDescription}
             </p>
           </div>
         </div>
 
         {/* Compact Order Reference Pill with Copy Action */}
-        <div className="sm:shrink-0">
+        <div className="shrink-0 self-start sm:self-auto">
           <button
             type="button"
             onClick={onCopyReference}
@@ -102,13 +102,13 @@ export function OrderStatusBanner({
                 ? TRACKING_COPY.copiedFeedback
                 : `${TRACKING_COPY.copyOrderNumber}: ${order.displayReference}`
             }
-            className="group inline-flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg border-2 border-graphite/20 bg-paper px-3 py-1.5 font-mono text-caption font-bold text-midnight transition-colors hover:border-graphite/40 sm:w-auto"
+            className="group inline-flex cursor-pointer items-center justify-between gap-1.5 rounded-lg border-2 border-graphite/20 bg-paper px-2.5 py-1 font-mono text-[12px] font-bold text-midnight transition-colors hover:border-graphite/40"
           >
-            <div className="flex items-center gap-1.5">
-              <Hash className="size-3.5 text-ash transition-colors group-hover:text-charcoal" />
+            <div className="flex items-center gap-1">
+              <Hash className="size-3 text-ash transition-colors group-hover:text-charcoal" />
               <span>{order.displayReference}</span>
             </div>
-            <span className="flex items-center gap-1 border-l border-graphite/20 pl-2 font-sans text-caption font-medium text-ash transition-colors group-hover:text-midnight">
+            <span className="flex items-center gap-1 border-l border-graphite/20 pl-1.5 font-sans text-[11px] font-medium text-ash transition-colors group-hover:text-midnight">
               {copied ? (
                 <>
                   <Check className="size-3 stroke-[3] text-ecto-green" />
@@ -118,7 +118,7 @@ export function OrderStatusBanner({
                 </>
               ) : (
                 <>
-                  <Copy className="size-3" />
+                  <Copy className="size-2.5" />
                   <span>Copy</span>
                 </>
               )}
