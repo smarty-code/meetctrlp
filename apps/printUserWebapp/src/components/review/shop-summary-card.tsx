@@ -14,48 +14,50 @@ export function ShopSummaryCard({ shop }: ShopSummaryCardProps) {
   return (
     <section
       aria-labelledby="shop-summary-heading"
-      className="rounded-xl border border-graphite/15 bg-paper p-3.5 transition-colors sm:p-4"
+      className="rounded-xl border-2 border-graphite/20 bg-paper p-3.5 transition-colors sm:p-4"
     >
-      {/* Top Header: Category Tag & Small Operating Hours */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 text-caption font-bold tracking-caption uppercase text-ash">
-          <Store className="size-3.5 stroke-[2] text-ash" />
-          <span id="shop-summary-heading">Print & Pickup</span>
+      {/* 1. Top Header: Shop Name + Status/Hours */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-graphite/20 bg-graphite/5">
+            <Store className="size-4 text-ecto-green" />
+          </div>
+          <h2
+            id="shop-summary-heading"
+            className="text-[15px] sm:text-body font-bold text-midnight truncate"
+          >
+            {shop.name}
+          </h2>
         </div>
 
-        {/* Operating Hours displayed in a small, subtle manner */}
-        {shop.openTime && shop.closeTime ? (
-          <div className="flex items-center gap-1.5 text-caption text-ash">
-            {isOpen && (
+        {/* Operating status / Hours */}
+        <div className="shrink-0 flex items-center gap-1.5 text-[11px] sm:text-caption font-medium text-ash">
+          {isOpen ? (
+            <>
               <span
-                className="size-1.5 rounded-full bg-ecto-green"
+                className="size-2 rounded-full bg-ecto-green"
                 aria-hidden="true"
               />
-            )}
-            <span className="font-medium">
-              {shop.openTime} – {shop.closeTime}
-            </span>
-          </div>
-        ) : isOpen ? (
-          <span className="flex items-center gap-1 text-caption font-medium text-ecto-green">
-            <span className="size-1.5 rounded-full bg-ecto-green" />
-            <span>Open Now</span>
-          </span>
-        ) : null}
+              <span className="font-semibold text-midnight">
+                {shop.openTime && shop.closeTime
+                  ? `${shop.openTime} – ${shop.closeTime}`
+                  : "Open Now"}
+              </span>
+            </>
+          ) : (
+            <span className="text-destructive font-medium">Closed</span>
+          )}
+        </div>
       </div>
 
-      {/* Main Content: Shop Name & Compact Address */}
-      <div className="mt-1.5">
-        <h2 className="text-body font-bold text-midnight sm:text-[16px]">
-          {shop.name}
-        </h2>
-        {shop.address && (
-          <p className="mt-0.5 flex items-start gap-1 text-caption text-charcoal">
-            <MapPin className="mt-0.5 size-3 shrink-0 text-ash" />
-            <span>{shop.address}</span>
-          </p>
-        )}
-      </div>
+      {/* 2. Below Shop Name: Location / Address */}
+      {shop.address && (
+        <div className="mt-2.5 flex items-start gap-1.5 text-caption text-charcoal">
+          <MapPin className="mt-0.5 size-3.5 shrink-0 text-ash" />
+          <span className="leading-snug">{shop.address}</span>
+        </div>
+      )}
     </section>
   )
 }
+

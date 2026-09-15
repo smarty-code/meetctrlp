@@ -30,14 +30,22 @@ export function PaymentMethodCard({
   const renderIcon = () => {
     switch (method.iconName) {
       case "upi":
-        return <Smartphone className="size-6 stroke-[2.2] text-ecto-green" />
+        return <Smartphone className="size-4.5 stroke-[2.2] text-ecto-green" />
       case "cash":
-        return <Banknote className="size-6 stroke-[2.2] text-macaw-blue" />
+        return <Banknote className="size-4.5 stroke-[2.2] text-macaw-blue" />
       case "card":
       default:
-        return <CreditCard className="size-6 stroke-[2.2] text-ash" />
+        return <CreditCard className="size-4.5 stroke-[2.2] text-ash" />
     }
   }
+
+  const title = method.id === "ONLINE" ? "UPI / Online" : "Cash at Shop"
+  const subtitle =
+    isCardDisabled && method.disabledReason
+      ? method.disabledReason
+      : method.id === "ONLINE"
+        ? "Instant Confirmation"
+        : "Pay at Counter"
 
   return (
     <div
@@ -51,65 +59,47 @@ export function PaymentMethodCard({
         }
       }}
       onKeyDown={handleKeyDown}
-      className={`group relative flex cursor-pointer items-start gap-4 rounded-xl border-2 p-4 transition-all select-none sm:p-5 ${
+      className={`group relative flex flex-col justify-between cursor-pointer rounded-xl border-2 p-2.5 sm:p-3 transition-all select-none ${
         isCardDisabled
           ? "cursor-not-allowed border-graphite/10 bg-graphite/5 opacity-60"
           : isSelected
-            ? "border-ecto-green bg-eel-light/10 ring-2 ring-ecto-green/20"
+            ? "border-ecto-green bg-eel-light/15 ring-2 ring-ecto-green/20"
             : "border-graphite/20 bg-paper hover:border-graphite/40 hover:bg-graphite/5"
       }`}
     >
-      {/* Method Icon container */}
-      <div
-        className={`flex size-12 shrink-0 items-center justify-center rounded-xl border-2 transition-colors ${
-          isSelected
-            ? "border-ecto-green/40 bg-eel-light/40"
-            : "border-graphite/20 bg-paper"
-        }`}
-      >
-        {renderIcon()}
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 space-y-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-body font-bold text-midnight">
-            {method.title}
-          </span>
-          {method.badgeText && (
-            <span
-              className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
-                isSelected
-                  ? "bg-eel-light text-midnight"
-                  : "bg-graphite/10 text-charcoal"
-              }`}
-            >
-              {method.badgeText}
-            </span>
-          )}
+      {/* Top row: Icon + Radio Indicator */}
+      <div className="flex items-center justify-between">
+        <div
+          className={`flex size-8 shrink-0 items-center justify-center rounded-lg border transition-colors ${
+            isSelected
+              ? "border-ecto-green/40 bg-eel-light/40"
+              : "border-graphite/20 bg-paper"
+          }`}
+        >
+          {renderIcon()}
         </div>
 
-        <p className="text-caption text-ash leading-relaxed">
-          {method.description}
-        </p>
-
-        {isCardDisabled && method.disabledReason && (
-          <p className="text-caption font-bold text-destructive">
-            {method.disabledReason}
-          </p>
-        )}
+        <div
+          className={`flex size-4.5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
+            isSelected
+              ? "border-ecto-green bg-ecto-green text-paper"
+              : "border-graphite/30 bg-paper group-hover:border-graphite"
+          }`}
+        >
+          {isSelected && <Check className="size-2.5 stroke-[3]" />}
+        </div>
       </div>
 
-      {/* Radio Circle Indicator */}
-      <div
-        className={`mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
-          isSelected
-            ? "border-ecto-green bg-ecto-green text-paper"
-            : "border-graphite/30 bg-paper group-hover:border-graphite"
-        }`}
-      >
-        {isSelected && <Check className="size-3.5 stroke-[3]" />}
+      {/* Bottom text: Simple title & short subtitle */}
+      <div className="mt-2 sm:mt-2.5">
+        <span className="block text-[13px] sm:text-[14px] font-bold text-midnight leading-tight">
+          {title}
+        </span>
+        <span className="block text-[11px] text-ash leading-tight mt-0.5 truncate">
+          {subtitle}
+        </span>
       </div>
     </div>
   )
 }
+

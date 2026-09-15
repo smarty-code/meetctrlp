@@ -1,15 +1,14 @@
 "use client"
 
 import React from "react"
-import { Building2, FileText, Hash } from "lucide-react"
+import { Building2, FileText, Hash, MapPin } from "lucide-react"
 import { ShopContext } from "../../types/upload"
-import { formatCurrency } from "../../lib/currency"
 import { PAYMENT_COPY } from "../../data/payment-constants"
 
 interface PaymentOrderSummaryProps {
   orderId: string
   shop: ShopContext
-  totalAmount: number
+  totalAmount?: number
   totalDocuments: number
   totalCopies: number
   currency?: string
@@ -18,64 +17,49 @@ interface PaymentOrderSummaryProps {
 export function PaymentOrderSummary({
   orderId,
   shop,
-  totalAmount,
   totalDocuments,
   totalCopies,
-  currency = "INR",
 }: PaymentOrderSummaryProps) {
-  const formattedAmount = formatCurrency(totalAmount, { currency })
-
   return (
     <section
       aria-labelledby="payment-order-summary-heading"
       className="overflow-hidden rounded-xl border-2 border-graphite/20 bg-paper transition-shadow"
     >
       {/* Header bar of summary */}
-      <div className="flex items-center justify-between border-b border-graphite/10 bg-graphite/5 px-4 py-3 sm:px-5">
+      <div className="flex items-center justify-between border-b border-graphite/10 bg-graphite/5 px-3.5 py-2 sm:px-5 sm:py-2.5">
         <span
           id="payment-order-summary-heading"
-          className="text-caption font-bold tracking-wider text-ash uppercase"
+          className="text-[11px] font-bold tracking-wider text-ash uppercase sm:text-caption"
         >
           {PAYMENT_COPY.orderSummaryTitle}
         </span>
-        <div className="flex items-center gap-1.5 font-mono text-caption font-bold text-midnight">
-          <Hash className="size-3.5 text-ash" />
+        <div className="flex items-center gap-1 font-mono text-[11px] font-bold text-midnight sm:text-caption">
+          <Hash className="size-3 text-ash sm:size-3.5" />
           <span>{orderId}</span>
         </div>
       </div>
 
-      <div className="p-4 sm:p-5">
+      <div className="p-3.5 sm:p-4">
         {/* Shop Info & Document meta */}
-        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-graphite/10 pb-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2 text-body font-bold text-midnight">
-              <Building2 className="size-4 text-ecto-green" />
+        <div className="flex flex-col gap-2.5 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 flex-1 space-y-1">
+            <div className="flex items-center gap-1.5 text-[15px] font-bold text-midnight sm:text-body">
+              <Building2 className="size-4 shrink-0 text-ecto-green" />
               <span>{shop.name}</span>
             </div>
             {shop.address && (
-              <p className="text-caption text-ash line-clamp-1">
-                {shop.address}
-              </p>
+              <div className="flex items-start gap-1 text-[12px] text-ash sm:text-caption leading-snug">
+                <MapPin className="size-3.5 shrink-0 text-ash/80 mt-0.5" />
+                <span>{shop.address}</span>
+              </div>
             )}
           </div>
 
-          <div className="flex items-center gap-1.5 rounded-full border border-graphite/20 bg-graphite/5 px-3 py-1 text-caption font-bold text-charcoal">
+          <div className="self-start flex shrink-0 items-center gap-1.5 rounded-full border border-graphite/20 bg-graphite/5 px-2.5 py-1 text-[11px] font-bold text-charcoal sm:px-3 sm:text-caption">
             <FileText className="size-3.5 text-macaw-blue" />
             <span>
               {totalDocuments} {totalDocuments === 1 ? "document" : "documents"} ·{" "}
               {totalCopies} {totalCopies === 1 ? "copy" : "copies"}
-            </span>
-          </div>
-        </div>
-
-        {/* Amount to Pay — Prominent display per specification */}
-        <div className="mt-4 flex items-baseline justify-between">
-          <span className="text-body font-bold text-midnight">
-            {PAYMENT_COPY.amountToPayLabel}
-          </span>
-          <div className="text-right">
-            <span className="text-heading font-bold text-midnight tracking-tight">
-              {formattedAmount}
             </span>
           </div>
         </div>

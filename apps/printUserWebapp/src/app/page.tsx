@@ -33,26 +33,58 @@ export default function Home() {
   const handleFilesSelected = (files: FileList | null) => {
     if (!files || files.length === 0) return
 
+    const ALLOWED_EXTENSIONS = [
+      "pdf",
+      "jpg",
+      "jpeg",
+      "png",
+      "doc",
+      "docx",
+      "ppt",
+      "pptx",
+    ]
+    const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50MB limit
+
     const newItems: UploadedFileItem[] = Array.from(files).map((file, idx) => {
       const id = `file_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 7)}`
       const previewUrl = cacheUploadedFile(id, file)
+      const ext = file.name.split(".").pop()?.toLowerCase() || ""
+      const isFormatValid = ALLOWED_EXTENSIONS.includes(ext)
+      const isSizeValid = file.size <= MAX_FILE_SIZE
+
+      let status: "uploading" | "error" = "uploading"
+      let errorMessage: string | undefined
+
+      if (!isFormatValid) {
+        status = "error"
+        errorMessage = "Unsupported format"
+      } else if (!isSizeValid) {
+        status = "error"
+        errorMessage = "Exceeds 50MB limit"
+      }
+
       return {
         id,
         file,
         name: file.name,
         size: file.size,
         type: file.type || "application/octet-stream",
-        progress: 0,
-        status: "uploading",
+        progress: status === "error" ? 0 : 0,
+        status,
+        errorMessage,
         previewUrl,
       }
     })
 
     setUploadedFiles((prev) => [...prev, ...newItems])
+
+    const validNewItems = newItems.filter((item) => item.status === "uploading")
+    if (validNewItems.length === 0) return
+
     setIsUploadingOverall(true)
 
-    // Simulate realistic upload progress for each new file
-    newItems.forEach((item, index) => {
+    // Simulate realistic upload progress for valid new files
+    validNewItems.forEach((item, index) => {
       let currentProgress = 0
       const interval = setInterval(
         () => {
