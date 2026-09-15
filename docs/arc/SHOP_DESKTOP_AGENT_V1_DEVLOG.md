@@ -23,6 +23,7 @@ Update this file after each implementation phase. Keep the entries chronological
 | Phase 3: Normalized document jobs | Complete | PDF/JPG/PNG domain payloads and validation are implemented; printing them is the next phase. |
 | Phase 4: Windows driver backend | Next | Concrete PDF/image rendering and driver submission are not implemented yet. |
 | CI: Windows installer release | Complete | GitHub Actions workflow builds and publishes draft `.exe` and `.msi` installers on `shop-desktop-v*` tags. |
+| CI: Windows spooler linker fix | Complete | The Windows build now links the SDK import library as `winspool.lib` instead of looking for the invalid `winspool.drv.lib`. |
 
 ## Phase 1: Printer Discovery and Native Boundary
 
@@ -282,3 +283,29 @@ After the workflow finishes:
 5. Confirm the application can discover a Windows printer.
 6. Submit a test job and verify the Windows spooler/printer behavior.
 7. Keep the `.msi` for enterprise deployment or Windows installer testing.
+
+### Windows linker incident: `winspool.drv.lib`
+
+The Windows release job initially failed while linking Rust tests and the application:
+
+```text
+LINK : fatal error LNK1181: cannot open input file 'winspool.drv.lib'
+```
+
+The native Windows API calls load `winspool.drv` at runtime, but MSVC links against the Windows SDK import library named `winspool.lib`. The Rust declaration in `src-tauri/src/printer.rs` now uses:
+
+```rust
+#[link(name = "winspool")]
+```
+
+This preserves the runtime DLL behavior while allowing the MSVC linker to resolve the correct SDK library. The Windows-only printer imports were also scoped to remove non-Windows warnings.
+
+Local verification after the fix:
+
+```bash
+cargo fmt --check
+cargo check
+cargo test
+```
+
+Result: compilation succeeded and all 8 tests passed. The next release must be created from a commit containing this fix, not from the earlier failing tag.

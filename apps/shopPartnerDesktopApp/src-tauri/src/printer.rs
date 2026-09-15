@@ -1,6 +1,4 @@
-use crate::domain::{
-    PrintTestJob, Printer, PrinterBackendType, PrinterCapabilities, PrinterStatus,
-};
+use crate::domain::{PrintTestJob, Printer};
 
 pub trait PrinterBackend: Send + Sync {
     fn discover(&self) -> Result<Vec<Printer>, String>;
@@ -18,6 +16,8 @@ impl PrinterBackend for LocalPrinterBackend {
 
         #[cfg(not(windows))]
         {
+            use crate::domain::{PrinterBackendType, PrinterCapabilities, PrinterStatus};
+
             Ok(vec![Printer {
                 id: "development-printer".to_string(),
                 name: "Development Printer".to_string(),
@@ -66,7 +66,8 @@ mod platform {
             data_type: *const u16,
         }
 
-        #[link(name = "winspool.drv")]
+        // The Windows SDK import library is winspool.lib. The DLL loaded at runtime is winspool.drv.
+        #[link(name = "winspool")]
         unsafe extern "system" {
             fn OpenPrinterW(
                 name: *const u16,
