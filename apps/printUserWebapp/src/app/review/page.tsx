@@ -27,6 +27,8 @@ export default function ReviewPage() {
     priceNotice,
     handleBack,
     handleEditDocument,
+    handleUpdateCopies,
+    handleDeleteDocument,
     handleProceedToPayment,
     handleDismissPriceNotice,
     retry,
@@ -109,6 +111,8 @@ export default function ReviewPage() {
               documents={draft.documents}
               pricingItems={draft.pricing.items}
               onEditDocument={handleEditDocument}
+              onUpdateCopies={handleUpdateCopies}
+              onDeleteDocument={handleDeleteDocument}
             />
           </div>
 
@@ -116,7 +120,10 @@ export default function ReviewPage() {
           <div className="space-y-4 lg:col-span-5">
             <div className="sticky top-20 space-y-4">
               {/* Structured Data-Driven Price Summary */}
-              <PriceSummaryCard pricing={draft.pricing} />
+              <PriceSummaryCard
+                pricing={draft.pricing}
+                totalDocuments={draft.documents.length}
+              />
 
               {/* Desktop CTA Action Box */}
               <div className="hidden sm:block">

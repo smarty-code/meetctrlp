@@ -1,14 +1,12 @@
 "use client"
 
 import React from "react"
-import { Pencil } from "lucide-react"
+import { Minus, Plus, X } from "lucide-react"
 import { ConfigurableDocument } from "../../types/upload"
 import { OrderPricingItem } from "../../types/order"
 import { DocumentThumbnail } from "./document-thumbnail"
 import {
   formatColorMode,
-  formatCopies,
-  formatPageCount,
   formatPageSelectionSummary,
   formatPaperSize,
 } from "../../lib/review-formatters"
@@ -20,6 +18,8 @@ interface DocumentReviewCardProps {
   itemIndex: number
   pricingItem?: OrderPricingItem
   onEdit: (documentId: string) => void
+  onUpdateCopies: (documentId: string, copies: number) => void
+  onDelete: (documentId: string) => void
 }
 
 export function DocumentReviewCard({
@@ -27,6 +27,8 @@ export function DocumentReviewCard({
   itemIndex,
   pricingItem,
   onEdit,
+  onUpdateCopies,
+  onDelete,
 }: DocumentReviewCardProps) {
   const { configuration } = document
   const pageSelectionText = formatPageSelectionSummary(
@@ -35,55 +37,109 @@ export function DocumentReviewCard({
   )
   const isSelectedPages = pageSelectionText !== REVIEW_COPY.allPages
 
+  const effectivePages =
+    configuration.pageSelection?.mode === "selected" &&
+    configuration.pageSelection.pages.length > 0
+      ? configuration.pageSelection.pages.length
+      : Math.max(1, document.pageCount || 1)
+
   const itemPrice = pricingItem?.totalAmount ?? 0
 
   return (
-    <div className="flex items-center justify-between gap-3.5 p-4 transition-colors hover:bg-graphite/5 sm:p-5">
-      {/* Left: Thumbnail Preview */}
-      <DocumentThumbnail document={document} />
-
-      {/* Middle: Key Print Information (Pages, Copies, Color, Size) */}
-      <div className="min-w-0 flex-1">
-        {/* Pages & Copies as Primary Hierarchy */}
-        <div className="flex items-center gap-1.5 text-body font-bold text-midnight">
-          <span>{formatPageCount(document.pageCount)}</span>
-          <span aria-hidden="true" className="text-ash font-normal">
-            ·
-          </span>
-          <span>{formatCopies(configuration.copies)}</span>
-        </div>
-
-        {/* Configuration Tags: Color, Paper Size, Selected Page Range */}
-        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-          <span className="rounded-lg border border-graphite/20 bg-paper px-2 py-0.5 text-caption font-bold text-midnight">
-            {formatColorMode(configuration.colorMode)}
-          </span>
-          <span className="rounded-lg border border-graphite/20 bg-paper px-2 py-0.5 text-caption font-bold text-midnight">
-            {formatPaperSize(configuration.paperSize)}
-          </span>
-          {isSelectedPages && (
-            <span className="rounded-lg border border-macaw-blue/40 bg-macaw-blue/10 px-2 py-0.5 text-caption font-bold text-midnight">
-              {pageSelectionText}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Right: Price & Edit CTA (Stacked like e-commerce checkout) */}
-      <div className="flex flex-col items-end justify-between gap-2 self-stretch shrink-0 py-0.5">
-        <span className="text-body font-bold text-midnight sm:text-[16px]">
-          {formatCurrency(itemPrice)}
-        </span>
-
+    <div
+      role="button"
+      tabIndex={0}
+      title={`Click to configure ${document.name}`}
+      onClick={() => onEdit(document.id)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault()
+          onEdit(document.id)
+        }
+      }}
+      className="group relative flex items-center justify-between gap-3 p-3.5 transition-colors hover:bg-graphite/[0.03] sm:gap-4 sm:p-4 cursor-pointer focus-visible:outline-hidden focus-visible:bg-graphite/[0.05]"
+    >
+      {/* Left: Thumbnail with Cross Delete Button at Top-Left Corner */}
+      <div className="relative shrink-0">
         <button
           type="button"
-          onClick={() => onEdit(document.id)}
-          aria-label={`Edit print settings for item ${itemIndex + 1}`}
-          className="inline-flex items-center gap-1 rounded-lg border border-macaw-blue px-2.5 py-1 text-caption font-bold text-midnight transition-all hover:bg-macaw-blue/10 focus-visible:ring-2 focus-visible:ring-macaw-blue focus-visible:outline-hidden"
+          onClick={(e) => {
+            e.stopPropagation()
+            onDelete(document.id)
+          }}
+          aria-label={`Remove item ${itemIndex + 1}`}
+          title="Remove document"
+          className="absolute -top-1.5 -left-1.5 z-10 flex size-5.5 items-center justify-center rounded-full border border-graphite/25 bg-paper text-charcoal shadow-xs transition-all hover:border-destructive hover:bg-destructive hover:text-paper active:scale-90 cursor-pointer"
         >
-          <Pencil className="size-3 stroke-[2.5]" />
-          <span>Edit</span>
+          <X className="size-3 stroke-[2.5]" />
         </button>
+
+        <DocumentThumbnail document={document} />
+      </div>
+
+      {/* Middle: "<copies> copies × <pages> pages" Headline + Configuration Subline */}
+      <div className="min-w-0 flex-1">
+        {/* Headline: replaces document name with copies × pages */}
+        <p className="text-[14px] font-bold text-midnight leading-snug sm:text-[15px] group-hover:text-charcoal transition-colors">
+          {configuration.copies} {configuration.copies === 1 ? "copy" : "copies"}{" "}
+          × {effectivePages} {effectivePages === 1 ? "page" : "pages"}
+        </p>
+
+        {/* Subline: Color mode, Paper size, page range */}
+        <p className="mt-0.5 text-[12px] font-medium text-ash leading-tight">
+          <span>{formatColorMode(configuration.colorMode)}</span>
+          <span className="mx-1.5 text-ash/60">·</span>
+          <span>{formatPaperSize(configuration.paperSize)}</span>
+          {isSelectedPages && (
+            <>
+              <span className="mx-1.5 text-ash/60">·</span>
+              <span className="text-macaw-blue font-semibold">
+                {pageSelectionText}
+              </span>
+            </>
+          )}
+        </p>
+      </div>
+
+      {/* Right: Horizontally aligned Stepper & Price */}
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="flex shrink-0 items-center gap-2.5 sm:gap-3"
+      >
+        {/* Stepper controls */}
+        <div className="flex items-center rounded-lg border border-graphite/20 bg-graphite/5 p-0.5">
+          <button
+            type="button"
+            aria-label={`Decrease copies for item ${itemIndex + 1}`}
+            onClick={(e) => {
+              e.stopPropagation()
+              onUpdateCopies(document.id, configuration.copies - 1)
+            }}
+            disabled={configuration.copies <= 1}
+            className="flex size-6 items-center justify-center rounded-md border border-graphite/20 bg-paper text-midnight transition-colors hover:bg-graphite/10 disabled:pointer-events-none disabled:opacity-30 active:scale-95 cursor-pointer"
+          >
+            <Minus className="size-3 stroke-[2.5]" />
+          </button>
+          <span className="w-6 text-center font-heading text-[12px] font-bold text-midnight select-none sm:text-[13px]">
+            {configuration.copies}
+          </span>
+          <button
+            type="button"
+            aria-label={`Increase copies for item ${itemIndex + 1}`}
+            onClick={(e) => {
+              e.stopPropagation()
+              onUpdateCopies(document.id, configuration.copies + 1)
+            }}
+            className="flex size-6 items-center justify-center rounded-md border border-graphite/20 bg-paper text-midnight transition-colors hover:bg-graphite/10 active:scale-95 cursor-pointer"
+          >
+            <Plus className="size-3 stroke-[2.5]" />
+          </button>
+        </div>
+
+        {/* Line-item Price */}
+        <span className="min-w-[50px] text-right text-[14px] font-extrabold text-midnight sm:text-[15px] leading-none">
+          {formatCurrency(itemPrice)}
+        </span>
       </div>
     </div>
   )

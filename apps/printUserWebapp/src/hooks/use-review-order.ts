@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { OrderDraft } from "../types/order"
 import {
+  calculateOrderPricing,
   loadOrderDraft,
   refreshPriceAuthoritatively,
   saveOrderDraft,
@@ -59,6 +60,56 @@ export function useReviewOrder() {
       router.push(`${REVIEW_ROUTES.CUSTOMIZE}?selectedId=${encodeURIComponent(documentId)}`)
     },
     [draft, router]
+  )
+
+  const handleUpdateCopies = useCallback(
+    (documentId: string, newCopies: number) => {
+      if (!draft) return
+      const clampedCopies = Math.max(1, newCopies)
+      const updatedDocs = draft.documents.map((doc) => {
+        if (doc.id !== documentId) return doc
+        return {
+          ...doc,
+          configuration: {
+            ...doc.configuration,
+            copies: clampedCopies,
+          },
+        }
+      })
+      const newPricing = calculateOrderPricing(updatedDocs, draft.shop)
+      const updatedDraft: OrderDraft = {
+        ...draft,
+        documents: updatedDocs,
+        pricing: newPricing,
+        metadata: {
+          ...draft.metadata,
+          updatedAt: new Date().toISOString(),
+        },
+      }
+      setDraft(updatedDraft)
+      saveOrderDraft(updatedDraft)
+    },
+    [draft]
+  )
+
+  const handleDeleteDocument = useCallback(
+    (documentId: string) => {
+      if (!draft) return
+      const updatedDocs = draft.documents.filter((doc) => doc.id !== documentId)
+      const newPricing = calculateOrderPricing(updatedDocs, draft.shop)
+      const updatedDraft: OrderDraft = {
+        ...draft,
+        documents: updatedDocs,
+        pricing: newPricing,
+        metadata: {
+          ...draft.metadata,
+          updatedAt: new Date().toISOString(),
+        },
+      }
+      setDraft(updatedDraft)
+      saveOrderDraft(updatedDraft)
+    },
+    [draft]
   )
 
   const handleDismissPriceNotice = useCallback(() => {
@@ -130,6 +181,8 @@ export function useReviewOrder() {
     priceNotice,
     handleBack,
     handleEditDocument,
+    handleUpdateCopies,
+    handleDeleteDocument,
     handleProceedToPayment,
     handleDismissPriceNotice,
     retry: fetchDraft,

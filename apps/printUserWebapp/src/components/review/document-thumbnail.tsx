@@ -7,9 +7,13 @@ import { PdfCanvasPreview } from "../customize/pdf-canvas-preview"
 
 interface DocumentThumbnailProps {
   document: ConfigurableDocument
+  className?: string
 }
 
-export function DocumentThumbnail({ document }: DocumentThumbnailProps) {
+export function DocumentThumbnail({
+  document,
+  className = "size-11 sm:size-12",
+}: DocumentThumbnailProps) {
   const [imageError, setImageError] = useState(false)
   const isImage = document.type.startsWith("image/")
   const isPdf =
@@ -19,7 +23,9 @@ export function DocumentThumbnail({ document }: DocumentThumbnailProps) {
   const previewUrl = document.previewUrl
 
   return (
-    <div className="relative flex size-18 sm:size-20 shrink-0 items-center justify-center overflow-hidden rounded-xl border-2 border-graphite/20 bg-eel-light/30">
+    <div
+      className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-lg border border-graphite/20 bg-eel-light/40 ${className}`}
+    >
       {isImage && previewUrl && !imageError ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
@@ -29,7 +35,7 @@ export function DocumentThumbnail({ document }: DocumentThumbnailProps) {
           onError={() => setImageError(true)}
         />
       ) : isPdf && (document.file || previewUrl) ? (
-        <div className="pointer-events-none relative size-full scale-100 overflow-hidden">
+        <div className="pointer-events-none relative size-full overflow-hidden flex items-center justify-center">
           <PdfCanvasPreview
             file={document.file}
             previewUrl={previewUrl}
@@ -37,9 +43,14 @@ export function DocumentThumbnail({ document }: DocumentThumbnailProps) {
           />
         </div>
       ) : isImage ? (
-        <ImageIcon className="size-8 text-ash" />
+        <ImageIcon className="size-5 text-ash" />
       ) : (
-        <FileText className="size-8 text-ash" />
+        <div className="flex flex-col items-center justify-center">
+          <FileText className="size-5 text-ash" />
+          <span className="text-[7px] font-bold uppercase text-ash leading-none mt-0.5">
+            PDF
+          </span>
+        </div>
       )}
     </div>
   )
