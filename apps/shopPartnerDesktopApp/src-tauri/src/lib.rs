@@ -14,6 +14,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
         .setup(|app| {
             let handle = app.handle().clone();
@@ -28,6 +29,7 @@ pub fn run() {
             commands::get_agent_status,
             commands::select_printer,
             commands::create_test_job,
+            commands::print_document_job,
             commands::get_job,
             commands::validate_document_job
         ])

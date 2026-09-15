@@ -24,6 +24,7 @@ Update this file after each implementation phase. Keep the entries chronological
 | Phase 4: Windows driver backend | Next | Concrete PDF/image rendering and driver submission are not implemented yet. |
 | CI: Windows installer release | Complete | GitHub Actions workflow builds and publishes draft `.exe` and `.msi` installers on `shop-desktop-v*` tags. |
 | CI: Windows spooler linker fix | Complete | The Windows build now links the SDK import library as `winspool.lib` instead of looking for the invalid `winspool.drv.lib`. |
+| Phase 5: Local document print path | Complete | File picker, hidden PowerShell discovery, selected-printer document submission, and local PDF/image testing are implemented. |
 
 ## Phase 1: Printer Discovery and Native Boundary
 
@@ -224,6 +225,42 @@ Begin Phase 4 only after the current local loop is accepted. The next implementa
 4. Keep `WindowsRawBackend` for explicit RAW jobs.
 5. Introduce a separate driver-backend interface for ordinary documents.
 6. Add tests before selecting the concrete Windows PDF/image rendering mechanism.
+
+## Phase 5: Local Document Print Path
+
+### Goal
+
+Allow a shop operator to choose a local PDF or photo and submit it through the Rust agent to a selected printer without opening the Windows print dialog.
+
+### Implementation
+
+- Added `tauri-plugin-dialog` and the `dialog:default` capability.
+- Added `Choose PDF or photo` to the React console.
+- Added `print_document_job` as a Rust/Tauri command.
+- Added `print_document` to the printer backend boundary.
+- Hid Windows PowerShell discovery with `CREATE_NO_WINDOW`.
+- Added a Windows document path using `Start-Process -Verb PrintTo` targeted at the selected printer.
+- Copies are submitted as separate print-to operations.
+- Explicit page selections are rejected until the dedicated driver backend supports them.
+
+### How to test on Windows
+
+```bash
+cd apps/shopPartnerDesktopApp
+pnpm tauri dev
+```
+
+1. Click `Refresh printers` and confirm no PowerShell window appears.
+2. Select a discovered printer.
+3. Click `Choose PDF or photo`.
+4. Select a PDF, JPG, JPEG, or PNG file.
+5. Click `Print selected file`.
+6. Confirm the selected printer receives the job without showing a print dialog.
+7. Confirm the receipt and printer output.
+
+### Important limitation
+
+This is the first local document path, not yet the final PrintKro renderer. Windows uses the registered application for the file type to implement `PrintTo`, so that application controls document rendering. The next driver-backend phase should replace this shell-association path with controlled PDF/image rendering and Windows driver submission.
 
 ## CI: Windows Installer Release
 

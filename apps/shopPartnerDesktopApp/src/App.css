@@ -57,10 +57,12 @@ h3 { margin-bottom: 0; color: var(--navy); font-size: 20px; }
 .details-list dt { color: var(--ash); }
 .details-list dd { display: flex; align-items: center; gap: 7px; margin: 0; font-weight: 800; text-align: right; }
 .test-panel, .job-panel { margin-top: 20px; }
+.document-panel { margin-top: 20px; }
 label { display: block; margin-bottom: 8px; color: var(--graphite); font-size: 14px; font-weight: 800; }
 textarea { display: block; width: 100%; resize: vertical; margin-bottom: 14px; padding: 12px; color: var(--ink); background: var(--paper); border: 2px solid #b7b7b7; border-radius: 12px; }
 textarea:focus { outline: 2px solid var(--blue); outline-offset: 2px; }
 .feedback { min-height: 24px; margin: 16px 0 0; color: var(--graphite); font-size: 14px; }
+.selected-file { overflow: hidden; margin: 14px 0; color: var(--graphite); text-overflow: ellipsis; white-space: nowrap; }
 .job-receipt { display: grid; gap: 7px; padding: 16px; background: var(--wash); border-left: 4px solid var(--green); }
 .job-receipt strong { color: var(--green); text-transform: uppercase; }
 .job-receipt p { margin: 4px 0 0; color: var(--graphite); font-size: 14px; }

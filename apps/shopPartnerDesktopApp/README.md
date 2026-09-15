@@ -6,7 +6,7 @@ The first prototype validates the local native print channel:
 React → Tauri command → Rust agent state → printer backend → Windows spooler
 ```
 
-The current console supports printer discovery, selection, and a local text test job. On Windows, the backend follows the prototype agent's RAW/ESC-POS path through `winspool.drv`. On non-Windows development machines, a deterministic development printer is exposed so the React-to-Rust boundary can still be exercised.
+The current console supports printer discovery, selection, local text test jobs, and selecting a PDF/JPG/JPEG/PNG file for direct printing. On Windows, the backend follows the prototype agent's RAW/ESC-POS path through `winspool.drv`; document jobs use the selected printer's silent `PrintTo` path without opening the print dialog. On non-Windows development machines, a deterministic development printer is exposed so the React-to-Rust boundary can still be exercised.
 
 The Rust side owns printer access and job state. React only invokes typed commands and displays returned state. Cloud WebSocket transport, normal PDF/image driver printing, and cloud authentication remain subsequent implementation slices.
 
@@ -18,7 +18,19 @@ Development progress and verification instructions are maintained in [the develo
 - `select_printer`
 - `get_agent_status`
 - `create_test_job`
+- `print_document_job`
 - `get_job`
+
+## Local document testing
+
+1. Start the app with `pnpm tauri dev` on Windows.
+2. Click `Refresh printers`; no PowerShell window should appear.
+3. Select an installed printer.
+4. Click `Choose PDF or photo` and select a `.pdf`, `.jpg`, `.jpeg`, or `.png` file.
+5. Click `Print selected file`.
+6. Confirm the job receipt reports success and inspect the printer output.
+
+The current document backend uses the Windows `PrintTo` verb targeted at the selected printer. It avoids the interactive print dialog, but the associated PDF/image application still controls document rendering. Copies are submitted one at a time; explicit page ranges are intentionally rejected until the dedicated Windows driver backend is implemented.
 
 ## Local protocol
 

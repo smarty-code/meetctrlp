@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 
 type PrinterStatus = "online" | "offline" | "printing" | "paused" | "error" | "unknown";
@@ -23,10 +24,16 @@ type JobReceipt = {
   message: string;
 };
 
+type SelectedDocument = {
+  path: string;
+  name: string;
+};
+
 function App() {
   const [printers, setPrinters] = useState<Printer[]>([]);
   const [selectedPrinter, setSelectedPrinter] = useState("");
   const [content, setContent] = useState("Hello from PrintKro");
+  const [document, setDocument] = useState<SelectedDocument | null>(null);
   const [lastJob, setLastJob] = useState<JobReceipt | null>(null);
   const [message, setMessage] = useState("Ready to discover local printers.");
   const [loading, setLoading] = useState(false);
@@ -65,6 +72,50 @@ function App() {
       setLastJob(receipt);
       setMessage(receipt.message);
       void watchJob(receipt.id);
+    } catch (error) {
+      setMessage(String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function chooseDocument() {
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "Printable documents", extensions: ["pdf", "jpg", "jpeg", "png"] }],
+      });
+      if (typeof selected === "string") {
+        setDocument({ path: selected, name: selected.split(/[\\/]/).pop() ?? selected });
+        setMessage("Document selected. It is ready to print.");
+      }
+    } catch (error) {
+      setMessage(String(error));
+    }
+  }
+
+  async function printDocument(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!document || !selectedPrinter) return;
+
+    setLoading(true);
+    try {
+      const receipt = await invoke<JobReceipt>("print_document_job", {
+        job: {
+          id: crypto.randomUUID(),
+          printer_id: selectedPrinter,
+          document: { local_file: { path: document.path } },
+          options: {
+            color_mode: "color",
+            paper_size: "A4",
+            copies: 1,
+            page_selection: "all",
+          },
+        },
+      });
+      setLastJob(receipt);
+      setMessage(receipt.message);
     } catch (error) {
       setMessage(String(error));
     } finally {
@@ -168,6 +219,18 @@ function App() {
             <button className="button button-primary" type="submit" disabled={loading || !selectedPrinter}>Send to printer</button>
           </form>
           <p className="feedback" role="status">{message}</p>
+        </section>
+
+        <section className="panel document-panel">
+          <div className="panel-heading"><div><p className="eyebrow">Local document pipeline</p><h3>Print a file</h3></div></div>
+          <form onSubmit={printDocument}>
+            <button className="button button-secondary" type="button" onClick={() => void chooseDocument()} disabled={loading}>
+              Choose PDF or photo
+            </button>
+            <p className="selected-file">{document ? document.name : "No document selected"}</p>
+            <button className="button button-primary" type="submit" disabled={loading || !selectedPrinter || !document}>Print selected file</button>
+          </form>
+          <p className="feedback">The agent sends this file to the selected printer without opening the Windows print dialog.</p>
         </section>
 
         <section className="panel job-panel">

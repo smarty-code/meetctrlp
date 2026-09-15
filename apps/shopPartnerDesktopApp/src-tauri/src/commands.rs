@@ -88,6 +88,25 @@ pub fn create_test_job(
 }
 
 #[tauri::command]
+pub fn print_document_job(state: State<'_, AppState>, job: PrintJob) -> Result<JobReceipt, String> {
+    job.validate()?;
+    let printer = state
+        .backend
+        .discover()?
+        .into_iter()
+        .find(|printer| printer.id == job.printer_id)
+        .ok_or_else(|| format!("printer '{}' was not found", job.printer_id))?;
+
+    state.backend.print_document(&printer, &job)?;
+    Ok(JobReceipt {
+        id: job.id,
+        printer_id: job.printer_id,
+        state: JobState::Completed,
+        message: "document submitted to the selected printer".to_string(),
+    })
+}
+
+#[tauri::command]
 pub fn get_job(state: State<'_, AppState>, job_id: String) -> Result<Option<JobReceipt>, String> {
     Ok(state
         .jobs

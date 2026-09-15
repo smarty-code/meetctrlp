@@ -1,8 +1,9 @@
-use crate::domain::{PrintTestJob, Printer};
+use crate::domain::{PrintJob, PrintTestJob, Printer};
 
 pub trait PrinterBackend: Send + Sync {
     fn discover(&self) -> Result<Vec<Printer>, String>;
     fn print_test_job(&self, printer: &Printer, job: &PrintTestJob) -> Result<(), String>;
+    fn print_document(&self, printer: &Printer, job: &PrintJob) -> Result<(), String>;
 }
 
 pub struct LocalPrinterBackend;
@@ -45,17 +46,33 @@ impl PrinterBackend for LocalPrinterBackend {
             Ok(())
         }
     }
+
+    fn print_document(&self, printer: &Printer, job: &PrintJob) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            return platform::windows::print_document(printer, job);
+        }
+
+        #[cfg(not(windows))]
+        {
+            let _ = (printer, job);
+            Ok(())
+        }
+    }
 }
 
 #[cfg(windows)]
 mod platform {
-    use std::process::Command;
+    use std::{os::windows::process::CommandExt, process::Command};
 
     pub mod windows {
         use super::Command;
         use crate::domain::{
-            PrintTestJob, Printer, PrinterBackendType, PrinterCapabilities, PrinterStatus,
+            DocumentSource, PrintJob, PrintTestJob, Printer, PrinterBackendType,
+            PrinterCapabilities, PrinterStatus,
         };
+
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
 
         type Handle = *mut std::ffi::c_void;
 
@@ -96,6 +113,7 @@ mod platform {
 
         pub fn discover_printers() -> Result<Vec<Printer>, String> {
             let output = Command::new("powershell")
+                .creation_flags(CREATE_NO_WINDOW)
                 .args([
                     "-NoProfile",
                     "-Command",
@@ -137,6 +155,47 @@ mod platform {
             payload.extend_from_slice(b"\n\n\n\n");
             payload.extend_from_slice(&[0x1d, 0x56, 0x01]);
             print_raw(&printer.name, &payload)
+        }
+
+        pub fn print_document(printer: &Printer, job: &PrintJob) -> Result<(), String> {
+            let path = match &job.document {
+                DocumentSource::LocalFile { path } => path,
+                DocumentSource::Bytes { .. } => {
+                    return Err(
+                        "document byte jobs require local staging before printing".to_string()
+                    )
+                }
+            };
+
+            if !matches!(
+                job.options.page_selection,
+                crate::domain::PageSelection::All
+            ) {
+                return Err(
+                    "page selection is not supported by the local Windows document backend yet"
+                        .to_string(),
+                );
+            }
+
+            for _ in 0..job.options.copies {
+                let status = Command::new("powershell")
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command"])
+                    .arg("Start-Process -FilePath $env:PRINTKRO_DOCUMENT -Verb PrintTo -ArgumentList $env:PRINTKRO_PRINTER -Wait")
+                    .env("PRINTKRO_DOCUMENT", path)
+                    .env("PRINTKRO_PRINTER", &printer.name)
+                    .status()
+                    .map_err(|error| format!("could not start document print: {error}"))?;
+
+                if !status.success() {
+                    return Err(format!(
+                        "Windows document print failed for '{}'",
+                        path.display()
+                    ));
+                }
+            }
+
+            Ok(())
         }
 
         fn print_raw(printer_name: &str, data: &[u8]) -> Result<(), String> {
