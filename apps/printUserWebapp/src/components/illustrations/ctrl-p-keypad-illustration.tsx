@@ -1,10 +1,10 @@
-import React from 'react';
+import React from "react"
 
 export const CtrlPKeypadIllustration: React.FC = () => {
   return (
-    <div className="relative w-[180px] h-[130px] mx-auto select-none pointer-events-none">
+    <div className="pointer-events-none relative mx-auto h-[130px] w-[180px] select-none">
       <svg
-        className="w-full h-full overflow-visible"
+        className="h-full w-full overflow-visible"
         viewBox="0 0 180 130"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
@@ -39,7 +39,12 @@ export const CtrlPKeypadIllustration: React.FC = () => {
           {/* Keycap 1: "Ctrl" */}
           <g transform="translate(46, 36)">
             {/* 3D Keycap sides */}
-            <path d="M4 10 L8 4 L38 4 L42 10 L42 38 L38 42 L8 42 L4 38 Z" fill="#cbd5e1" stroke="#3c3c3c" strokeWidth="1" />
+            <path
+              d="M4 10 L8 4 L38 4 L42 10 L42 38 L38 42 L8 42 L4 38 Z"
+              fill="#cbd5e1"
+              stroke="#3c3c3c"
+              strokeWidth="1"
+            />
             <rect
               x="6"
               y="6"
@@ -65,7 +70,12 @@ export const CtrlPKeypadIllustration: React.FC = () => {
 
           {/* Keycap 2: "P" */}
           <g transform="translate(90, 36)">
-            <path d="M4 10 L8 4 L38 4 L42 10 L42 38 L38 42 L8 42 L4 38 Z" fill="#cbd5e1" stroke="#3c3c3c" strokeWidth="1" />
+            <path
+              d="M4 10 L8 4 L38 4 L42 10 L42 38 L38 42 L8 42 L4 38 Z"
+              fill="#cbd5e1"
+              stroke="#3c3c3c"
+              strokeWidth="1"
+            />
             <rect
               x="6"
               y="6"
@@ -108,5 +118,5 @@ export const CtrlPKeypadIllustration: React.FC = () => {
         </g>
       </svg>
     </div>
-  );
-};
+  )
+}
