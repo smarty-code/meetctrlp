@@ -14,7 +14,7 @@ export function ShopSummaryCard({ shop }: ShopSummaryCardProps) {
   return (
     <section
       aria-labelledby="shop-summary-heading"
-      className="rounded-xl border-2 border-graphite/20 bg-paper p-3.5 transition-colors sm:p-4"
+      className="rounded-xl border border-graphite/15 bg-paper p-3.5 transition-colors sm:p-4"
     >
       {/* 1. Top Header: Shop Name + Status/Hours */}
       <div className="flex items-center justify-between gap-3">
