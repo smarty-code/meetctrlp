@@ -1,20 +1,20 @@
-'use client';
+"use client"
 
-import React, { useRef } from 'react';
-import { customizeCopy } from '../../data/customize-repository';
-import { ConfigurableDocument } from '../../types/upload';
-import { PreviewPagination } from './preview-pagination';
-import { PreviewCarousel, PreviewCarouselHandle } from './preview-carousel';
+import React, { useRef } from "react"
+import { customizeCopy } from "../../data/customize-repository"
+import { ConfigurableDocument } from "../../types/upload"
+import { PreviewPagination } from "./preview-pagination"
+import { PreviewCarousel, PreviewCarouselHandle } from "./preview-carousel"
 
 interface DocumentSelectorProps {
-  documents: ConfigurableDocument[];
-  selectedId: string;
-  previewPage: number;
-  onSelect: (id: string) => void;
-  onMove?: (offset: number) => void;
-  onPreviewPage: (page: number) => void;
-  onRemove?: () => void;
-  onPageCountDetected?: (docId: string, count: number) => void;
+  documents: ConfigurableDocument[]
+  selectedId: string
+  previewPage: number
+  onSelect: (id: string) => void
+  onMove?: (offset: number) => void
+  onPreviewPage: (page: number) => void
+  onRemove?: () => void
+  onPageCountDetected?: (docId: string, count: number) => void
 }
 
 export function DocumentSelector({
@@ -27,29 +27,32 @@ export function DocumentSelector({
   onRemove,
   onPageCountDetected,
 }: DocumentSelectorProps) {
-  const carouselRef = useRef<PreviewCarouselHandle>(null);
-  const document = documents.find((item) => item.id === selectedId) ?? documents[0];
-  const position = document ? documents.findIndex((item) => item.id === document.id) + 1 : 0;
+  const carouselRef = useRef<PreviewCarouselHandle>(null)
+  const document =
+    documents.find((item) => item.id === selectedId) ?? documents[0]
+  const position = document
+    ? documents.findIndex((item) => item.id === document.id) + 1
+    : 0
 
   if (!document) {
-    return null;
+    return null
   }
 
   const handlePaginationPrev = () => {
     if (carouselRef.current) {
-      carouselRef.current.slideRight();
-      return;
+      carouselRef.current.slideRight()
+      return
     }
-    onMove?.(-1);
-  };
+    onMove?.(-1)
+  }
 
   const handlePaginationNext = () => {
     if (carouselRef.current) {
-      carouselRef.current.slideLeft();
-      return;
+      carouselRef.current.slideLeft()
+      return
     }
-    onMove?.(1);
-  };
+    onMove?.(1)
+  }
 
   return (
     <section
@@ -62,8 +65,8 @@ export function DocumentSelector({
         selectedId={selectedId}
         previewPage={previewPage}
         onSelectDocument={(id) => {
-          onSelect(id);
-          onPreviewPage(1);
+          onSelect(id)
+          onPreviewPage(1)
         }}
         onRemove={onRemove}
         onPageCountDetected={onPageCountDetected}
@@ -78,12 +81,12 @@ export function DocumentSelector({
         documents={documents}
         selectedDocId={selectedId}
         onSelectDocument={(id) => {
-          onSelect(id);
-          onPreviewPage(1);
+          onSelect(id)
+          onPreviewPage(1)
         }}
         onPrev={handlePaginationPrev}
         onNext={handlePaginationNext}
       />
     </section>
-  );
+  )
 }
