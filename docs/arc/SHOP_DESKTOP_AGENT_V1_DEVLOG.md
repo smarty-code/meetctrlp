@@ -241,6 +241,12 @@ Build an installable Windows application in GitHub Actions without requiring a W
 - It creates a draft GitHub Release with the generated Windows installers.
 - It uploads the NSIS `.exe` and MSI files as workflow artifacts.
 
+### Checkout path requirement
+
+All tracked paths must be valid on Windows. In particular, directory and file names must not end with spaces. The repository previously contained `docs/developer-requirement ` with a trailing space; it was renamed to `docs/developer-requirement` so the Windows runner can complete `actions/checkout`.
+
+The workflow also uses sparse checkout and intentionally excludes `docs/` from the Windows build workspace. This protects releases built from older tags while the path rename propagates through the repository history.
+
 ### Release procedure
 
 Create and push a desktop release tag from the repository root:
