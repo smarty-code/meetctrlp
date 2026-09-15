@@ -53,6 +53,8 @@ export interface SubmittedOrder {
   currency: string
   totalDocuments: number
   totalCopies: number
+  documents?: any[]
+  pricingItems?: any[]
   paymentMethod: PaymentMethodId
   paymentState: PaymentState
   status: OrderPlacementStatus

@@ -27,6 +27,9 @@ export interface CompactDocumentItem {
   copies: number;
   colorMode: "bw" | "color";
   paperSize: string;
+  linePrice?: number;
+  previewUrl?: string;
+  type?: string;
 }
 
 export interface DocumentSummary {

@@ -1,24 +1,13 @@
 "use client";
 
 import React from "react";
-import {
-  AlertCircle,
-  Check,
-  CheckCircle2,
-  Clock,
-  Copy,
-  Hash,
-  Home,
-  PackageCheck,
-  Printer,
-  RefreshCw,
-  XCircle,
-} from "lucide-react";
+import { ArrowLeft, Check, Copy, RefreshCw } from "lucide-react";
 import { OrderTrackingData } from "../../types/tracking";
 import {
   ORDER_STATUS_PRESENTATION,
   TRACKING_COPY,
 } from "../../data/tracking-constants";
+import { formatCurrency } from "../../lib/currency";
 
 interface TrackingHeaderProps {
   order?: OrderTrackingData | null;
@@ -41,85 +30,66 @@ export function TrackingHeader({
     ? ORDER_STATUS_PRESENTATION[order.status]
     : null;
 
-  const renderStatusIcon = () => {
-    if (!presentation) {
-      return <CheckCircle2 className="size-5 stroke-[2.5] text-ecto-green" />;
-    }
-
-    switch (presentation.iconName) {
-      case "package-check":
-        return <PackageCheck className="size-5 stroke-[2.5]" />;
-      case "printer":
-        return <Printer className="size-5 stroke-[2.5]" />;
-      case "clock":
-        return <Clock className="size-5 stroke-[2.5]" />;
-      case "alert-circle":
-        return <AlertCircle className="size-5 stroke-[2.5]" />;
-      case "x-circle":
-        return <XCircle className="size-5 stroke-[2.5]" />;
-      case "check-circle":
-      default:
-        return <CheckCircle2 className="size-5 stroke-[2.5]" />;
-    }
-  };
-
-  const isErrorOrCancel =
-    order &&
-    (order.status === "REJECTED" ||
-      order.status === "CANCELLED" ||
-      order.status === "FAILED");
-
-  const iconBgClass = isErrorOrCancel
-    ? "border-amber-400 bg-amber-100 text-amber-900"
-    : "border-ecto-green/50 bg-eel-light text-midnight";
+  const totalDocuments = order?.documentSummary?.totalDocuments ?? 0;
+  const formattedTotal = order
+    ? formatCurrency(order.totalAmount, { currency: order.currency })
+    : "";
 
   return (
-    <header className="sticky top-0 z-30 flex min-h-16 w-full items-center justify-between border-b-2 border-graphite/20 bg-paper/95 px-4 py-2 backdrop-blur-xs sm:px-6">
-      {/* Left: Status Icon + Direct Status Title + Order ID Reference Pill */}
-      <div className="flex items-center gap-2.5 sm:gap-3">
-        <div
-          className={`flex size-9 shrink-0 items-center justify-center rounded-xl border-2 ${iconBgClass}`}
-          aria-hidden="true"
+    <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-graphite/15 bg-paper/95 px-4 backdrop-blur-xs sm:px-6">
+      {/* Left: Back Navigation Arrow + Title / Subtitle Info */}
+      <div className="flex items-center gap-3 min-w-0">
+        <button
+          type="button"
+          onClick={onNewOrder}
+          aria-label="Back to home"
+          className="flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-xl text-charcoal transition-colors hover:bg-graphite/10 active:translate-y-px"
         >
-          {renderStatusIcon()}
-        </div>
+          <ArrowLeft className="size-5 stroke-[2.2]" />
+        </button>
 
-        <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2.5">
-          <h1 className="text-body font-bold tracking-tight text-midnight sm:text-heading-sm leading-tight">
-            {presentation ? presentation.label : TRACKING_COPY.headerTitle}
-          </h1>
-
-          {/* Customer Order Reference Pill with accessible Copy */}
-          {order && (
-            <div className="mt-0.5 sm:mt-0">
-              <button
-                type="button"
-                onClick={onCopyReference}
-                aria-label={
-                  copied
-                    ? TRACKING_COPY.copiedFeedback
-                    : `${TRACKING_COPY.copyOrderNumber}: ${order.displayReference}`
-                }
-                className="group inline-flex cursor-pointer items-center gap-1 rounded-md border border-graphite/25 bg-paper px-2 py-0.5 font-mono text-[11px] font-bold text-midnight transition-colors hover:border-graphite/40"
-              >
-                <Hash className="size-2.5 text-ash transition-colors group-hover:text-charcoal" />
-                <span>{order.displayReference}</span>
-                <span className="border-l border-graphite/20 pl-1 font-sans text-[10px] font-medium text-ash transition-colors group-hover:text-midnight">
+        <div className="min-w-0">
+          {order ? (
+            <>
+              {/* Order Reference Number with quick 1-tap Copy */}
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={onCopyReference}
+                  title="Click to copy Order ID"
+                  aria-label={
+                    copied
+                      ? TRACKING_COPY.copiedFeedback
+                      : `Copy Order ID: ${order.displayReference}`
+                  }
+                  className="group inline-flex items-center gap-1 cursor-pointer font-mono text-body sm:text-heading-sm font-extrabold uppercase tracking-wide text-midnight hover:text-ecto-green transition-colors"
+                >
+                  <span>ORDER #{order.displayReference}</span>
                   {copied ? (
-                    <span className="font-bold text-ecto-green">
-                      {TRACKING_COPY.copiedFeedback}
+                    <span className="flex items-center gap-0.5 rounded bg-eel-light px-1 py-0.2 text-[10px] font-sans font-bold text-midnight">
+                      <Check className="size-3 text-ecto-green stroke-[3]" />
+                      <span>Copied!</span>
                     </span>
                   ) : (
-                    <Copy className="size-2.5" />
+                    <Copy className="size-3 text-ash group-hover:text-charcoal transition-colors" />
                   )}
-                </span>
-              </button>
-            </div>
+                </button>
+              </div>
+
+              {/* Subline: Total documents count only */}
+              <p className="text-[12px] sm:text-caption font-medium text-ash leading-tight truncate">
+                {totalDocuments} {totalDocuments === 1 ? "document" : "documents"}
+              </p>
+            </>
+          ) : (
+            <h1 className="font-heading text-heading-sm font-bold text-midnight">
+              {TRACKING_COPY.headerTitle}
+            </h1>
           )}
         </div>
       </div>
 
-      {/* Right Actions: Refresh & Home / New Order */}
+      {/* Right Actions: Refresh & New Order CTA */}
       <div className="flex shrink-0 items-center gap-2 pl-2">
         <button
           type="button"
@@ -127,10 +97,10 @@ export function TrackingHeader({
           disabled={isRefreshing}
           aria-label={TRACKING_COPY.refreshAria}
           title={TRACKING_COPY.refreshAria}
-          className="flex size-8 cursor-pointer items-center justify-center rounded-xl border-2 border-graphite/20 bg-paper text-charcoal transition-colors hover:border-graphite/40 disabled:opacity-50"
+          className="flex size-8 cursor-pointer items-center justify-center rounded-xl text-charcoal transition-colors hover:bg-graphite/10 disabled:opacity-50"
         >
           <RefreshCw
-            className={`size-3.5 text-charcoal ${isRefreshing ? "animate-spin text-ecto-green" : ""}`}
+            className={`size-4 text-charcoal ${isRefreshing ? "animate-spin text-ecto-green" : ""}`}
           />
         </button>
 
@@ -138,10 +108,9 @@ export function TrackingHeader({
           type="button"
           onClick={onNewOrder}
           aria-label={TRACKING_COPY.newOrderCTA}
-          className="flex cursor-pointer items-center gap-1 rounded-xl border-2 border-graphite/20 bg-paper px-2.5 py-1 text-caption font-bold text-charcoal transition-colors hover:border-graphite/40"
+          className="cursor-pointer text-caption font-bold tracking-wider text-macaw-blue uppercase hover:underline"
         >
-          <Home className="size-3.5" />
-          <span className="hidden sm:inline">{TRACKING_COPY.newOrderCTA}</span>
+          {TRACKING_COPY.newOrderCTA}
         </button>
       </div>
     </header>

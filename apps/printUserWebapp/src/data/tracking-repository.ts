@@ -1,4 +1,5 @@
 import {
+  CompactDocumentItem,
   OrderLifecycleStatus,
   OrderTrackingData,
   TimelineStepItem,
@@ -10,6 +11,7 @@ import {
   TRACKING_STORAGE_KEYS,
 } from "./tracking-constants";
 import { SubmittedOrder } from "../types/payment";
+import { STORAGE_KEYS } from "./review-constants";
 
 /**
  * Builds chronological timeline steps based on the current order status.
@@ -157,6 +159,167 @@ export function buildTimelineSteps(
 }
 
 /**
+ * Resolves the real list of configured documents from SubmittedOrder or session storage
+ */
+export function getRealDocumentsFromSession(
+  submitted?: SubmittedOrder | null,
+): CompactDocumentItem[] {
+  // 1. Direct from submitted order if present
+  if (
+    submitted?.documents &&
+    Array.isArray(submitted.documents) &&
+    submitted.documents.length > 0
+  ) {
+    return submitted.documents.map((doc: any, idx: number) => {
+      const effectivePages =
+        doc.configuration?.pageSelection?.mode === "selected" &&
+        Array.isArray(doc.configuration?.pageSelection?.pages) &&
+        doc.configuration.pageSelection.pages.length > 0
+          ? doc.configuration.pageSelection.pages.length
+          : Math.max(1, doc.pageCount || 1);
+      const copies = doc.configuration?.copies || 1;
+      const colorMode = (doc.configuration?.colorMode || "bw") as
+        | "bw"
+        | "color";
+      const paperSize = doc.configuration?.paperSize || "A4";
+      const pricingItem = submitted.pricingItems?.find(
+        (p: any) => p.documentId === doc.id,
+      );
+      const linePrice =
+        pricingItem?.totalAmount ??
+        copies * effectivePages * (colorMode === "color" ? 10 : 3);
+
+      return {
+        id: doc.id || `doc-${idx + 1}`,
+        name: doc.name || `Document ${idx + 1}.pdf`,
+        pages: effectivePages,
+        copies,
+        colorMode,
+        paperSize,
+        linePrice,
+        previewUrl: doc.previewUrl,
+        type: doc.type,
+      };
+    });
+  }
+
+  if (typeof window === "undefined") return [];
+
+  try {
+    // 2. Check STORAGE_KEYS.ORDER_DRAFT
+    const storedDraft = window.sessionStorage.getItem(STORAGE_KEYS.ORDER_DRAFT);
+    if (storedDraft) {
+      const parsedDraft = JSON.parse(storedDraft);
+      if (
+        Array.isArray(parsedDraft.documents) &&
+        parsedDraft.documents.length > 0
+      ) {
+        return parsedDraft.documents.map((doc: any, idx: number) => {
+          const effectivePages =
+            doc.configuration?.pageSelection?.mode === "selected" &&
+            Array.isArray(doc.configuration?.pageSelection?.pages) &&
+            doc.configuration.pageSelection.pages.length > 0
+              ? doc.configuration.pageSelection.pages.length
+              : Math.max(1, doc.pageCount || 1);
+          const copies = doc.configuration?.copies || 1;
+          const colorMode = (doc.configuration?.colorMode || "bw") as
+            | "bw"
+            | "color";
+          const paperSize = doc.configuration?.paperSize || "A4";
+          const pricingItem = parsedDraft.pricing?.items?.find(
+            (p: any) => p.documentId === doc.id,
+          );
+          const linePrice =
+            pricingItem?.totalAmount ??
+            copies * effectivePages * (colorMode === "color" ? 10 : 3);
+
+          return {
+            id: doc.id || `doc-${idx + 1}`,
+            name: doc.name || `Document ${idx + 1}.pdf`,
+            pages: effectivePages,
+            copies,
+            colorMode,
+            paperSize,
+            linePrice,
+            previewUrl: doc.previewUrl,
+            type: doc.type,
+          };
+        });
+      }
+    }
+
+    // 3. Check STORAGE_KEYS.CONFIGURED_DOCUMENTS
+    const storedConfig = window.sessionStorage.getItem(
+      STORAGE_KEYS.CONFIGURED_DOCUMENTS,
+    );
+    if (storedConfig) {
+      const parsedConfig = JSON.parse(storedConfig);
+      if (Array.isArray(parsedConfig) && parsedConfig.length > 0) {
+        return parsedConfig.map((doc: any, idx: number) => {
+          const effectivePages =
+            doc.configuration?.pageSelection?.mode === "selected" &&
+            Array.isArray(doc.configuration?.pageSelection?.pages) &&
+            doc.configuration.pageSelection.pages.length > 0
+              ? doc.configuration.pageSelection.pages.length
+              : Math.max(1, doc.pageCount || 1);
+          const copies = doc.configuration?.copies || 1;
+          const colorMode = (doc.configuration?.colorMode || "bw") as
+            | "bw"
+            | "color";
+          const paperSize = doc.configuration?.paperSize || "A4";
+          const linePrice =
+            copies * effectivePages * (colorMode === "color" ? 10 : 3);
+
+          return {
+            id: doc.id || `doc-${idx + 1}`,
+            name: doc.name || `Document ${idx + 1}.pdf`,
+            pages: effectivePages,
+            copies,
+            colorMode,
+            paperSize,
+            linePrice,
+            previewUrl: doc.previewUrl,
+            type: doc.type,
+          };
+        });
+      }
+    }
+
+    // 4. Check STORAGE_KEYS.UPLOADED_FILES
+    const storedUploads = window.sessionStorage.getItem(
+      STORAGE_KEYS.UPLOADED_FILES,
+    );
+    if (storedUploads) {
+      const parsedUploads = JSON.parse(storedUploads);
+      if (Array.isArray(parsedUploads) && parsedUploads.length > 0) {
+        return parsedUploads.map((file: any, idx: number) => {
+          const pages = file.pageCount || 1;
+          return {
+            id: file.id || `doc-${idx + 1}`,
+            name: file.name || `Document ${idx + 1}.pdf`,
+            pages,
+            copies: 1,
+            colorMode: "bw" as const,
+            paperSize: "A4",
+            linePrice: pages * 3,
+            previewUrl: file.previewUrl,
+            type: file.type,
+          };
+        });
+      }
+    }
+
+  } catch (e) {
+    console.warn(
+      "Failed reading real documents from session storage for tracking:",
+      e,
+    );
+  }
+
+  return [];
+}
+
+/**
  * Creates OrderTrackingData from a SubmittedOrder
  */
 function createFromSubmittedOrder(
@@ -187,6 +350,26 @@ function createFromSubmittedOrder(
     minute: "2-digit",
   });
 
+  const realItems = getRealDocumentsFromSession(submitted);
+  const items =
+    realItems.length > 0
+      ? realItems
+      : [
+          {
+            id: "doc-1",
+            name: "Document.pdf",
+            pages: 1,
+            copies: submitted.totalCopies || 1,
+            colorMode: "bw" as const,
+            paperSize: "A4",
+            linePrice: submitted.totalAmount,
+          },
+        ];
+
+  const totalDocs = items.length;
+  const totalCopies = items.reduce((sum, d) => sum + d.copies, 0);
+  const totalPages = items.reduce((sum, d) => sum + d.pages * d.copies, 0);
+
   return {
     orderId: submitted.orderId,
     displayReference: displayRef,
@@ -199,25 +382,18 @@ function createFromSubmittedOrder(
       id: submitted.shop.id,
       name: submitted.shop.name,
       address: submitted.shop.address,
-      phone: "+91 98765 43210",
+      phone: submitted.shop.phone || "+91 98765 43210",
       estimatedMinutes: estMins,
       counterInstructions: TRACKING_COPY.defaultPickupInstructions,
-      mapUrl: `https://maps.google.com/?q=${encodeURIComponent(submitted.shop.name + " " + submitted.shop.address)}`,
+      mapUrl:
+        submitted.shop.mapUrl ||
+        `https://maps.google.com/?q=${encodeURIComponent(submitted.shop.name + " " + submitted.shop.address)}`,
     },
     documentSummary: {
-      totalDocuments: submitted.totalDocuments || 1,
-      totalPages: 12,
-      totalCopies: submitted.totalCopies || 1,
-      items: [
-        {
-          id: "doc-1",
-          name: "Project_Proposal_Final.pdf",
-          pages: 12,
-          copies: submitted.totalCopies || 1,
-          colorMode: "bw",
-          paperSize: "A4",
-        },
-      ],
+      totalDocuments: totalDocs,
+      totalPages,
+      totalCopies,
+      items,
     },
     estimatedReadyTime: `Today, ${estReadyTimeStr} (~${estMins} mins)`,
     submittedAt: submitted.submittedAt,
@@ -238,6 +414,41 @@ function createDemoOrder(orderIdParam?: string): OrderTrackingData {
   const submittedAt = new Date(Date.now() - 3 * 60000).toISOString();
   const nowIso = new Date().toISOString();
   const displayId = orderIdParam || "ORD-DEMO772";
+  const realItems = getRealDocumentsFromSession(null);
+
+  const items =
+    realItems.length > 0
+      ? realItems
+      : [
+          {
+            id: "doc-1",
+            name: "Thesis_Abstract_v2.pdf",
+            pages: 6,
+            copies: 1,
+            colorMode: "bw" as const,
+            paperSize: "A4",
+            linePrice: 18,
+          },
+          {
+            id: "doc-2",
+            name: "Presentation_Slides.pdf",
+            pages: 10,
+            copies: 1,
+            colorMode: "color" as const,
+            paperSize: "A4",
+            linePrice: 30,
+          },
+        ];
+
+  const totalAmount = items.reduce(
+    (sum, it) =>
+      sum +
+      (it.linePrice ??
+        it.copies * it.pages * (it.colorMode === "color" ? 10 : 3)),
+    0,
+  );
+  const totalCopies = items.reduce((sum, d) => sum + d.copies, 0);
+  const totalPages = items.reduce((sum, d) => sum + d.pages * d.copies, 0);
 
   return {
     orderId: displayId,
@@ -245,7 +456,7 @@ function createDemoOrder(orderIdParam?: string): OrderTrackingData {
     status: "SUBMITTED",
     paymentMethod: "ONLINE",
     paymentState: "SUCCESS",
-    totalAmount: 48,
+    totalAmount: totalAmount || 48,
     currency: "INR",
     shop: {
       id: "shop-campus-central",
@@ -257,27 +468,10 @@ function createDemoOrder(orderIdParam?: string): OrderTrackingData {
       mapUrl: "https://maps.google.com/?q=Campus+Print+Hub",
     },
     documentSummary: {
-      totalDocuments: 2,
-      totalPages: 16,
-      totalCopies: 1,
-      items: [
-        {
-          id: "doc-1",
-          name: "Thesis_Abstract_v2.pdf",
-          pages: 6,
-          copies: 1,
-          colorMode: "bw",
-          paperSize: "A4",
-        },
-        {
-          id: "doc-2",
-          name: "Presentation_Slides.pdf",
-          pages: 10,
-          copies: 1,
-          colorMode: "color",
-          paperSize: "A4",
-        },
-      ],
+      totalDocuments: items.length,
+      totalPages,
+      totalCopies,
+      items,
     },
     estimatedReadyTime: "Today, ~12 mins",
     submittedAt,
@@ -326,12 +520,51 @@ export async function fetchOrderTracking(
   // Simulated small network roundtrip
   await new Promise((resolve) => setTimeout(resolve, 350));
 
+  const submitted = getSubmittedOrder();
   const cached = getCachedOrderTracking();
+
+  // If cached data exists, verify that its items array is not a stale hardcoded fallback
   if (cached && (!orderIdParam || cached.orderId === orderIdParam)) {
+    const realItems = getRealDocumentsFromSession(submitted);
+    const hasDummyDoc = cached.documentSummary.items.some(
+      (it) => it.id === "doc-1" && it.name === "Project_Proposal_Final.pdf",
+    );
+    const hasMismatchedCount =
+      realItems.length > 0 &&
+      cached.documentSummary.items.length !== realItems.length;
+
+    if (realItems.length > 0 && (hasDummyDoc || hasMismatchedCount)) {
+      const totalDocs = realItems.length;
+      const totalCopies = realItems.reduce((sum, d) => sum + d.copies, 0);
+      const totalPages = realItems.reduce(
+        (sum, d) => sum + d.pages * d.copies,
+        0,
+      );
+      const updatedTotal = realItems.reduce(
+        (sum, it) =>
+          sum +
+          (it.linePrice ??
+            it.copies * it.pages * (it.colorMode === "color" ? 10 : 3)),
+        0,
+      );
+
+      const refreshed: OrderTrackingData = {
+        ...cached,
+        totalAmount: updatedTotal || cached.totalAmount,
+        documentSummary: {
+          totalDocuments: totalDocs,
+          totalPages,
+          totalCopies,
+          items: realItems,
+        },
+      };
+      saveCachedOrderTracking(refreshed);
+      return refreshed;
+    }
+
     return cached;
   }
 
-  const submitted = getSubmittedOrder();
   if (submitted && (!orderIdParam || submitted.orderId === orderIdParam)) {
     const created = createFromSubmittedOrder(submitted);
     saveCachedOrderTracking(created);
