@@ -1,4 +1,3 @@
-import { ShopContext } from "./upload";
 import { PaymentMethodId, PaymentState } from "./payment";
 
 export type OrderLifecycleStatus =
@@ -69,6 +68,8 @@ export interface StatusPresentationConfig {
   label: string;
   headline: string;
   customerDescription: string;
+  waitingHeadline?: string;
+  waitingDescription?: string;
   badgeVariant: "default" | "success" | "warning" | "destructive" | "neutral";
   iconName:
     | "clock"
@@ -80,3 +81,4 @@ export interface StatusPresentationConfig {
   stepIndex: number;
   isTerminal: boolean;
 }
+

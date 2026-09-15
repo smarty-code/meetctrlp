@@ -12,7 +12,6 @@ interface TrackingPaymentCardProps {
 
 export function TrackingPaymentCard({ order }: TrackingPaymentCardProps) {
   const isCash = order.paymentMethod === "CASH";
-  const isPaid = order.paymentState === "SUCCESS";
 
   const formattedAmount = formatCurrency(order.totalAmount, {
     currency: order.currency,

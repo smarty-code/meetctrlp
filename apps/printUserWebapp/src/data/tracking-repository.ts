@@ -6,10 +6,8 @@ import {
 } from "../types/tracking";
 import { getSubmittedOrder } from "./payment-repository";
 import {
-  ORDER_LIFECYCLE_ORDER,
   TRACKING_COPY,
   TRACKING_STORAGE_KEYS,
-  TRACKING_TIMINGS,
 } from "./tracking-constants";
 import { SubmittedOrder } from "../types/payment";
 
@@ -94,14 +92,58 @@ export function buildTimelineSteps(
       };
     }
 
-    if (idx < currentRank) {
+    // Special case for SUBMITTED (Screen 06):
+    // Order received is completed, subsequent shop acceptance and printing are upcoming.
+    if (status === "SUBMITTED") {
+      if (idx === 0) {
+        state = "completed";
+        timestamp = submittedAt;
+      } else {
+        state = "upcoming";
+      }
+    } else if (status === "ACCEPTED") {
+      if (idx === 0) {
+        state = "completed";
+        timestamp = submittedAt;
+      } else if (idx === 1) {
+        state = "current";
+        timestamp = updatedAt;
+      } else {
+        state = "upcoming";
+      }
+    } else if (status === "PRINTING") {
+      if (idx < 2) {
+        state = "completed";
+        timestamp = idx === 0 ? submittedAt : undefined;
+      } else if (idx === 2) {
+        state = "current";
+        timestamp = updatedAt;
+      } else {
+        state = "upcoming";
+      }
+    } else if (status === "READY") {
+      if (idx < 3) {
+        state = "completed";
+        timestamp = idx === 0 ? submittedAt : undefined;
+      } else if (idx === 3) {
+        state = "current";
+        timestamp = updatedAt;
+      } else {
+        state = "upcoming";
+      }
+    } else if (status === "COMPLETED") {
       state = "completed";
-      timestamp = idx === 0 ? submittedAt : undefined;
-    } else if (idx === currentRank) {
-      state = "current";
-      timestamp = updatedAt;
+      timestamp = idx === 0 ? submittedAt : idx === 3 ? updatedAt : undefined;
     } else {
-      state = "upcoming";
+      if (idx < currentRank) {
+        state = "completed";
+        timestamp = idx === 0 ? submittedAt : undefined;
+      } else if (idx === currentRank) {
+        state = "current";
+        timestamp = updatedAt;
+      } else {
+        state = "upcoming";
+      }
     }
 
     return {

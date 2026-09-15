@@ -29,7 +29,7 @@ export function useOrderTracking() {
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
   const copyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Initial Load
+  // Load Order (re-callable for retries)
   const loadOrder = useCallback(async () => {
     setIsLoading(true);
     setError(null);
@@ -50,14 +50,31 @@ export function useOrderTracking() {
 
   useEffect(() => {
     isMountedRef.current = true;
-    loadOrder();
+    let cancelled = false;
+
+    // Async fetch in effect without synchronous setState
+    void fetchOrderTracking(orderIdParam)
+      .then((data) => {
+        if (!cancelled && isMountedRef.current) {
+          setOrder(data);
+          setIsLoading(false);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled && isMountedRef.current) {
+          console.error("Failed to load order tracking:", err);
+          setError(TRACKING_COPY.fetchFailedDescription);
+          setIsLoading(false);
+        }
+      });
 
     return () => {
+      cancelled = true;
       isMountedRef.current = false;
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
       if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
     };
-  }, [loadOrder]);
+  }, [orderIdParam]);
 
   // Periodic polling for status updates (stops on terminal states)
   useEffect(() => {

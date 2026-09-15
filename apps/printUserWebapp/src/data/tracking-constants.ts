@@ -25,9 +25,11 @@ export const ORDER_STATUS_PRESENTATION: Record<
 > = {
   SUBMITTED: {
     label: "Order received",
-    headline: "Your order is confirmed",
-    customerDescription:
-      "Your print order has been sent to the shop and is awaiting acceptance.",
+    headline: "Order received",
+    customerDescription: "Your order has been sent to the print shop.",
+    waitingHeadline: "Waiting for shop",
+    waitingDescription:
+      "The shop will start processing your order after accepting it.",
     badgeVariant: "neutral",
     iconName: "check-circle",
     stepIndex: 0,
@@ -38,6 +40,9 @@ export const ORDER_STATUS_PRESENTATION: Record<
     headline: "Shop accepted your order",
     customerDescription:
       "Your documents are queued up in the shop's print line.",
+    waitingHeadline: "Preparing to print",
+    waitingDescription:
+      "The shop is preparing the printer for your documents.",
     badgeVariant: "default",
     iconName: "clock",
     stepIndex: 1,
@@ -117,13 +122,16 @@ export const TRACKING_STORAGE_KEYS = {
 
 export const TRACKING_COPY = {
   headerTitle: "Order Status",
-  screenTag: "Screen 05",
+  screenTag: "Screen 06",
   newOrderCTA: "New Order",
   refreshAria: "Refresh order status",
   refreshingText: "Checking for updates...",
   copyOrderNumber: "Copy order number",
   copiedFeedback: "Copied!",
   orderTimelineTitle: "Order Progress",
+  waitingForShopTitle: "Waiting for shop",
+  waitingForShopDescription:
+    "The shop will start processing your order after accepting it.",
   estimatedTimeTitle: "Estimated Ready Time",
   noEstimateAvailable: "The shop hasn't provided an estimated ready time yet.",
   shopCardTitle: "Printing At",

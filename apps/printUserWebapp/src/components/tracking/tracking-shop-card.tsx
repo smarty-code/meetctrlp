@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { MapPin } from "lucide-react";
+import { MapPin, Navigation, Phone } from "lucide-react";
 import { TrackingShopInfo } from "../../types/tracking";
 import { TRACKING_COPY } from "../../data/tracking-constants";
 
@@ -47,32 +47,34 @@ export function TrackingShopCard({
         </div>
       )}
 
-      {/* Action buttons (Call Shop / Directions) hidden per MVP requirement */}
-      {/*
-      <div className="flex items-center gap-2 pt-1">
-        {shop.phone && (
-          <a
-            href={`tel:${shop.phone}`}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border-2 border-graphite/20 bg-paper px-3 py-2.5 text-caption font-bold text-charcoal transition-colors hover:border-graphite/40"
-          >
-            <Phone className="size-3.5 text-ash" />
-            <span>{TRACKING_COPY.callShopCTA}</span>
-          </a>
-        )}
+      {/* Approved Shop Actions (Contact Shop / Directions) */}
+      {(shop.phone || shop.mapUrl) && (
+        <div className="flex items-center gap-2 pt-1">
+          {shop.phone && (
+            <a
+              href={`tel:${shop.phone}`}
+              aria-label={`${TRACKING_COPY.callShopCTA}: ${shop.phone}`}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border-2 border-graphite/20 bg-paper px-3 py-2.5 text-caption font-bold text-charcoal transition-colors hover:border-graphite/40"
+            >
+              <Phone className="size-3.5 text-ash" />
+              <span>{TRACKING_COPY.callShopCTA}</span>
+            </a>
+          )}
 
-        {shop.mapUrl && (
-          <a
-            href={shop.mapUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border-2 border-lingot-lime bg-paper px-3 py-2.5 text-caption font-bold text-midnight transition-colors hover:bg-eel-light/20"
-          >
-            <Navigation className="size-3.5 text-midnight" />
-            <span>{TRACKING_COPY.directionsCTA}</span>
-          </a>
-        )}
-      </div>
-      */}
+          {shop.mapUrl && (
+            <a
+              href={shop.mapUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`${TRACKING_COPY.directionsCTA} to ${shop.name}`}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border-2 border-lingot-lime bg-paper px-3 py-2.5 text-caption font-bold text-midnight transition-colors hover:bg-eel-light/20"
+            >
+              <Navigation className="size-3.5 text-midnight" />
+              <span>{TRACKING_COPY.directionsCTA}</span>
+            </a>
+          )}
+        </div>
+      )}
     </section>
   );
 }
