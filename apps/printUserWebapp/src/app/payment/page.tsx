@@ -63,16 +63,14 @@ export default function PaymentPage() {
       <PaymentHeader onBack={handleBack} />
 
       {/* Main Content Area */}
-      <main className="mx-auto w-full max-w-lg flex-1 px-4 py-4 pb-28 sm:px-6 sm:pb-8">
-        <div className="space-y-6">
-          {/* Order Summary & Prominent Amount Due */}
+      <main className="mx-auto flex w-full max-w-lg flex-1 flex-col px-4 pt-3 pb-[calc(7.5rem+env(safe-area-inset-bottom,0px))] sm:px-6 sm:py-6 sm:pb-8">
+        <div className="space-y-3 sm:space-y-6">
+          {/* Order Summary */}
           <PaymentOrderSummary
             orderId={draft.orderId}
             shop={draft.shop}
-            totalAmount={draft.pricing.total}
             totalDocuments={draft.documents.length}
             totalCopies={draft.pricing.totalCopies}
-            currency={draft.pricing.currency}
           />
 
           {/* Dynamic Status Feedback (Loading, Pending, Verification, Errors, Price Notice) */}
