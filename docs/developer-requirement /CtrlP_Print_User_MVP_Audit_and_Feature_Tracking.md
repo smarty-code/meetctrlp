@@ -1,6 +1,6 @@
 # CtrlP.ai Print User Web App — MVP Feature Audit & Tracking Specification
 
-**Document Purpose:** Complete audit, architectural layering breakdown, feature discrepancy analysis, and tracking checklist for the Guest Print User Web App MVP.  
+**Document Purpose:** Authoritative audit, architectural layering breakdown, feature discrepancy analysis, and tracking checklist for the Guest Print User Web App MVP.  
 **Audience:** Product Owner, Lead Engineer, Frontend & Backend Engineers.  
 **Authoritative Sources:**
 - `docs/developer-requirement /CtrlP_Print_User_MVP_Updated_Screen_Feature_Spec.md`
@@ -10,30 +10,62 @@
 
 ---
 
-## 1. Architectural Layers Breakdown
+## 1. Updated MVP Screen Structure & Flow
 
-The Print User Web App is engineered with a strict 5-layer architecture to ensure separation of concerns, adherence to the shared design system, and compliance with the rule that the backend is authoritative for security and pricing.
+Based on iterative UX testing and the latest consolidation decisions, the Guest Print User MVP is structured as **4 Primary Screens** and **1 Optional Nested Sheet**.
+
+### Journey Architecture
+
+```text
+Scan Shop QR
+    ↓
+01 Upload Documents (/)
+    ↓
+02 Documents + Preview + Print Configuration (/customize)
+    ↓
+03 Review Order & Direct Payment Checkout (/review)
+    ↓  (Pay Online / Confirm Order)
+04 Order Status & Lifecycle Tracking (/order-status)
+```
+
+*(Note: The legacy `/payment` route now automatically redirects to `/review`.)*
+
+| # | Screen / Route | Type | Primary Responsibilities |
+|---|---|---|---|
+| **01** | **Upload Documents** (`/`) | Primary | Resolve shop QR, multi-file upload, MIME/size validation, upload progress, quick shop info trigger. |
+| **02** | **Documents + Preview + Print Configuration** (`/customize`) | Primary | Carousel preview (PDF canvas / images), copies stepper, color mode (B&W/Color), paper size (A4), page selection expressions (`1,3,5-8`), apply-to-all. |
+| **03** | **Review Order & Direct Payment Checkout** (`/review`) | Primary | Combined review and payment: itemized document list with live copy adjust/delete, authoritative price breakdown, 2-column payment method selection (UPI vs Cash), sticky checkout CTA. |
+| **04** | **Order Status & Lifecycle Tracking** (`/order-status`) | Primary, stateful | Persistent post-submission tracking: Order Received, Shop Accepted, Printing, Ready for Pickup, Completed, and Failure states. |
+| **05** | **Shop Information** (Drawer) | Secondary / nested | Optional slide-up drawer opened from Screen 01 with shop address, operating hours, turnaround time, and supported capabilities. |
+
+---
+
+## 2. Architectural Layers Breakdown
+
+The application maintains a strict 5-layer architecture ensuring modularity, data integrity, and compliance with the rule that the backend remains authoritative for pricing and order states.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ 1. Presentation Layer (Mobile-First UI)                     │
 │    • Next.js App Router (Turbopack, React 19, TypeScript)    │
 │    • Flat visual language (@ctrlp/ui tokens, no gradients)  │
-│    • Fluid responsive layouts (Mobile viewport 360-430px)   │
+│    • Sticky mobile action bars with safe-area insets        │
+│    • Fluid responsive layouts (Mobile 360-430px → Desktop)  │
 └──────────────────────────────┬──────────────────────────────┘
                                │
 ┌──────────────────────────────▼──────────────────────────────┐
 │ 2. Workflow & State Machine Layer                           │
-│    • 5-step primary journey + 1 nested modal flow           │
-│    • Custom hooks: useReviewOrder, usePayment, useTracking  │
-│    • Safe-back navigation & order draft lifecycle           │
+│    • 4-step streamlined journey + 1 nested modal            │
+│    • Custom hooks: useReviewOrder, useOrderTracking         │
+│    • Safe-back navigation & session draft preservation      │
 └──────────────────────────────┬──────────────────────────────┘
                                │
 ┌──────────────────────────────▼──────────────────────────────┐
 │ 3. Domain & Business Logic Layer                            │
-│    • Page selection parser (e.g., "1,3,5-8" validation)     │
-│    • Pricing engine (BW @ ₹3, Color @ ₹10, Copies)          │
+│    • Page selection parser & validator (e.g. "1,3,5-8")     │
+│    • Authoritative pricing engine (BW @ ₹3, Color @ ₹10)    │
 │    • Order lifecycle state machine (SUBMITTED → COMPLETED)  │
+│    • Payment state machine (INITIATING → SUCCESS / FAILED)  │
 └──────────────────────────────┬──────────────────────────────┘
                                │
 ┌──────────────────────────────▼──────────────────────────────┐
@@ -54,49 +86,54 @@ The Print User Web App is engineered with a strict 5-layer architecture to ensur
 
 ---
 
-## 2. Comprehensive Screen-by-Screen Audit
+## 3. Comprehensive Screen-by-Screen Audit
 
-| # | Screen / Route | Planned Spec Features | Implemented State | Modifications / Gap Resolutions |
+| # | Screen / Route | Planned Features | Implemented State | Architectural & Design Decisions |
 |---|---|---|---|---|
-| **01** | **Upload Documents** (`/`) | • QR shop context<br>• Multi-file upload<br>• Supported formats (.pdf, .jpg, .png, .doc, .docx, .ppt, .pptx)<br>• File validation & size limit<br>• Upload progress & retry<br>• Shop Info trigger | ✅ **100% Complete** | • Added Hero section with live shop open/closed sticker.<br>• Added "We Promise" trust pillar card.<br>• Added FAQ accordion and brand footer.<br>• Added client-side 50MB and extension validation. |
-| **02** | **Customize Prints** (`/customize`) | • Document selector & carousel<br>• Canvas PDF/Image preview<br>• Copies stepper<br>• Color mode (B&W vs Color)<br>• Paper size (A4)<br>• Page selection ("all" vs "selected" e.g., `1,3,5-8`)<br>• Apply to all files<br>• *Explicitly exclude orientation/duplex* | ✅ **100% Complete** | • Replaced initial `OrientationSelector` with `PageSelectionControl`.<br>• Connected `parsePageSelection` with validation against page count.<br>• Updated dynamic price & page calculation.<br>• Touch-swipe carousel and real PDF canvas rendering. |
-| **03** | **Review Order** (`/review`) | • Shop identity summary<br>• Itemized document review list<br>• Filename & specs display<br>• Thumbnail preview<br>• Copies quick adjustment<br>• Delete item with price update<br>• Authoritative price refresh simulation<br>• Edit document navigation | ✅ **100% Complete** | • Restored document filename to card headline.<br>• Added interactive stepper & delete button directly in review list.<br>• Synchronizes draft with Screen 02 via `selectedId` query parameter.<br>• Simulated authoritative price change banner. |
-| **04** | **Payment** (`/payment`) | • Order ID & shop summary<br>• Prominent payable amount<br>• UPI / Online payment<br>• Cash at shop option<br>• Payment states (Pending, Processing, Verified, Failed)<br>• Duplicate payment prevention | ✅ **100% Complete** | • Full state machine simulation with retry.<br>• Clear counter collection messaging for Cash-at-Shop.<br>• Stores submitted order into session storage for tracking.<br>• Full shop address display with MapPin icon (no truncation).<br>• Fixed/sticky mobile footer CTA with safe-area support.<br>• Removed redundant "Amount to pay" from order card to consolidate with footer. |
-| **05** | **Order Status** (`/order-status`) | • Unified post-submission lifecycle<br>• States: Order Placed, Shop Accepted, Printing, Ready for Pickup, Completed<br>• Failure states: Rejected, Print Failed, Cancelled<br>• Chronological timeline<br>• Item & bill breakdown<br>• Realtime polling fallback | ✅ **100% Complete** | • Consolidated Screen 05 & 06 prompt requirements into one stateful page.<br>• Added interactive Developer Simulator Bar to test every state transition.<br>• Live polling interval with automatic stop on terminal state. |
-| **06** | **Shop Information** (Drawer) | • Nested modal opened from Screen 01<br>• Shop name, address, hours, turnaround, supported services<br>• Non-blocking / optional | ✅ **100% Complete** | • Accessible bottom drawer with ESC key and backdrop click dismiss.<br>• Non-intrusive to the main checkout flow. |
+| **01** | **Upload Documents** (`/`) | • QR shop context<br>• Multi-file upload<br>• File format & size validation<br>• Upload progress & retry<br>• Shop info modal trigger | ✅ **100% Complete** | • Hero section with real-time shop status badge ("Printing at XYZ • Open").<br>• "We Promise" trust pillars (Privacy, Speed, Quality).<br>• FAQ accordion and promotional brand footer.<br>• Client-side 50MB file size limit and MIME extension validation with retry badges.<br>• Floating bottom indicator triggering configuration transition. |
+| **02** | **Customize Prints** (`/customize`) | • Document selector & carousel<br>• PDF canvas rendering & page nav<br>• Copies stepper (1-20)<br>• B&W vs Color selection<br>• Paper size (A4)<br>• Page selection expressions<br>• Apply to all files | ✅ **100% Complete** | • Replaced initial orientation selector with `PageSelectionControl` per MVP spec.<br>• Wired up `parsePageSelection` and `isPageSelectionValid` against total document pages.<br>• Real PDF canvas preview powered by pdfjs-dist worker.<br>• Sticky summary bar showing live page and price recalculations. |
+| **03** | **Review Order & Payment Checkout** (`/review`) | • Shop summary with location<br>• Itemized document review list<br>• Inline copy adjust & item delete<br>• Price summary breakdown<br>• Payment method selection<br>• Direct order checkout CTA | ✅ **100% Complete** | • **Major Consolidation:** Combined Review and Payment into a single frictionless page.<br>• Redesigned Shop Summary Card with shop icon, status badge, and full address.<br>• Compact 2-column payment method selector (`grid-cols-2`) for "UPI / Online" vs "Cash at Shop".<br>• In-flight and payment failure feedback banner.<br>• Fixed sticky mobile footer CTA with safe-area insets (`fixed inset-x-0 bottom-0 z-30`). |
+| **—** | **Payment Route** (`/payment`) | • Legacy standalone payment screen | 🔀 **Redirected** | • Redirects automatically to `/review` to preserve a consolidated 4-step funnel. |
+| **04** | **Order Status & Lifecycle Tracking** (`/order-status`) | • Unified post-submission tracking<br>• States: Order Received, Shop Accepted, Printing, Ready, Completed<br>• Failure states: Rejected, Print Failed, Cancelled<br>• Vertical timeline<br>• Item details & bill breakdown | ✅ **100% Complete** | • Consolidated Screen 05 & 06 prompt requirements into one stateful page.<br>• Header displays prominent Order ID with 1-tap copy button (removed redundant "NEW ORDER" button and document count subline).<br>• Mini canvas thumbnails for printed files in the Item Details section.<br>• Shop accordion with pickup counter instructions.<br>• Interactive Developer Simulator Bar for manual verification of all 8 lifecycle states. |
+| **05** | **Shop Information** (Drawer) | • Nested modal opened from Screen 01<br>• Shop name, address, hours, turnaround, supported services | ✅ **100% Complete** | • Accessible slide-up drawer with backdrop blur, click-outside dismissal, and ESC key support. Does not interrupt primary checkout. |
 
 ---
 
-## 3. Modifications Made During Building (Executed & Reconciled)
+## 4. Key Plan Modifications Executed in Codebase
 
-1. **Screen 01 UX Enhancements:**
-   - Instead of a bare upload box, the landing page includes a trust-building Hero banner, shop availability indicator ("Printing at XYZ • Open"), "We Promise" guarantees (Zero Privacy Leaks, Instant Pickup, Crisp Prints), and an interactive FAQ accordion.
-   - Added a floating bottom order indicator that tracks uploaded file count and triggers the configuration transition.
+1. **Consolidated Review & Payment (Screens 03 & 04):**
+   - *Previous Plan:* Screen 03 was strictly Review with a "Continue to Payment" button navigating to a separate `/payment` page.
+   - *Current Implementation:* Integrated payment method selection (`PaymentMethodSelector`) and direct payment submission into `/review`. The sticky footer dynamically reflects the chosen payment path:
+     - **UPI / Online Selected:** "Pay ₹XX →" with 256-bit encrypted checkout text.
+     - **Cash at Shop Selected:** "Confirm Order • Pay at Shop" with amount due at shop indicator.
+   - Submitting triggers payment processing and routes directly to `/order-status?orderId=...`. The standalone `/payment` route redirects to `/review`.
 
-2. **Screen 02 Scope Alignment (Executed):**
-   - **Discrepancy:** The initial implementation included an `OrientationSelector` (Portrait vs Landscape), which was explicitly excluded in Section 6 and Section 17 of the MVP specification. Meanwhile, `PageSelectionControl` was not mounted in the main page.
-   - **Resolution:** Replaced `OrientationSelector` with `PageSelectionControl`, wired up `parsePageSelection` and `isPageSelectionValid`, dynamically computed total pages from the selection expression, and enforced that invalid page expressions block proceeding to Review.
+2. **Payment Methods 2-Column Grid Layout:**
+   - Transformed the stacked payment cards into a responsive 2-column grid (`grid grid-cols-2 gap-2.5 sm:gap-3`), featuring dedicated icons, status tags ("Instant Confirmation", "Pay at Counter"), and circular selection indicators.
 
-3. **Screen 03 Headline Clarity (Executed):**
-   - **Discrepancy:** The document review cards replaced the filename with a generic `copies × pages` header.
-   - **Resolution:** Displayed the original filename (`document.name`) as the prominent title with the copies, pages, color mode, and selected page ranges as the informative subtitle.
+3. **Shop Summary Card Modernization:**
+   - Refactored `ShopSummaryCard` to display the store icon, shop name, operational status ("Open Now" with green pulse badge or operating hours), and multi-line address with map pin icon.
 
-4. **Screen 05 Stateful Consolidation & Testing:**
-   - Combined the order received state (Screen 06 prompt) and ongoing tracking states into the unified `/order-status` route.
-   - Added a bottom developer testing bar (`TrackingSimulatorBar`) allowing instant manual transition through all 8 lifecycle states (Order Placed, Shop Accepted, Printing, Ready for Pickup, Completed, Rejected, Cancelled, Failed).
+4. **Tracking Header Simplification:**
+   - Cleaned up `TrackingHeader` on `/order-status`:
+     - Removed the "NEW ORDER" text button from the header action bar (home navigation is handled by the left back arrow `<ArrowLeft />`).
+     - Removed the `{totalDocuments} documents` subline below `ORDER #<ID>`, eliminating visual clutter.
+
+5. **Sticky Mobile Action Bars & Safe-Area Padding:**
+   - Both Screen 02 and Screen 03 sticky footers use `fixed inset-x-0 bottom-0 z-30` with `backdrop-blur-xs`, `bg-paper/95`, and `pb-[calc(0.875rem+env(safe-area-inset-bottom))]` ensuring CTA buttons are never obscured by browser chrome or mobile home bars.
 
 ---
 
-## 4. Feature Tracking Checklist
+## 5. Feature Tracking Checklist
 
 ### Screen 01: Upload Documents (`/`)
-- [x] Scan QR / Shop resolution (defaults to `mockShop`, supports URL parameters).
+- [x] QR code shop context resolution (defaults to `mockShop`, accepts URL parameters).
 - [x] Multi-file selection via native mobile file picker and drag-and-drop.
 - [x] Client-side MIME validation (.pdf, .jpg, .jpeg, .png, .doc, .docx, .ppt, .pptx).
 - [x] File size validation (max 50MB per file with error badge).
 - [x] Realistic upload progress simulation with individual file retry and remove.
 - [x] Persistent IndexedDB file caching via `file-store.ts`.
-- [x] "Shop Info" trigger opening secondary Screen 06 modal.
+- [x] "Shop Info" trigger opening secondary Screen 05 modal.
 - [x] Floating bottom bar triggering transition to Screen 02.
 
 ### Screen 02: Customize Prints (`/customize`)
@@ -111,51 +148,45 @@ The Print User Web App is engineered with a strict 5-layer architecture to ensur
 - [x] Live price and page count calculation in sticky summary bar.
 - [x] Add more files action without leaving the customize screen.
 
-### Screen 03: Review Order (`/review`)
-- [x] Compact shop summary card with location and order context.
+### Screen 03: Review Order & Payment Checkout (`/review`)
+- [x] Compact shop summary card with location, status, and operating hours.
 - [x] Itemized document cards showing preview thumbnail, file name, copies, pages, color, and line price.
 - [x] Quick stepper to update copies with instant subtotal and total recalculation.
 - [x] Document removal with automatic total recalculation.
 - [x] Click-to-edit returning to Screen 02 with `selectedId` focused.
+- [x] Structured price breakdown (print charges, fees, taxes, discounts, total).
 - [x] Authoritative price refresh simulation (detects price changes and shows alert banner).
-- [x] Empty state handling when all documents are removed.
-- [x] Primary "Continue to Payment" CTA.
+- [x] Compact 2-column payment method selector (UPI/Online vs Cash at Shop).
+- [x] In-flight payment processing feedback and retry banner.
+- [x] Fixed mobile sticky bottom CTA with safe-area support.
+- [x] Automatic order placement and redirection to `/order-status`.
 
-### Screen 04: Payment (`/payment`)
-- [x] Order summary with Order ID, shop name, item count, and copies.
-- [x] Prominent payable amount display in INR.
-- [x] Payment method selection: "UPI / Online Payment" and "Cash at Shop".
-- [x] Clear instructions for Cash-at-Shop ("Pay when you collect your prints at the counter").
-- [x] Dynamic payment state machine (Initiated → Processing → Verification → Success / Failed).
-- [x] Error handling with safe retry mechanism.
-- [x] Prevention of duplicate payment submissions.
-- [x] Redirection to Screen 05 with order identifier.
-
-### Screen 05: Order Status & Tracking (`/order-status`)
-- [x] Persistent order tracking screen with Order Reference ID and copy-to-clipboard button.
+### Screen 04: Order Status & Tracking (`/order-status`)
+- [x] Persistent order tracking screen with Order Reference ID and 1-tap copy button.
+- [x] Streamlined header (no redundant "NEW ORDER" button or document count subline).
 - [x] Chronological vertical progress timeline matching post-submission states:
   - State A: Order received / Waiting for shop
   - State B: Shop accepted
   - State C: Printing in progress
-  - State D: Ready for collection (shows pickup instructions and payment due / paid status)
+  - State D: Ready for collection (pickup counter instructions and payment status)
   - State E: Completed
   - Failure states: Shop rejected, Printer failed, Order cancelled
-- [x] Itemized document summary with mini thumbnails and specs.
-- [x] Bill details breakdown (Total charges, payment method, payment status).
-- [x] Shop details accordion with pickup counter instructions.
+- [x] Itemized document summary with mini PDF canvas previews and line-item specs.
+- [x] Total order bill details (Item total, payment status, cash counter instructions).
+- [x] Print shop details accordion with instant counter collection directions.
 - [x] Background polling with exponential backoff and automatic stop on terminal state.
 - [x] Manual refresh button with animated spinner.
-- [x] "New Order" action to restart customer journey.
-- [x] Developer Simulator Bar for manual verification of all states.
+- [x] Left back arrow to return home.
+- [x] Developer Simulator Bar for manual verification of all 8 lifecycle states.
 
-### Screen 06: Shop Information Drawer
-- [x] Triggered from Screen 01 without interrupting the flow.
+### Screen 05: Shop Information Drawer
+- [x] Triggered from Screen 01 without interrupting the checkout flow.
 - [x] Displays shop name, full address, operating hours, turnaround time, supported printing options, and formats.
 - [x] Keyboard accessibility (ESC to close) and backdrop tap to dismiss.
 
 ---
 
-## 5. Day-0 Backend & Hardware Integration Prerequisites
+## 6. Day-0 Backend & Hardware Integration Prerequisites
 
 Before production deployment with physical hardware, the following backend contracts must be bound:
 
