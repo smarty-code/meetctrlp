@@ -25,6 +25,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .app-shell { max-width: 1200px; margin: 0 auto; padding: 28px 32px 56px; }
 .topbar, .intro-band, .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
 .topbar { border-bottom: 2px solid var(--graphite); padding-bottom: 20px; }
+.topbar-meta { display: grid; justify-items: end; gap: 6px; }
+.app-version { margin: 0; color: var(--ash); font-size: 13px; font-weight: 800; letter-spacing: .04em; }
 .eyebrow { margin: 0 0 6px; color: var(--ash); font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 h1, h2, h3, p { margin-top: 0; }
 h1 { margin-bottom: 0; color: var(--green); font-size: 32px; line-height: 1.1; }

@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Existing tag to build and release, for example shop-desktop-v0.1.0"
+        description: "Version tag for the installer, for example shop-desktop-v0.1.8. The build always uses the latest main commit."
         required: true
         type: string
 
@@ -24,11 +24,11 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Check out source
+      - name: Check out latest main
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+          ref: main
           sparse-checkout: |
             apps
             packages
@@ -50,6 +50,35 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
+
+      - name: Stamp app version from release tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+        run: |
+          VERSION="${RELEASE_TAG#shop-desktop-v}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag '$RELEASE_TAG' must look like shop-desktop-v1.2.3"
+            exit 1
+          fi
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Building latest main as $VERSION from $RELEASE_TAG at $(git rev-parse --short HEAD)"
+          VERSION="$VERSION" node -e '
+            const fs = require("fs");
+            const version = process.env.VERSION;
+            if (!version) throw new Error("VERSION is required");
+            const pkgPath = process.env.DESKTOP_PATH + "/package.json";
+            const tauriPath = process.env.DESKTOP_PATH + "/src-tauri/tauri.conf.json";
+            const cargoPath = process.env.DESKTOP_PATH + "/src-tauri/Cargo.toml";
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+            pkg.version = version;
+            fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+            const tauri = JSON.parse(fs.readFileSync(tauriPath, "utf8"));
+            tauri.version = version;
+            fs.writeFileSync(tauriPath, JSON.stringify(tauri, null, 2) + "\n");
+            const cargo = fs.readFileSync(cargoPath, "utf8").replace(/^version = ".*"$/m, "version = \"" + version + "\"");
+            fs.writeFileSync(cargoPath, cargo);
+          '
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -79,12 +108,16 @@ jobs:
           # TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: ${{ env.DESKTOP_PATH }}
+          appVersion: ${{ env.APP_VERSION }}
           tagName: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
           releaseName: "PrintKro Shop Desktop ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}"
           releaseBody: |
             Windows installers for the PrintKro Shop Desktop Agent.
 
             Install the `.exe` NSIS installer for the normal Windows setup experience, or use the `.msi` package for managed deployment.
+
+            Built from the latest `main` commit as application version ${{ env.APP_VERSION }}.
+          assetNamePattern: "[name]_[version]_[arch][setup][ext]"
           releaseDraft: true
           prerelease: false
 

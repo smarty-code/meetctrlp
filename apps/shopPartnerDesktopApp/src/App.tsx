@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -26,12 +27,8 @@ type JobReceipt = {
   message: string;
 };
 
-type SelectedDocument = {
-  path: string;
-  name: string;
-};
-
 function App() {
+  const [appVersion, setAppVersion] = useState("");
   const [printers, setPrinters] = useState<Printer[]>([]);
   const [selectedPrinter, setSelectedPrinter] = useState("");
   const [filePath, setFilePath] = useState("");
@@ -125,50 +122,6 @@ function App() {
     }
   }
 
-  async function chooseDocument() {
-    try {
-      const selected = await open({
-        multiple: false,
-        directory: false,
-        filters: [{ name: "Printable documents", extensions: ["pdf", "jpg", "jpeg", "png"] }],
-      });
-      if (typeof selected === "string") {
-        setDocument({ path: selected, name: selected.split(/[\\/]/).pop() ?? selected });
-        setMessage("Document selected. It is ready to print.");
-      }
-    } catch (error) {
-      setMessage(String(error));
-    }
-  }
-
-  async function printDocument(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!document || !selectedPrinter) return;
-
-    setLoading(true);
-    try {
-      const receipt = await invoke<JobReceipt>("print_document_job", {
-        job: {
-          id: crypto.randomUUID(),
-          printer_id: selectedPrinter,
-          document: { local_file: { path: document.path } },
-          options: {
-            color_mode: "color",
-            paper_size: "A4",
-            copies: 1,
-            page_selection: "all",
-          },
-        },
-      });
-      setLastJob(receipt);
-      setMessage(receipt.message);
-    } catch (error) {
-      setMessage(String(error));
-    } finally {
-      setLoading(false);
-    }
-  }
-
   async function watchJob(jobId: string) {
     for (let attempt = 0; attempt < 20; attempt += 1) {
       await new Promise((resolve) => window.setTimeout(resolve, 100));
@@ -182,6 +135,9 @@ function App() {
   }
 
   useEffect(() => {
+    void getVersion()
+      .then(setAppVersion)
+      .catch(() => setAppVersion(""));
     void refreshPrinters();
     let unlisten: (() => void) | undefined;
     void listen<JobReceipt>("job:changed", (event) => {
@@ -204,7 +160,12 @@ function App() {
           <p className="eyebrow">PrintKro / Shop Desktop</p>
           <h1>Agent console</h1>
         </div>
-        <div className="agent-status"><span className="status-dot" /> Agent running</div>
+        <div className="topbar-meta">
+          <p className="app-version">{appVersion ? `Version ${appVersion}` : "Version unavailable"}</p>
+          <div className="agent-status">
+            <span className="status-dot status-online" /> Agent running
+          </div>
+        </div>
       </header>
 
       <section className="intro-band">
@@ -236,7 +197,10 @@ function App() {
                 onClick={() => void choosePrinter(printer.id)}
               >
                 <span className={`status-dot status-${printer.status}`} />
-                <span className="printer-copy"><strong>{printer.name}</strong><small>{printer.backend}</small></span>
+                <span className="printer-copy">
+                  <strong>{printer.name}</strong>
+                  <small>{printer.backend}</small>
+                </span>
                 <span className="printer-status">{printer.status}</span>
               </button>
             ))}
@@ -246,20 +210,44 @@ function App() {
 
         <section className="panel details-panel">
           <div className="panel-heading">
-            <div><p className="eyebrow">Selected device</p><h3>{selected?.name ?? "No printer selected"}</h3></div>
+            <div>
+              <p className="eyebrow">Selected device</p>
+              <h3>{selected?.name ?? "No printer selected"}</h3>
+            </div>
           </div>
           {selected ? (
             <dl className="details-list">
-              <div><dt>Status</dt><dd><span className={`status-dot status-${selected.status}`} /> {selected.status}</dd></div>
-              <div><dt>Backend</dt><dd>{selected.backend}</dd></div>
-              <div><dt>Color</dt><dd>{selected.capabilities.color ? "Supported" : "Unavailable"}</dd></div>
-              <div><dt>Paper</dt><dd>{selected.capabilities.paper_sizes.join(", ") || "Unknown"}</dd></div>
+              <div>
+                <dt>Status</dt>
+                <dd>
+                  <span className={`status-dot status-${selected.status}`} /> {selected.status}
+                </dd>
+              </div>
+              <div>
+                <dt>Backend</dt>
+                <dd>{selected.backend}</dd>
+              </div>
+              <div>
+                <dt>Color</dt>
+                <dd>{selected.capabilities.color ? "Supported" : "Unavailable"}</dd>
+              </div>
+              <div>
+                <dt>Paper</dt>
+                <dd>{selected.capabilities.paper_sizes.join(", ") || "Unknown"}</dd>
+              </div>
             </dl>
-          ) : <p className="empty-state">Select a discovered printer to inspect its capabilities.</p>}
+          ) : (
+            <p className="empty-state">Select a discovered printer to inspect its capabilities.</p>
+          )}
         </section>
 
         <section className="panel inventory-panel">
-          <div className="panel-heading"><div><p className="eyebrow">Firebase inventory</p><h3>Sync printer details</h3></div></div>
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">Firebase inventory</p>
+              <h3>Sync printer details</h3>
+            </div>
+          </div>
           <label htmlFor="server-url">Server URL</label>
           <input id="server-url" value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} />
           <label htmlFor="device-id">Device ID</label>
@@ -273,7 +261,12 @@ function App() {
         </section>
 
         <section className="panel test-panel">
-          <div className="panel-heading"><div><p className="eyebrow">Document job</p><h3>Print PDF or image</h3></div></div>
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">Document job</p>
+              <h3>Print PDF or image</h3>
+            </div>
+          </div>
           <form onSubmit={submitPrintJob}>
             <label>Document</label>
             <div className="file-picker">
@@ -313,24 +306,27 @@ function App() {
               Send to printer
             </button>
           </form>
-          <p className="feedback" role="status">{message}</p>
-        </section>
-
-        <section className="panel document-panel">
-          <div className="panel-heading"><div><p className="eyebrow">Local document pipeline</p><h3>Print a file</h3></div></div>
-          <form onSubmit={printDocument}>
-            <button className="button button-secondary" type="button" onClick={() => void chooseDocument()} disabled={loading}>
-              Choose PDF or photo
-            </button>
-            <p className="selected-file">{document ? document.name : "No document selected"}</p>
-            <button className="button button-primary" type="submit" disabled={loading || !selectedPrinter || !document}>Print selected file</button>
-          </form>
-          <p className="feedback">The agent sends this file to the selected printer without opening the Windows print dialog.</p>
+          <p className="feedback" role="status">
+            {message}
+          </p>
         </section>
 
         <section className="panel job-panel">
-          <div className="panel-heading"><div><p className="eyebrow">Latest result</p><h3>Job receipt</h3></div></div>
-          {lastJob ? <div className="job-receipt"><strong>{lastJob.state}</strong><span>{lastJob.id}</span><p>{lastJob.message}</p></div> : <p className="empty-state">No local jobs submitted.</p>}
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">Latest result</p>
+              <h3>Job receipt</h3>
+            </div>
+          </div>
+          {lastJob ? (
+            <div className="job-receipt">
+              <strong>{lastJob.state}</strong>
+              <span>{lastJob.id}</span>
+              <p>{lastJob.message}</p>
+            </div>
+          ) : (
+            <p className="empty-state">No local jobs submitted.</p>
+          )}
         </section>
       </div>
     </main>
