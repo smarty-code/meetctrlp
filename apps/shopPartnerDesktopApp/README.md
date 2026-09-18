@@ -6,11 +6,7 @@ The first prototype validates the local native print channel:
 React → Tauri command → Rust agent state → printer backend → Windows spooler
 ```
 
-<<<<<<< HEAD
-The current console supports printer discovery, selection, local text test jobs, and selecting a PDF/JPG/JPEG/PNG file for direct printing. On Windows, the backend follows the prototype agent's RAW/ESC-POS path through `winspool.drv`; document jobs use the selected printer's silent `PrintTo` path without opening the print dialog. On non-Windows development machines, a deterministic development printer is exposed so the React-to-Rust boundary can still be exercised.
-=======
 The current console supports printer discovery, selection, and a local PDF/JPG/PNG print job. On Windows, the backend rasterizes the document and submits it through the printer driver and Windows spooler. On non-Windows development machines, a development printer accepts the same job contract so the React-to-Rust boundary can still be exercised.
->>>>>>> add/backend
 
 The Rust side owns printer access and job state. React only invokes typed commands and displays returned state. Cloud WebSocket transport and cloud authentication remain subsequent implementation slices.
 
@@ -21,13 +17,8 @@ Development progress and verification instructions are maintained in [the develo
 - `list_printers`
 - `select_printer`
 - `get_agent_status`
-<<<<<<< HEAD
-- `create_test_job`
-- `print_document_job`
-=======
 - `create_print_job`
 - `validate_document_job`
->>>>>>> add/backend
 - `get_job`
 
 ## Local document testing

@@ -13,14 +13,13 @@ use windows::{
         Foundation::{GetLastError, HANDLE, HWND},
         Graphics::{
             Gdi::{
-                CreateDCW, DeleteDC, EndDoc, EndPage, GetDeviceCaps, StartDocW, StartPage,
-                StretchDIBits, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, DOCINFOW, HORZRES,
-                SRCCOPY, VERTRES,
+                CreateDCW, DeleteDC, GetDeviceCaps, StretchDIBits, BITMAPINFO, BITMAPINFOHEADER,
+                DEVMODE_COLOR, DIB_RGB_COLORS, DM_IN_BUFFER, DM_OUT_BUFFER, HORZRES, SRCCOPY,
+                VERTRES,
             },
-            Printing::{
-                ClosePrinter, DocumentPropertiesW, OpenPrinterW, DM_IN_BUFFER, DM_OUT_BUFFER,
-            },
+            Printing::{ClosePrinter, DocumentPropertiesW, OpenPrinterW},
         },
+        Storage::Xps::{EndDoc, EndPage, StartDocW, StartPage, DOCINFOW},
         System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED},
     },
 };
@@ -103,7 +102,7 @@ fn render_pdf_pages(path: &Path, job: &PrintJob) -> Result<Vec<DynamicImage>, St
             .SetDestinationHeight(height)
             .map_err(|error| format!("could not set PDF render height: {error}"))?;
         wait_action(
-            page.RenderToStreamWithOptionsAsync(&stream, &options)
+            page.RenderWithOptionsToStreamAsync(&stream, &options)
                 .map_err(|error| format!("could not render PDF page {page_number}: {error}"))?,
         )?;
         stream
@@ -117,7 +116,7 @@ fn render_pdf_pages(path: &Path, job: &PrintJob) -> Result<Vec<DynamicImage>, St
             .map_err(|error| format!("could not read PDF render stream: {error}"))?;
         let reader = windows::Storage::Streams::DataReader::CreateDataReader(&input)
             .map_err(|error| format!("could not read PDF render bytes: {error}"))?;
-        wait_async(
+        wait_load(
             reader
                 .LoadAsync(stream_size as u32)
                 .map_err(|error| format!("could not load PDF render bytes: {error}"))?,
@@ -247,7 +246,7 @@ fn printer_devmode(
             PCWSTR(printer_wide.as_ptr()),
             Some(devmode.as_mut_ptr()),
             None,
-            DM_OUT_BUFFER,
+            DM_OUT_BUFFER.0,
         )
     };
     if filled < 0 {
@@ -259,9 +258,9 @@ fn printer_devmode(
         mode.dmFields |= windows::Win32::Graphics::Gdi::DM_COPIES
             | windows::Win32::Graphics::Gdi::DM_COLOR
             | windows::Win32::Graphics::Gdi::DM_PAPERSIZE;
-        mode.dmCopies = settings.copies;
-        mode.dmColor = settings.color;
-        mode.dmPaperSize = settings.paper_size;
+        mode.Anonymous1.Anonymous1.dmCopies = settings.copies;
+        mode.dmColor = DEVMODE_COLOR(settings.color);
+        mode.Anonymous1.Anonymous1.dmPaperSize = settings.paper_size;
     }
 
     let applied = unsafe {
@@ -271,7 +270,7 @@ fn printer_devmode(
             PCWSTR(printer_wide.as_ptr()),
             Some(devmode.as_mut_ptr()),
             Some(devmode.as_ptr()),
-            DM_IN_BUFFER | DM_OUT_BUFFER,
+            DM_IN_BUFFER.0 | DM_OUT_BUFFER.0,
         )
     };
     if applied < 0 {
@@ -359,6 +358,26 @@ fn wait_action(operation: windows::Foundation::IAsyncAction) -> Result<(), Strin
             .map_err(|error| format!("PDF async status failed: {error}"))?
         {
             windows::Foundation::AsyncStatus::Completed => return Ok(()),
+            windows::Foundation::AsyncStatus::Error
+            | windows::Foundation::AsyncStatus::Canceled => {
+                return Err("PDF operation failed".to_string());
+            }
+            _ => std::thread::sleep(std::time::Duration::from_millis(15)),
+        }
+    }
+}
+
+fn wait_load(operation: windows::Storage::Streams::DataReaderLoadOperation) -> Result<u32, String> {
+    loop {
+        match operation
+            .Status()
+            .map_err(|error| format!("PDF async status failed: {error}"))?
+        {
+            windows::Foundation::AsyncStatus::Completed => {
+                return operation
+                    .GetResults()
+                    .map_err(|error| format!("PDF async result failed: {error}"));
+            }
             windows::Foundation::AsyncStatus::Error
             | windows::Foundation::AsyncStatus::Canceled => {
                 return Err("PDF operation failed".to_string());
