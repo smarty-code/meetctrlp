@@ -79,8 +79,8 @@ export default function TestPage() {
                 <Switch id="notifications" defaultChecked />
               </div>
               <Label className="flex items-center gap-3" htmlFor="terms">
-                <Checkbox id="terms" defaultChecked />
-                I agree to the print guidelines
+                <Checkbox id="terms" defaultChecked />I agree to the print
+                guidelines
               </Label>
             </CardContent>
           </Card>

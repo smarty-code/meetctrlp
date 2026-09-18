@@ -35,6 +35,10 @@ impl QueueStore {
         })
     }
 
+    pub fn directory(&self) -> &Path {
+        self.path.parent().unwrap_or_else(|| Path::new("."))
+    }
+
     pub fn load_jobs(&self) -> Result<Vec<QueuedJob>, String> {
         let _guard = self
             .lock
@@ -83,7 +87,19 @@ impl QueueStore {
 fn read_file(path: &Path) -> Result<QueueFile, String> {
     let contents =
         fs::read_to_string(path).map_err(|error| format!("could not read queue store: {error}"))?;
-    serde_json::from_str(&contents).map_err(|error| format!("could not parse queue store: {error}"))
+    if contents.trim().is_empty() {
+        return Ok(QueueFile::default());
+    }
+    match serde_json::from_str(&contents) {
+        Ok(file) => Ok(file),
+        Err(error) => {
+            let backup = path.with_extension("json.bak");
+            let _ = fs::copy(path, &backup);
+            eprintln!("queue store reset after unreadable job file: {error}");
+            write_file(path, &QueueFile::default())?;
+            Ok(QueueFile::default())
+        }
+    }
 }
 
 fn write_file(path: &Path, file: &QueueFile) -> Result<(), String> {
@@ -101,8 +117,8 @@ mod tests {
 
     use super::QueueStore;
     use crate::domain::{
-        JobReceipt, JobState, PrintTestJob, Printer, PrinterBackendType, PrinterCapabilities,
-        PrinterStatus, QueuedJob,
+        ColorMode, DocumentSource, JobReceipt, JobState, PageSelection, PaperSize, PrintJob,
+        PrintOptions, Printer, PrinterBackendType, PrinterCapabilities, PrinterStatus, QueuedJob,
     };
 
     #[test]
@@ -115,6 +131,14 @@ mod tests {
                 .as_nanos()
         ));
         let store = QueueStore::open(path.clone()).unwrap();
+        let document = std::env::temp_dir().join(format!(
+            "printkro-doc-{}.png",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&document, [1, 2, 3]).unwrap();
         let job = QueuedJob {
             receipt: JobReceipt {
                 id: "job-1".to_string(),
@@ -122,21 +146,36 @@ mod tests {
                 state: JobState::Queued,
                 message: "queued".to_string(),
             },
-            request: PrintTestJob {
+            request: PrintJob {
+                id: "job-1".to_string(),
                 printer_id: "printer-1".to_string(),
-                content: "hello".to_string(),
+                document: DocumentSource::LocalFile {
+                    path: document.clone(),
+                },
+                options: PrintOptions {
+                    color_mode: ColorMode::Color,
+                    paper_size: PaperSize::A4,
+                    copies: 1,
+                    page_selection: PageSelection::All,
+                },
             },
             printer: Printer {
                 id: "printer-1".to_string(),
                 name: "Test".to_string(),
                 backend: PrinterBackendType::Development,
                 status: PrinterStatus::Online,
+                identity: crate::domain::PrinterIdentity::default(),
                 capabilities: PrinterCapabilities::default(),
+                details: serde_json::json!({ "source": "test" }),
             },
         };
 
         store.save_job(&job).unwrap();
         assert_eq!(store.load_jobs().unwrap().len(), 1);
+        assert!(matches!(
+            store.load_jobs().unwrap()[0].request.document,
+            DocumentSource::LocalFile { .. }
+        ));
         store
             .update_receipt(&JobReceipt {
                 state: JobState::Completed,
@@ -147,6 +186,7 @@ mod tests {
             store.load_jobs().unwrap()[0].receipt.state,
             JobState::Completed
         ));
+        let _ = std::fs::remove_file(document);
         let _ = std::fs::remove_file(path);
     }
 }

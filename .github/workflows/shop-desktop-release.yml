@@ -29,8 +29,6 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
-          # Do not materialize docs on Windows. Older tags contain a directory
-          # with a trailing space, which NTFS cannot create during checkout.
           sparse-checkout: |
             apps
             packages

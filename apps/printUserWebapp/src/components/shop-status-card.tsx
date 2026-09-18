@@ -1,54 +1,55 @@
-'use client';
+"use client"
 
-import React from 'react';
-import { ShopStatus } from '../types/upload';
-import { Clock } from 'lucide-react';
+import React from "react"
+import { ShopStatus } from "../types/upload"
+import { Clock } from "lucide-react"
 
 interface ShopStatusCardProps {
-  status: ShopStatus;
-  shopName?: string;
-  estimatedMinutes?: number;
-  statusMessage?: string;
+  status: ShopStatus
+  shopName?: string
+  estimatedMinutes?: number
+  statusMessage?: string
 }
 
 export const ShopStatusCard: React.FC<ShopStatusCardProps> = ({
-  status = 'OPEN',
+  status = "OPEN",
   estimatedMinutes = 10,
   statusMessage,
 }) => {
-  const isAvailable = status === 'OPEN' || status === 'BUSY';
+  const isAvailable = status === "OPEN" || status === "BUSY"
 
   return (
-    <div className="w-full px-4 -mt-2">
+    <div className="-mt-2 w-full px-4">
       {/* 12px radius, flat border, paper white surface, no drop shadows */}
-      <div className="w-full bg-paper rounded-xl p-5 text-center border-2 border-graphite/15">
+      <div className="w-full rounded-xl border-2 border-graphite/15 bg-paper p-5 text-center">
         {isAvailable ? (
           <div>
-            <h2 className="font-heading text-heading-sm text-midnight tracking-heading-sm">
+            <h2 className="font-heading text-heading-sm tracking-heading-sm text-midnight">
               {statusMessage || "We're ready to print!"}
             </h2>
 
-            <p className="mt-1 text-body text-charcoal font-medium max-w-[280px] mx-auto leading-body">
+            <p className="mx-auto mt-1 max-w-[280px] text-body leading-body font-medium text-charcoal">
               Your documents will be printed at this shop.
             </p>
 
-            <div className="mt-3.5 pt-3 border-t border-graphite/15 flex items-center justify-center gap-2 text-caption font-bold text-macaw-blue">
+            <div className="mt-3.5 flex items-center justify-center gap-2 border-t border-graphite/15 pt-3 text-caption font-bold text-macaw-blue">
               <Clock className="size-4 stroke-[2.5]" />
               <span>Estimated time: ~{estimatedMinutes} minutes</span>
             </div>
           </div>
         ) : (
           <div>
-            <h2 className="font-heading text-heading-sm text-midnight tracking-heading-sm">
+            <h2 className="font-heading text-heading-sm tracking-heading-sm text-midnight">
               We&apos;ll be right back!
             </h2>
 
-            <p className="mt-1 text-body text-charcoal font-medium max-w-[290px] mx-auto leading-body">
-              This store is temporarily unavailable. We&apos;re working on it and will be back online shortly.
+            <p className="mx-auto mt-1 max-w-[290px] text-body leading-body font-medium text-charcoal">
+              This store is temporarily unavailable. We&apos;re working on it
+              and will be back online shortly.
             </p>
           </div>
         )}
       </div>
     </div>
-  );
-};
+  )
+}

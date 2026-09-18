@@ -59,8 +59,11 @@ impl AppState {
                 }
                 emit_job(&worker_event_sink, &receipt);
 
-                receipt.state = match worker_backend.print_test_job(&job.printer, &job.request) {
-                    Ok(()) => JobState::Completed,
+                receipt.state = match worker_backend.print_document(&job.printer, &job.request) {
+                    Ok(()) => {
+                        receipt.message = "document sent to the printer backend".to_string();
+                        JobState::Completed
+                    }
                     Err(error) => {
                         receipt.message = error;
                         JobState::Failed
@@ -118,6 +121,13 @@ impl AppState {
             .map_err(|_| "queue is unavailable".to_string())?;
         *length += 1;
         Ok(())
+    }
+
+    pub fn staging_dir(&self) -> Result<PathBuf, String> {
+        let path = self.store.directory().join("staging");
+        std::fs::create_dir_all(&path)
+            .map_err(|error| format!("could not create document staging directory: {error}"))?;
+        Ok(path)
     }
 }
 

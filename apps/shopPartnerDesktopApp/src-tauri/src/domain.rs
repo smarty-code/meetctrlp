@@ -1,4 +1,7 @@
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -11,7 +14,10 @@ pub struct Printer {
     pub name: String,
     pub backend: PrinterBackendType,
     pub status: PrinterStatus,
+    #[serde(default)]
+    pub identity: PrinterIdentity,
     pub capabilities: PrinterCapabilities,
+    pub details: serde_json::Value,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -19,7 +25,25 @@ pub struct Printer {
 pub enum PrinterBackendType {
     WindowsDriver,
     WindowsRaw,
+    Cups,
     Development,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct PrinterIdentity {
+    pub manufacturer: Option<String>,
+    pub model: Option<String>,
+    pub serial_number: Option<String>,
+    pub driver_name: Option<String>,
+    pub port_name: Option<String>,
+    pub location: Option<String>,
+    pub comment: Option<String>,
+    pub share_name: Option<String>,
+    pub device_url: Option<String>,
+    pub uuid: Option<String>,
+    pub print_processor: Option<String>,
+    pub datatype: Option<String>,
+    pub computer_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -36,8 +60,15 @@ pub enum PrinterStatus {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct PrinterCapabilities {
     pub color: bool,
+    pub duplex: bool,
+    pub duplex_mode: Option<String>,
     pub paper_sizes: Vec<PaperSize>,
+    pub media: Vec<String>,
     pub raw_supported: bool,
+    pub color_modes: Vec<String>,
+    pub sides: Vec<String>,
+    pub document_formats: Vec<String>,
+    pub resolutions: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -76,7 +107,7 @@ pub struct JobReceipt {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct QueuedJob {
     pub receipt: JobReceipt,
-    pub request: PrintTestJob,
+    pub request: PrintJob,
     pub printer: Printer,
 }
 
@@ -184,6 +215,31 @@ impl PrintJob {
         }
         self.document.validate()?;
         self.options.validate()
+    }
+
+    pub fn into_staged(mut self, staging_dir: &Path) -> Result<Self, String> {
+        if let DocumentSource::Bytes { data, file_name } = &self.document {
+            fs::create_dir_all(staging_dir)
+                .map_err(|error| format!("could not create document staging directory: {error}"))?;
+            let file_name = PathBuf::from(file_name)
+                .file_name()
+                .map(PathBuf::from)
+                .ok_or_else(|| "document file name is required".to_string())?;
+            let path = staging_dir.join(format!("{}-{}", self.id, file_name.display()));
+            fs::write(&path, data)
+                .map_err(|error| format!("could not stage document bytes: {error}"))?;
+            self.document = DocumentSource::LocalFile { path };
+        }
+        Ok(self)
+    }
+
+    pub fn file_path(&self) -> Result<&Path, String> {
+        match &self.document {
+            DocumentSource::LocalFile { path } => Ok(path),
+            DocumentSource::Bytes { .. } => {
+                Err("document bytes must be staged before printing".to_string())
+            }
+        }
     }
 }
 
@@ -308,5 +364,32 @@ mod tests {
         };
 
         assert!(job.validate().is_ok());
+    }
+
+    #[test]
+    fn stages_document_bytes_to_a_local_file() {
+        let staging = std::env::temp_dir().join(format!(
+            "printkro-stage-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let job = PrintJob {
+            id: "job-9".to_string(),
+            printer_id: "printer-1".to_string(),
+            document: DocumentSource::Bytes {
+                data: vec![1, 2, 3],
+                file_name: "document.png".to_string(),
+            },
+            options: document_options(),
+        }
+        .into_staged(&staging)
+        .unwrap();
+
+        let path = job.file_path().unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), vec![1, 2, 3]);
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_dir(staging);
     }
 }

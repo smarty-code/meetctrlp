@@ -5,6 +5,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 
 type PrinterStatus = "online" | "offline" | "printing" | "paused" | "error" | "unknown";
+type ColorMode = "color" | "black_and_white";
+type PaperSize = "A4" | "A3" | "LETTER";
 
 type Printer = {
   id: string;
@@ -32,11 +34,16 @@ type SelectedDocument = {
 function App() {
   const [printers, setPrinters] = useState<Printer[]>([]);
   const [selectedPrinter, setSelectedPrinter] = useState("");
-  const [content, setContent] = useState("Hello from PrintKro");
-  const [document, setDocument] = useState<SelectedDocument | null>(null);
+  const [filePath, setFilePath] = useState("");
+  const [copies, setCopies] = useState(1);
+  const [colorMode, setColorMode] = useState<ColorMode>("color");
+  const [paperSize, setPaperSize] = useState<PaperSize>("A4");
   const [lastJob, setLastJob] = useState<JobReceipt | null>(null);
   const [message, setMessage] = useState("Ready to discover local printers.");
   const [loading, setLoading] = useState(false);
+  const [serverUrl, setServerUrl] = useState("http://localhost:3000");
+  const [deviceId, setDeviceId] = useState("shop-desktop-local");
+  const [inventoryKey, setInventoryKey] = useState("");
 
   async function refreshPrinters() {
     setLoading(true);
@@ -62,12 +69,51 @@ function App() {
     }
   }
 
-  async function submitTestJob(event: React.FormEvent<HTMLFormElement>) {
+  async function syncPrinterInventory() {
+    setLoading(true);
+    try {
+      const result = await invoke<{ saved: number }>("sync_printer_inventory", {
+        request: { server_url: serverUrl, device_id: deviceId, api_key: inventoryKey },
+      });
+      setMessage(`${result.saved} printer snapshot${result.saved === 1 ? "" : "s"} synced.`);
+    } catch (error) {
+      setMessage(String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function chooseDocument() {
+    try {
+      const selected = await open({
+        multiple: false,
+        filters: [{ name: "Documents", extensions: ["pdf", "png", "jpg", "jpeg"] }],
+      });
+      if (typeof selected === "string" && selected.length > 0) {
+        setFilePath(selected);
+        setMessage("Document selected.");
+      }
+    } catch (error) {
+      setMessage(String(error));
+    }
+  }
+
+  async function submitPrintJob(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
     try {
-      const receipt = await invoke<JobReceipt>("create_test_job", {
-        job: { printer_id: selectedPrinter, content },
+      const receipt = await invoke<JobReceipt>("create_print_job", {
+        job: {
+          id: "pending",
+          printer_id: selectedPrinter,
+          document: { local_file: { path: filePath } },
+          options: {
+            color_mode: colorMode,
+            paper_size: paperSize,
+            copies,
+            page_selection: "all",
+          },
+        },
       });
       setLastJob(receipt);
       setMessage(receipt.message);
@@ -149,6 +195,7 @@ function App() {
   }, []);
 
   const selected = printers.find((printer) => printer.id === selectedPrinter);
+  const fileName = filePath.split(/[/\\]/).pop() || "No file selected";
 
   return (
     <main className="app-shell">
@@ -163,8 +210,8 @@ function App() {
       <section className="intro-band">
         <div>
           <p className="eyebrow">Local print channel</p>
-          <h2>Observe the path from UI to printer.</h2>
-          <p className="intro-copy">This first console validates the native boundary before cloud transport is added.</p>
+          <h2>Print a PDF or image through the Windows driver.</h2>
+          <p className="intro-copy">Pick a local file and a discovered printer. The agent queues the job and the Windows spooler talks to the driver.</p>
         </div>
         <button className="button button-secondary" type="button" onClick={() => void refreshPrinters()} disabled={loading}>
           {loading ? "Working..." : "Refresh printers"}
@@ -204,19 +251,67 @@ function App() {
           {selected ? (
             <dl className="details-list">
               <div><dt>Status</dt><dd><span className={`status-dot status-${selected.status}`} /> {selected.status}</dd></div>
+              <div><dt>Backend</dt><dd>{selected.backend}</dd></div>
               <div><dt>Color</dt><dd>{selected.capabilities.color ? "Supported" : "Unavailable"}</dd></div>
               <div><dt>Paper</dt><dd>{selected.capabilities.paper_sizes.join(", ") || "Unknown"}</dd></div>
-              <div><dt>RAW</dt><dd>{selected.capabilities.raw_supported ? "Supported" : "Unavailable"}</dd></div>
             </dl>
           ) : <p className="empty-state">Select a discovered printer to inspect its capabilities.</p>}
         </section>
 
+        <section className="panel inventory-panel">
+          <div className="panel-heading"><div><p className="eyebrow">Firebase inventory</p><h3>Sync printer details</h3></div></div>
+          <label htmlFor="server-url">Server URL</label>
+          <input id="server-url" value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} />
+          <label htmlFor="device-id">Device ID</label>
+          <input id="device-id" value={deviceId} onChange={(event) => setDeviceId(event.target.value)} />
+          <label htmlFor="inventory-key">Inventory API key</label>
+          <input id="inventory-key" type="password" value={inventoryKey} onChange={(event) => setInventoryKey(event.target.value)} />
+          <button className="button button-secondary" type="button" onClick={() => void syncPrinterInventory()} disabled={loading || printers.length === 0}>
+            Sync discovered details
+          </button>
+          <p className="feedback">Uploads normalized fields and the complete discovery snapshot.</p>
+        </section>
+
         <section className="panel test-panel">
-          <div className="panel-heading"><div><p className="eyebrow">Local backend</p><h3>Submit test job</h3></div></div>
-          <form onSubmit={submitTestJob}>
-            <label htmlFor="test-content">Text payload</label>
-            <textarea id="test-content" value={content} onChange={(event) => setContent(event.target.value)} rows={5} />
-            <button className="button button-primary" type="submit" disabled={loading || !selectedPrinter}>Send to printer</button>
+          <div className="panel-heading"><div><p className="eyebrow">Document job</p><h3>Print PDF or image</h3></div></div>
+          <form onSubmit={submitPrintJob}>
+            <label>Document</label>
+            <div className="file-picker">
+              <button className="button button-secondary" type="button" onClick={() => void chooseDocument()} disabled={loading}>
+                Choose file
+              </button>
+              <span title={filePath}>{fileName}</span>
+            </div>
+            <div className="options-grid">
+              <div>
+                <label htmlFor="copies">Copies</label>
+                <input
+                  id="copies"
+                  type="number"
+                  min={1}
+                  value={copies}
+                  onChange={(event) => setCopies(Math.max(1, Number(event.target.value) || 1))}
+                />
+              </div>
+              <div>
+                <label htmlFor="color-mode">Color</label>
+                <select id="color-mode" value={colorMode} onChange={(event) => setColorMode(event.target.value as ColorMode)}>
+                  <option value="color">Color</option>
+                  <option value="black_and_white">Black and white</option>
+                </select>
+              </div>
+              <div>
+                <label htmlFor="paper-size">Paper</label>
+                <select id="paper-size" value={paperSize} onChange={(event) => setPaperSize(event.target.value as PaperSize)}>
+                  <option value="A4">A4</option>
+                  <option value="A3">A3</option>
+                  <option value="LETTER">Letter</option>
+                </select>
+              </div>
+            </div>
+            <button className="button button-primary" type="submit" disabled={loading || !selectedPrinter || !filePath}>
+              Send to printer
+            </button>
           </form>
           <p className="feedback" role="status">{message}</p>
         </section>
