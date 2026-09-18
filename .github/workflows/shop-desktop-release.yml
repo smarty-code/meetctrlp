@@ -29,6 +29,14 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+          sparse-checkout: |
+            apps
+            packages
+            package.json
+            pnpm-lock.yaml
+            pnpm-workspace.yaml
+            turbo.json
+          sparse-checkout-cone-mode: true
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4

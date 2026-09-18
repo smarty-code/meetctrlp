@@ -12,9 +12,9 @@
   "app": {
     "windows": [
       {
-        "title": "shoppartnerdesktopapp",
-        "width": 800,
-        "height": 600
+        "title": "PrintKro Shop Desktop",
+        "width": 1100,
+        "height": 760
       }
     ],
     "security": {

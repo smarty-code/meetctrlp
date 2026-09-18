@@ -3,11 +3,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::State;
 
 use crate::{
-    domain::{
-        AgentStatus, JobReceipt, JobState, PrintJob, PrintTestJob, Printer, PrinterId, QueuedJob,
-    },
+    domain::{AgentStatus, JobReceipt, JobState, PrintJob, Printer, PrinterId, QueuedJob},
     state::AppState,
 };
+
+#[derive(serde::Deserialize)]
+pub struct PrinterInventorySyncRequest {
+    pub server_url: String,
+    pub device_id: String,
+    pub api_key: String,
+}
 
 #[tauri::command]
 pub fn list_printers(state: State<'_, AppState>) -> Result<Vec<Printer>, String> {
@@ -48,10 +53,17 @@ pub fn select_printer(state: State<'_, AppState>, printer_id: PrinterId) -> Resu
 }
 
 #[tauri::command]
-pub fn create_test_job(
+pub fn create_print_job(
     state: State<'_, AppState>,
-    job: PrintTestJob,
+    mut job: PrintJob,
 ) -> Result<JobReceipt, String> {
+    let job_id = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "system clock is before the Unix epoch".to_string())?
+        .as_millis()
+        .to_string();
+    job.id = job_id.clone();
+    job = job.into_staged(&state.staging_dir()?)?;
     job.validate()?;
 
     let printer = state
@@ -61,17 +73,11 @@ pub fn create_test_job(
         .find(|printer| printer.id == job.printer_id)
         .ok_or_else(|| format!("printer '{}' was not found", job.printer_id))?;
 
-    let job_id = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| "system clock is before the Unix epoch".to_string())?
-        .as_millis()
-        .to_string();
-
     let receipt = JobReceipt {
         id: job_id,
         printer_id: job.printer_id.clone(),
         state: JobState::Queued,
-        message: "test job queued for the local printer backend".to_string(),
+        message: "document job queued for the local printer backend".to_string(),
     };
     state
         .jobs
@@ -100,4 +106,48 @@ pub fn get_job(state: State<'_, AppState>, job_id: String) -> Result<Option<JobR
 #[tauri::command]
 pub fn validate_document_job(job: PrintJob) -> Result<(), String> {
     job.validate()
+}
+
+#[tauri::command]
+pub fn sync_printer_inventory(
+    state: State<'_, AppState>,
+    request: PrinterInventorySyncRequest,
+) -> Result<serde_json::Value, String> {
+    if request.server_url.trim().is_empty()
+        || request.device_id.trim().is_empty()
+        || request.api_key.trim().is_empty()
+    {
+        return Err("server URL, device ID, and API key are required".to_string());
+    }
+
+    let printers = state.backend.discover()?;
+    let payload = serde_json::json!({
+        "deviceId": request.device_id,
+        "capturedAt": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("system clock error: {error}"))?
+            .as_millis()
+            .to_string(),
+        "printers": printers,
+    });
+    let endpoint = format!(
+        "{}/api/printers/inventory",
+        request.server_url.trim_end_matches('/')
+    );
+    let response = reqwest::blocking::Client::new()
+        .post(endpoint)
+        .header("x-printer-inventory-key", request.api_key)
+        .json(&payload)
+        .send()
+        .map_err(|error| format!("inventory sync failed: {error}"))?;
+
+    let status = response.status();
+    let body = response
+        .json::<serde_json::Value>()
+        .map_err(|error| format!("invalid inventory response: {error}"))?;
+    if !status.is_success() {
+        return Err(format!("inventory sync returned HTTP {status}: {body}"));
+    }
+
+    Ok(body)
 }

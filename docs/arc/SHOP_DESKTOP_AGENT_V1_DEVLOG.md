@@ -21,7 +21,7 @@ Update this file after each implementation phase. Keep the entries chronological
 | Phase 1: Printer discovery and native boundary | Complete | Desktop frontend build and editor diagnostics pass; Windows spooler path requires a Windows machine with a printer. |
 | Phase 2: Local worker and durable queue | Complete | File-backed store, restart recovery, queue-store test, frontend build, Rust compilation, and all unit tests pass on Linux. |
 | Phase 3: Normalized document jobs | Complete | PDF/JPG/PNG domain payloads and validation are implemented; printing them is the next phase. |
-| Phase 4: Windows driver backend | Next | Concrete PDF/image rendering and driver submission are not implemented yet. |
+| Phase 4: Windows driver backend | Complete on Linux contract; Windows hardware pending | Local file jobs, driver DEVMODE mapping, GDI print path, and UI file picker are implemented. Physical Windows spooler output still requires a Windows machine with a printer. |
 | CI: Windows installer release | Complete | GitHub Actions workflow builds and publishes draft `.exe` and `.msi` installers on `shop-desktop-v*` tags. |
 
 ## Phase 1: Printer Discovery and Native Boundary
@@ -213,16 +213,48 @@ From the frontend or Tauri developer console, invoke `validate_document_job` wit
 
 The domain no longer treats every print request as text or ESC/POS bytes. The next backend must consume `PrintJob` and select a Windows driver path for normal documents.
 
-## Next Phase Gate: Windows Driver Backend
+## Phase 4: Windows Driver Backend
 
-Begin Phase 4 only after the current local loop is accepted. The next implementation should:
+### Goal
 
-1. Replace `PrintTestJob` as the primary model with `PrintJob` and `DocumentSource`.
-2. Add PDF/JPG/PNG metadata and print options without coupling them to RAW bytes.
-3. Add validation for file existence, type, size, page range, copies, color mode, and paper size.
-4. Keep `WindowsRawBackend` for explicit RAW jobs.
-5. Introduce a separate driver-backend interface for ordinary documents.
-6. Add tests before selecting the concrete Windows PDF/image rendering mechanism.
+Print PDF, JPG, and PNG files from the local UI through the Windows printer driver and spooler.
+
+### Implementation
+
+- `QueuedJob` now stores `PrintJob` instead of `PrintTestJob`.
+- Byte payloads are staged to `PrintKro/staging` before they enter the durable queue.
+- Added `create_print_job`. The worker calls `print_document`.
+- Windows driver path rasterizes images with the `image` crate and PDF pages with `Windows.Data.Pdf`, then blits pages through GDI using a DEVMODE for copies, color, and paper size.
+- RAW/ESC-POS remains in the Windows adapter but is not exposed in the console.
+- The React console picks a local file and submits copies, color mode, and paper size. Cloud document download is still out of scope.
+- Linux development backend validates the document job and completes without hardware.
+
+### How to test
+
+```bash
+pnpm --dir apps/shopPartnerDesktopApp build
+cd apps/shopPartnerDesktopApp/src-tauri
+cargo fmt --check
+cargo check
+cargo test
+```
+
+On a Windows machine with an installed printer:
+
+1. Launch the Tauri app.
+2. Confirm discovered printers appear.
+3. Choose a one-page PDF and print it.
+4. Choose a PNG and print it.
+5. Confirm the job receipt moves to `completed` or `failed`.
+6. Confirm the Windows spooler received the job.
+
+### Out of scope
+
+- Cloud document fetch
+- Duplex
+- Office documents
+- CUPS printing
+- Distinguishing spooler accept from physical paper-out
 
 ## CI: Windows Installer Release
 
