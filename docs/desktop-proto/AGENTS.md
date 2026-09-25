@@ -16,21 +16,25 @@ Related files that are **not** the current prototype:
 
 ## 1. What this project is
 
-A **Windows-only WPF test app**. It answers one question:
+A **Windows-only WPF test app**. It answers two questions:
 
-> For a printer Windows already knows about, what configuration does the driver expose?
+1. Can a shop owner sign in (or register) through `apps/server` without a Firebase client SDK?
+2. For a printer Windows already knows about, what configuration does the driver expose?
 
 Flow:
 
 ```text
 Open app
+  → restore session (refresh token) or show login/register
   → list installed printers
   → user picks one (default printer is pre-selected)
   → read capabilities from Windows
   → show them grouped in a scrollable list
 ```
 
-It is **not** a shop product, not a print agent, and not deployable.
+It is **not** a full shop product, not a print agent, and not deployable.
+
+Auth details: [`apps/desktop-proto/docs/auth.md`](../../apps/desktop-proto/docs/auth.md).
 
 ---
 
@@ -68,23 +72,23 @@ If `dotnet` is missing, install **.NET 8 SDK**, then open a **new** terminal.
 
 ### In scope (current)
 
+- Shop-owner email/phone + password auth against `apps/server` (no Firebase SDK in this app).
 - Discover printers from Windows (`LocalPrintServer` + installed printer names).
 - Read every setting the selected printer reports (Print Schema XML, with GDI fallback).
-- Show those settings in a single window: printer dropdown, Refresh, grouped list.
+- Show those settings in a single capabilities window: printer dropdown, Refresh, grouped list.
 - Keep printing logic out of XAML.
 
 ### Out of scope (do not add unless a human asks)
 
 - Submitting print jobs / PDFs / page ranges
 - Windows print dialog bypass for actual printing
-- Cloud, HTTPS, login, agent registration
+- Agent registration / printer inventory upload via the shop session
 - Shop navigation (Print / Printers / Cloud pages)
 - Windows Service / background agent
 - Tauri, Rust, React desktop shells
 - Direct USB / IPP / vendor printer protocols
 - Deployable installers, auto-update
-
-If a request looks like a product feature, **stop and confirm**. The last cleanup explicitly removed extra UI and cloud/print code so we can gather requirements before building more.
+- Password reset / email verification UI
 
 ---
 
@@ -92,14 +96,15 @@ If a request looks like a product feature, **stop and confirm**. The last cleanu
 
 1. **C# / WPF / .NET 8**, not Rust + Tauri. The native Windows print APIs are used from C#.
 2. **Talk to Windows, not the printer.** Discovery and capabilities go through the spooler and the installed driver.
-3. **One process, one window** for this prototype.
+3. **One process.** Login/register is a window; the capabilities viewer is a second window. Only one is shown at a time.
 4. **Capabilities come from the driver**, not a hardcoded A4 / color / duplex form. Print Schema XML is primary; GDI `PrinterSettings` fills gaps (paper, trays, dpi, copies).
-5. **UI stays a viewer.** Selecting a printer only reloads the catalog. There is no print ticket editor and no submit.
-6. **Layered projects now** so later work can add printing/cloud without stuffing Windows APIs into the window:
+5. **Capabilities UI stays a viewer.** Selecting a printer only reloads the catalog. There is no print ticket editor and no submit.
+6. **Layered projects** so printing/cloud stay out of XAML:
    - Abstractions = models + interfaces
    - Printing = Windows adapter
-   - Desktop = WPF
-7. **No Core/Cloud projects** in this tree until we need them. They were added, then deleted after the UI overshot.
+   - Cloud = HTTP client + DTOs (no WPF)
+   - Desktop = WPF + Windows Credential Manager
+7. **No Firebase client SDK.** Credentials go to `apps/server`. The refresh token is stored in Windows Credential Manager; the ID token stays in memory.
 8. **Design tokens in the WPF app** use the shared palette (paper, graphite, ecto green `#58CC02`, 12px radius, no drop shadows). Do not invent a new visual language. Full web design-system rules still live in `docs/design-system/`; this app is WPF, not `@ctrlp/ui`.
 
 ---
@@ -123,10 +128,15 @@ apps/desktop-proto/
     Ctrlp.Agent.Printing/          net8.0-windows, UseWPF (System.Printing)
       WindowsPrinterDiscovery.cs
       WindowsPrinterCapabilitiesReader.cs
+    Ctrlp.Agent.Cloud/             net8.0 — HTTP, no WPF
+      AuthApiClient.cs
+      CloudOptions.cs
     Ctrlp.Desktop/                 WPF WinExe
       App.xaml
+      LoginWindow.xaml
       MainWindow.xaml
-      ViewModels/MainViewModel.cs
+      Auth/
+      ViewModels/
 ```
 
 Dependency direction (do not reverse):
@@ -135,6 +145,7 @@ Dependency direction (do not reverse):
 Ctrlp.Desktop
     → Ctrlp.Agent.Printing
         → Ctrlp.Agent.Abstractions
+    → Ctrlp.Agent.Cloud
     → Ctrlp.Agent.Abstractions
 ```
 
@@ -142,16 +153,19 @@ Ctrlp.Desktop
 | --- | --- | --- |
 | Abstractions | Models, interfaces, message strings | WPF, `System.Printing`, HTTP |
 | Printing | Query Windows printers and capabilities | XAML, cloud, job submission (not in this snapshot) |
-| Desktop | Bind and display the catalog | Call `LocalPrintServer` / Print Schema from the window |
+| Cloud | HTTP to `apps/server`, JSON DTOs | WPF, Windows print APIs, Credential Manager |
+| Desktop | Bind UI, store refresh token, host login | Call `LocalPrintServer` / Print Schema from the window |
 
-Composition is in `MainWindow` today: it constructs `WindowsPrinterDiscovery` and `WindowsPrinterCapabilitiesReader`. That is acceptable for this prototype.
+Composition is in `App` / `MainWindow`: printers via `WindowsPrinterDiscovery` and `WindowsPrinterCapabilitiesReader`; auth via `AuthApiClient` + `AuthSession`.
 
 ---
 
 ## 6. Runtime path
 
 ```text
-MainWindow.Loaded
+App.OnStartup
+  → restore refresh token or LoginWindow
+  → MainWindow.Loaded
   → MainViewModel.InitializeAsync
   → IPrinterDiscovery.GetPrinters / GetDefaultPrinterName
   → SelectedPrinter = default or first
@@ -174,11 +188,12 @@ MainWindow.Loaded
 ## 7. How to change this code
 
 - **New Windows print API usage** → `Ctrlp.Agent.Printing`, behind an interface in Abstractions.
+- **HTTP / auth JSON** → `Ctrlp.Agent.Cloud`, then Desktop session/UI.
 - **New fields on a printer or setting** → Abstractions first, then Printing, then the view model.
-- **UI copy/layout only** → `MainWindow.xaml` / `App.xaml` / `MainViewModel`.
-- **Do not** recreate `Ctrlp.Prototype`, Cloud, Core, PDF print, or a multi-page shell.
+- **UI copy/layout only** → `MainWindow.xaml` / `LoginWindow.xaml` / `App.xaml` / view models.
+- **Do not** recreate `Ctrlp.Prototype`, Core, PDF print, or a multi-page shop shell.
+- **Do not** add a Firebase SDK to this app.
 - **Do not** add NuGet packages unless they are required for the asked feature.
-- Keep the UI one window. If a feature needs another page, that is a requirements change.
 
 ---
 

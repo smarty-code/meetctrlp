@@ -12,6 +12,12 @@ export type S3Config = {
   secretAccessKey: string;
 };
 
+type FirebaseServiceAccountJson = {
+  project_id?: string;
+  client_email?: string;
+  private_key?: string;
+};
+
 function requireEnvironmentValue(name: string) {
   const value = process.env[name];
 
@@ -26,7 +32,42 @@ function normalizePrivateKey(privateKey: string) {
   return privateKey.replace(/\\n/g, "\n");
 }
 
+function readOptionalEnvironmentValue(name: string) {
+  const value = process.env[name]?.trim();
+  return value && value.length > 0 ? value : undefined;
+}
+
+function parseServiceAccountBase64(encoded: string): FirebaseConfig {
+  let parsed: FirebaseServiceAccountJson;
+
+  try {
+    parsed = JSON.parse(
+      Buffer.from(encoded, "base64").toString("utf8"),
+    ) as FirebaseServiceAccountJson;
+  } catch {
+    throw new Error(
+      "FIREBASE_SERVICE_ACCOUNT_BASE64 is not valid base64 JSON",
+    );
+  }
+
+  return {
+    projectId: parsed.project_id,
+    clientEmail: parsed.client_email,
+    privateKey: parsed.private_key
+      ? normalizePrivateKey(parsed.private_key)
+      : undefined,
+  };
+}
+
 export function getFirebaseConfig(): FirebaseConfig {
+  const encoded = readOptionalEnvironmentValue(
+    "FIREBASE_SERVICE_ACCOUNT_BASE64",
+  );
+
+  if (encoded) {
+    return parseServiceAccountBase64(encoded);
+  }
+
   return {
     projectId: process.env.FIREBASE_PROJECT_ID,
     clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
@@ -34,6 +75,10 @@ export function getFirebaseConfig(): FirebaseConfig {
       ? normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY)
       : undefined,
   };
+}
+
+export function getFirebaseWebApiKey() {
+  return requireEnvironmentValue("FIREBASE_WEB_API_KEY");
 }
 
 export function hasFirebaseCredentials(config: FirebaseConfig) {

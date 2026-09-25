@@ -2,15 +2,19 @@
 
 Server-only adapters for Firebase Authentication, Firestore, and Railway S3-compatible Storage.
 
-Firebase Admin remains the source for Authentication and Firestore. Object storage is provided by an S3-compatible client configured for Railway Storage Buckets.
+Canonical docs: [`docs/README.md`](./docs/README.md), [`docs/AUTH.md`](./docs/AUTH.md), [`docs/STORAGE.md`](./docs/STORAGE.md).
+
+Firebase Admin remains the source for token verification and user admin. Password sign-up/sign-in/refresh go through Identity Toolkit REST (`FIREBASE_WEB_API_KEY`). Object storage is Railway S3.
 
 ## Configuration
 
 Copy `.env.example` into the consuming server app's environment. Never commit populated environment files or credentials.
 
-Firebase Admin uses Application Default Credentials when no explicit Firebase variables are set. Alternatively, provide all three explicit values:
+Prefer `FIREBASE_SERVICE_ACCOUNT_BASE64`. Fall back to discrete Admin fields, or Application Default Credentials when none are set:
 
 ```env
+FIREBASE_SERVICE_ACCOUNT_BASE64=
+FIREBASE_WEB_API_KEY=
 FIREBASE_PROJECT_ID=your-project-id
 FIREBASE_CLIENT_EMAIL=firebase-adminsdk-...@your-project-id.iam.gserviceaccount.com
 FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
