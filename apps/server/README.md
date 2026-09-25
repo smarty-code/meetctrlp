@@ -11,7 +11,7 @@ This is the backend Next.js application. It uses App Router route handlers for H
 - `src/types`: shared server-only types.
 - `src/utils`: small dependency-free utilities.
 
-The initial test endpoint is `GET /api/health`.
+The initial test endpoint is `GET /api/health`. Shop-owner auth lives under `/api/auth/*` — see [`docs/auth.md`](./docs/auth.md).
 
 Run it from the repository root:
 

@@ -1,14 +1,20 @@
 # Firebase and S3 Package
 
+Package-local docs (source of truth for new auth work):
+
+- [`packages/firebase/docs/README.md`](../packages/firebase/docs/README.md)
+- [`packages/firebase/docs/AUTH.md`](../packages/firebase/docs/AUTH.md)
+- [`packages/firebase/docs/STORAGE.md`](../packages/firebase/docs/STORAGE.md)
+
 `@ctrlp/firebase` is a server-only adapter package for:
 
-- Firebase Authentication
+- Firebase Authentication (Admin SDK + Identity Toolkit REST for password sessions)
 - Cloud Firestore
 - Railway Storage Buckets through the S3-compatible API
 
 Firebase remains responsible for Authentication and Firestore. Railway S3 is the object-storage provider. The package must only be imported from backend code, route handlers, server actions, workers, or other trusted server environments.
 
-Do not import it into browser components. S3 credentials and Firebase Admin credentials must never be sent to a client.
+Do not import it into browser components or the desktop app. S3 credentials and Firebase Admin credentials must never be sent to a client. The desktop app sends email/phone + password to `apps/server`.
 
 ## Installation
 
@@ -26,15 +32,17 @@ Create an ignored `.env` or `.env.local` file in the consuming server applicatio
 
 ### Firebase Authentication and Firestore
 
-Use either Application Default Credentials or all three explicit Firebase Admin values:
+Prefer a base64-encoded service account. Password sign-in also needs the Web API key from Firebase Console → Project settings → General:
 
 ```env
+FIREBASE_SERVICE_ACCOUNT_BASE64=
+FIREBASE_WEB_API_KEY=
 FIREBASE_PROJECT_ID=your-firebase-project-id
 FIREBASE_CLIENT_EMAIL=firebase-adminsdk-...@your-firebase-project-id.iam.gserviceaccount.com
 FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
 ```
 
-The adapter converts escaped `\\n` sequences in `FIREBASE_PRIVATE_KEY` into newlines before initializing Firebase Admin.
+The adapter converts escaped `\\n` sequences in `FIREBASE_PRIVATE_KEY` into newlines before initializing Firebase Admin. When `FIREBASE_SERVICE_ACCOUNT_BASE64` is set, it wins over the discrete Admin fields.
 
 ### Railway S3 Storage
 
@@ -262,16 +270,20 @@ await client.send(
 
 ## Recommended request flow
 
-For an authenticated file upload:
+Shop-owner password auth is server-mediated. The desktop app does not use a Firebase client SDK.
 
-1. The client signs in with Firebase Authentication.
-2. The client sends its Firebase ID token to a backend route.
-3. The backend verifies the token with `getFirebaseAuth().verifyIdToken()`.
-4. The backend checks the user's authorization and creates an object key.
-5. The backend returns a short-lived `createPresignedUploadUrl()` result.
-6. The client uploads directly to Railway using `PUT`.
-7. The backend stores the stable object key and metadata in Firestore.
-8. For downloads, the backend repeats token verification and authorization before issuing a short-lived download URL.
+1. The client POSTs email/phone + password to `apps/server`.
+2. The server calls Identity Toolkit REST (`signUpWithPassword` / `signInWithPassword`) and stores the shop + OWNER in Postgres.
+3. The client keeps the Firebase `refreshToken` and sends `Authorization: Bearer <idToken>` on later requests.
+4. The backend verifies the token with `getFirebaseAuth().verifyIdToken()` and loads the ACTIVE `shop_users` row.
+
+For an authenticated file upload after that session exists:
+
+1. The backend checks the user's authorization and creates an object key.
+2. The backend returns a short-lived `createPresignedUploadUrl()` result.
+3. The client uploads directly to Railway using `PUT`.
+4. The backend stores the stable object key and metadata in Postgres (or Firestore for prototype inventory).
+5. For downloads, the backend repeats token verification and authorization before issuing a short-lived download URL.
 
 ## Validation
 

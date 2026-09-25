@@ -8,6 +8,7 @@
     "./config": "./src/config.ts",
     "./app": "./src/app.ts",
     "./auth": "./src/auth.ts",
+    "./auth-rest": "./src/auth-rest.ts",
     "./firestore": "./src/firestore.ts",
     "./storage": "./src/storage.ts"
   },

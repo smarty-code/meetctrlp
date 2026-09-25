@@ -30,6 +30,9 @@
 --      supported MVP mode and a single-value enum would add no information.
 --  13. Custom paper dimensions are intentionally excluded from this MVP;
 --      CUSTOM is not modeled until width/height/unit semantics are required.
+--  14. Shop-user passwords live in Firebase Authentication. shop_users.firebase_uid
+--      is the join key. password_hash is unused for new accounts and may be null.
+
 --
 -- PostgreSQL 15+ recommended.
 -- ============================================================
@@ -226,6 +229,12 @@ CREATE TABLE shops (
 -- ============================================================
 -- Business-side identities: owner, manager, staff.
 -- These are completely separate from anonymous Print Users.
+--
+-- Authentication:
+--   Firebase Authentication owns the password and session tokens.
+--   firebase_uid is the stable join key to the Firebase user.
+--   password_hash is unused for new accounts (nullable, kept for compatibility).
+--   A shop user must have an email, a phone, or both.
 
 CREATE TABLE shop_users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -235,6 +244,7 @@ CREATE TABLE shop_users (
 
     email VARCHAR(320),
     phone VARCHAR(32),
+    firebase_uid TEXT,
 
     role shop_user_role NOT NULL DEFAULT 'STAFF',
     status shop_user_status NOT NULL DEFAULT 'ACTIVE',
@@ -249,12 +259,23 @@ CREATE TABLE shop_users (
     CONSTRAINT fk_shop_users_shop
         FOREIGN KEY (shop_id)
         REFERENCES shops(id)
-        ON DELETE CASCADE
+        ON DELETE CASCADE,
+
+    CONSTRAINT chk_shop_users_identifier
+        CHECK (email IS NOT NULL OR phone IS NOT NULL)
 );
 
 CREATE UNIQUE INDEX uq_shop_users_email
     ON shop_users (lower(email))
     WHERE email IS NOT NULL;
+
+CREATE UNIQUE INDEX uq_shop_users_phone
+    ON shop_users (phone)
+    WHERE phone IS NOT NULL;
+
+CREATE UNIQUE INDEX uq_shop_users_firebase_uid
+    ON shop_users (firebase_uid)
+    WHERE firebase_uid IS NOT NULL;
 
 CREATE INDEX idx_shop_users_shop_status
     ON shop_users (shop_id, status);
