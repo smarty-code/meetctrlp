@@ -4,7 +4,7 @@ import {
 	assertFirebaseCredentials,
 	getFirebaseConfig,
 	hasFirebaseCredentials,
-} from "./config.js";
+} from "./config";
 
 const appName = "ctrlp";
 

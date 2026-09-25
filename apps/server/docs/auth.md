@@ -20,6 +20,8 @@ FIREBASE_WEB_API_KEY=
 
 `FIREBASE_WEB_API_KEY` is the Web API key in Firebase Console → Project settings → General. Enable the Email/Password provider.
 
+Register, login, refresh, and `/me` use that Web API key. Firebase Admin (`FIREBASE_SERVICE_ACCOUNT_BASE64`) is only required for custom claims and server-side refresh-token revocation. If Admin logs `invalid_grant` / JWT timeframe, check Windows clock sync with Google, or mint a new service-account key. Do not leave a trailing `%` on the base64 value.
+
 Schema: apply [`docs/db/printkro_mvp_schema_v3.sql`](../../../docs/db/printkro_mvp_schema_v3.sql) if tables are missing, then [`docs/db/migrations/001_shop_user_firebase_auth.sql`](../../../docs/db/migrations/001_shop_user_firebase_auth.sql). From `apps/server` with `DATABASE_URL` in `.env.local`:
 
 ```bash

@@ -28,25 +28,34 @@ function requireEnvironmentValue(name: string) {
   return value;
 }
 
+function stripWrappingQuotes(value: string) {
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1);
+  }
+
+  return value;
+}
+
 function normalizePrivateKey(privateKey: string) {
-  return privateKey.replace(/\\n/g, "\n");
+  return privateKey.replace(/\\n/g, "\n").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 }
 
 function readOptionalEnvironmentValue(name: string) {
   const value = process.env[name]?.trim();
-  return value && value.length > 0 ? value : undefined;
+  return value && value.length > 0 ? stripWrappingQuotes(value).trim() : undefined;
 }
 
-function parseServiceAccountBase64(encoded: string): FirebaseConfig {
+function parseServiceAccountJson(raw: string): FirebaseConfig {
   let parsed: FirebaseServiceAccountJson;
 
   try {
-    parsed = JSON.parse(
-      Buffer.from(encoded, "base64").toString("utf8"),
-    ) as FirebaseServiceAccountJson;
+    parsed = JSON.parse(raw) as FirebaseServiceAccountJson;
   } catch {
     throw new Error(
-      "FIREBASE_SERVICE_ACCOUNT_BASE64 is not valid base64 JSON",
+      "FIREBASE_SERVICE_ACCOUNT_BASE64 is not valid service-account JSON",
     );
   }
 
@@ -59,13 +68,40 @@ function parseServiceAccountBase64(encoded: string): FirebaseConfig {
   };
 }
 
+function decodeServiceAccountValue(encoded: string): FirebaseConfig {
+  const trimmed = encoded.replace(/%+$/g, "").trim();
+
+  if (trimmed.startsWith("{")) {
+    return parseServiceAccountJson(trimmed);
+  }
+
+  const base64 = trimmed.replace(/[^A-Za-z0-9+/=]/g, "");
+  let json: string;
+
+  try {
+    json = Buffer.from(base64, "base64").toString("utf8").trim();
+  } catch {
+    throw new Error(
+      "FIREBASE_SERVICE_ACCOUNT_BASE64 is not valid base64 JSON",
+    );
+  }
+
+  if (!json.startsWith("{")) {
+    throw new Error(
+      "FIREBASE_SERVICE_ACCOUNT_BASE64 did not decode to service-account JSON",
+    );
+  }
+
+  return parseServiceAccountJson(json);
+}
+
 export function getFirebaseConfig(): FirebaseConfig {
   const encoded = readOptionalEnvironmentValue(
     "FIREBASE_SERVICE_ACCOUNT_BASE64",
   );
 
   if (encoded) {
-    return parseServiceAccountBase64(encoded);
+    return decodeServiceAccountValue(encoded);
   }
 
   return {

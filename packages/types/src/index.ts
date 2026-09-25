@@ -10,4 +10,4 @@ export type {
   ShopUser,
   ShopUserRole,
   ShopUserStatus,
-} from "./auth.js";
+} from "./auth";

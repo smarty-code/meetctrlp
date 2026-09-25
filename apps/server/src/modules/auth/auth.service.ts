@@ -1,6 +1,7 @@
 import {
   getFirebaseAuth,
   isInternalPhoneEmail,
+  lookupIdToken,
   looksLikeEmail,
   normalizePhoneNumber,
   phoneToFirebaseEmail,
@@ -224,17 +225,6 @@ export async function registerShopOwner(
   }).catch(rethrowMapped);
 
   try {
-    if (identifiers.phone) {
-      await getFirebaseAuth().updateUser(session.localId, {
-        phoneNumber: identifiers.phone,
-        displayName: input.name,
-      });
-    } else {
-      await getFirebaseAuth().updateUser(session.localId, {
-        displayName: input.name,
-      });
-    }
-
     const user = await insertShopAndOwner({
       name: input.name,
       shopName: input.shopName,
@@ -287,11 +277,10 @@ export async function refreshShopUserSession(
   input: RefreshRequest,
 ): Promise<AuthSessionResponse> {
   const session = await refreshIdToken(input.refreshToken).catch(rethrowMapped);
-  const decoded = await getFirebaseAuth()
-    .verifyIdToken(session.idToken)
-    .catch(rethrowMapped);
+  const localId =
+    session.localId || (await lookupIdToken(session.idToken).catch(rethrowMapped)).localId;
 
-  const existing = await findShopUserByFirebaseUid(decoded.uid);
+  const existing = await findShopUserByFirebaseUid(localId);
 
   if (!existing || existing.status !== "ACTIVE") {
     throw new AuthServiceError(401, "unauthorized");
@@ -301,23 +290,23 @@ export async function refreshShopUserSession(
 }
 
 export async function logoutShopUser(idToken: string) {
-  const decoded = await getFirebaseAuth()
-    .verifyIdToken(idToken)
-    .catch(() => {
-      throw new AuthServiceError(401, "unauthorized");
-    });
+  const { localId } = await lookupIdToken(idToken).catch(() => {
+    throw new AuthServiceError(401, "unauthorized");
+  });
 
-  await getFirebaseAuth().revokeRefreshTokens(decoded.uid);
+  try {
+    await getFirebaseAuth().revokeRefreshTokens(localId);
+  } catch (error) {
+    console.error("Failed to revoke Firebase refresh tokens", error);
+  }
 }
 
 export async function requireShopUser(idToken: string): Promise<AuthSessionUser> {
-  const decoded = await getFirebaseAuth()
-    .verifyIdToken(idToken)
-    .catch(() => {
-      throw new AuthServiceError(401, "unauthorized");
-    });
+  const { localId } = await lookupIdToken(idToken).catch(() => {
+    throw new AuthServiceError(401, "unauthorized");
+  });
 
-  const existing = await findShopUserByFirebaseUid(decoded.uid);
+  const existing = await findShopUserByFirebaseUid(localId);
 
   if (!existing) {
     throw new AuthServiceError(401, "unauthorized");

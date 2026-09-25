@@ -10,4 +10,4 @@ export {
   type LoginRequestInput,
   type RefreshRequestInput,
   type RegisterRequestInput,
-} from "./auth.js";
+} from "./auth";

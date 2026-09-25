@@ -2,7 +2,7 @@
 
 Server-only adapters for Firebase Authentication, Firestore, and Railway S3-compatible object storage.
 
-Do not import this package from browser or desktop UI code. The desktop app talks to `apps/server`; the server talks to Firebase.
+These packages export TypeScript source (`exports` point at `.ts` files). Next.js transpiles them, so relative imports inside the package must be extensionless (`./auth`), not NodeNext `./auth.js`.
 
 ## Environment
 

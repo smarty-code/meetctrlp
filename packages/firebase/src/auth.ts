@@ -1,6 +1,6 @@
 import { getAuth, type Auth } from "firebase-admin/auth";
 
-import { getFirebaseApp } from "./app.js";
+import { getFirebaseApp } from "./app";
 
 export function getFirebaseAuth(): Auth {
   return getAuth(getFirebaseApp());
@@ -12,9 +12,10 @@ export {
   isInternalPhoneEmail,
   looksLikeEmail,
   normalizePhoneNumber,
+  lookupIdToken,
   phoneToFirebaseEmail,
   refreshIdToken,
   signInWithPassword,
   signUpWithPassword,
   type FirebasePasswordAuthResult,
-} from "./auth-rest.js";
+} from "./auth-rest";

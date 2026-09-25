@@ -1,4 +1,4 @@
-import { getFirebaseWebApiKey } from "./config.js";
+import { getFirebaseWebApiKey } from "./config";
 
 export const FIREBASE_PHONE_EMAIL_DOMAIN = "phone.meetctrlp.app";
 
@@ -35,6 +35,10 @@ type IdentityToolkitSignInBody = {
   expiresIn?: string;
   localId?: string;
   email?: string;
+  users?: Array<{
+    localId?: string;
+    email?: string;
+  }>;
 };
 
 type SecureTokenBody = {
@@ -211,5 +215,23 @@ export async function refreshIdToken(refreshToken: string) {
     refreshToken: payload.refresh_token,
     expiresIn: Number.parseInt(payload.expires_in, 10),
     localId: payload.user_id ?? "",
+  };
+}
+
+export async function lookupIdToken(idToken: string) {
+  const payload = await postIdentityToolkit("accounts:lookup", { idToken });
+  const user = payload.users?.[0];
+
+  if (!user?.localId) {
+    throw new FirebaseAuthRestError(
+      "INVALID_ID_TOKEN",
+      "Firebase Authentication could not resolve this ID token",
+      401,
+    );
+  }
+
+  return {
+    localId: user.localId,
+    email: user.email ?? "",
   };
 }

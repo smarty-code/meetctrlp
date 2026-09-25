@@ -95,6 +95,16 @@ export function mapFirebaseAdminError(error: unknown): AuthServiceError | undefi
   }
 
   if (
+    code === "app/invalid-credential" ||
+    code === "auth/invalid-credential"
+  ) {
+    return new AuthServiceError(
+      503,
+      "Firebase Admin credentials are invalid or this machine's clock is out of sync with Google",
+    );
+  }
+
+  if (
     code === "auth/id-token-expired" ||
     code === "auth/id-token-revoked" ||
     code === "auth/argument-error" ||
