@@ -24,10 +24,7 @@ pnpm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Environment and secrets
-.env
-.env.*
-!.env.example
+
 
 # OS / editor
 .DS_Store
