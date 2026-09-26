@@ -1,0 +1,340 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MeetCtrlP Cloud Firestore Schema Blueprint",
+  "description": "Complete NoSQL schema definitions for MeetCtrlP Cloud Firestore collections, documents, subcollections, and field types.",
+  "collections": {
+    "shops": {
+      "path": "/shops/{shopId}",
+      "description": "Root collection representing print shops.",
+      "schema": {
+        "type": "object",
+        "required": ["id", "name", "slug", "status", "capabilities", "pricing", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "description": "Unique Shop ID" },
+          "name": { "type": "string", "description": "Print Shop Commercial Name" },
+          "slug": { "type": "string", "description": "URL-friendly unique slug" },
+          "phone": { "type": "string", "description": "Shop Contact Phone (E.164)" },
+          "email": { "type": "string", "description": "Shop Contact Email" },
+          "status": { "type": "string", "enum": ["PENDING", "ACTIVE", "SUSPENDED", "INACTIVE"] },
+          "address": {
+            "type": "object",
+            "properties": {
+              "line1": { "type": "string" },
+              "line2": { "type": "string" },
+              "city": { "type": "string" },
+              "state": { "type": "string" },
+              "postalCode": { "type": "string" },
+              "country": { "type": "string", "default": "India" },
+              "geoPoint": { "type": "object", "description": "Firestore GeoPoint (latitude, longitude)" }
+            }
+          },
+          "capabilities": {
+            "type": "object",
+            "required": ["bwPrinting", "colorPrinting", "a4Printing"],
+            "properties": {
+              "bwPrinting": { "type": "boolean", "default": true },
+              "colorPrinting": { "type": "boolean", "default": false },
+              "a4Printing": { "type": "boolean", "default": true },
+              "a3Printing": { "type": "boolean", "default": false }
+            }
+          },
+          "pricing": {
+            "type": "object",
+            "required": ["currency", "unit", "bwA4PricePaise", "colorA4PricePaise"],
+            "properties": {
+              "currency": { "type": "string", "default": "INR" },
+              "unit": { "type": "string", "default": "PER_PAGE" },
+              "bwA4PricePaise": { "type": "integer", "minimum": 0 },
+              "colorA4PricePaise": { "type": "integer", "minimum": 0 },
+              "colorA3PricePaise": { "type": "integer", "minimum": 0 },
+              "updatedAt": { "type": "string", "format": "timestamp" }
+            }
+          },
+          "businessHours": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "dayOfWeek": { "type": "integer", "minimum": 0, "maximum": 6 },
+                "opensAt": { "type": "string" },
+                "closesAt": { "type": "string" },
+                "isClosed": { "type": "boolean" }
+              }
+            }
+          },
+          "stats": {
+            "type": "object",
+            "properties": {
+              "totalOrdersToday": { "type": "integer", "default": 0 },
+              "grossRevenueTodayPaise": { "type": "integer", "default": 0 },
+              "cashInDrawerTodayPaise": { "type": "integer", "default": 0 }
+            }
+          },
+          "createdAt": { "type": "string", "format": "timestamp" },
+          "updatedAt": { "type": "string", "format": "timestamp" }
+        }
+      },
+      "subcollections": {
+        "users": {
+          "path": "/shops/{shopId}/users/{userId}",
+          "description": "Staff and owner identities linked to Firebase Auth.",
+          "schema": {
+            "type": "object",
+            "required": ["id", "shopId", "firebaseUid", "name", "role", "status", "createdAt", "updatedAt"],
+            "properties": {
+              "id": { "type": "string" },
+              "shopId": { "type": "string" },
+              "firebaseUid": { "type": "string", "description": "Firebase Auth UID" },
+              "name": { "type": "string" },
+              "phone": { "type": "string" },
+              "email": { "type": "string" },
+              "role": { "type": "string", "enum": ["OWNER", "MANAGER", "STAFF"] },
+              "status": { "type": "string", "enum": ["ACTIVE", "INACTIVE", "SUSPENDED"] },
+              "lastLoginAt": { "type": ["string", "null"], "format": "timestamp" },
+              "createdAt": { "type": "string", "format": "timestamp" },
+              "updatedAt": { "type": "string", "format": "timestamp" }
+            }
+          }
+        },
+        "agents": {
+          "path": "/shops/{shopId}/agents/{agentId}",
+          "description": "Registered Windows Print Agent desktop machines.",
+          "schema": {
+            "type": "object",
+            "required": ["id", "shopId", "name", "deviceIdentifier", "status", "createdAt", "updatedAt"],
+            "properties": {
+              "id": { "type": "string" },
+              "shopId": { "type": "string" },
+              "name": { "type": "string" },
+              "deviceIdentifier": { "type": "string", "description": "Hardware MachineGuid + MAC SHA256" },
+              "hostname": { "type": "string" },
+              "osVersion": { "type": "string" },
+              "appVersion": { "type": "string" },
+              "agentVersion": { "type": "string" },
+              "status": { "type": "string", "enum": ["ONLINE", "OFFLINE", "DISABLED"] },
+              "heartbeatIntervalSeconds": { "type": "integer", "default": 30 },
+              "registeredByUserId": { "type": "string" },
+              "lastSeenAt": { "type": "string", "format": "timestamp" },
+              "createdAt": { "type": "string", "format": "timestamp" },
+              "updatedAt": { "type": "string", "format": "timestamp" }
+            }
+          }
+        },
+        "printers": {
+          "path": "/shops/{shopId}/printers/{printerId}",
+          "description": "Discovered hardware printers installed on the Windows host.",
+          "schema": {
+            "type": "object",
+            "required": ["id", "shopId", "agentId", "name", "systemName", "status", "defaultPrintSettings", "createdAt", "updatedAt"],
+            "properties": {
+              "id": { "type": "string" },
+              "shopId": { "type": "string" },
+              "agentId": { "type": "string" },
+              "name": { "type": "string" },
+              "systemName": { "type": "string" },
+              "driverName": { "type": "string" },
+              "portName": { "type": "string" },
+              "status": { "type": "string", "enum": ["ONLINE", "OFFLINE", "PRINTING", "ERROR", "PAUSED"] },
+              "statusReason": { "type": ["string", "null"] },
+              "isDefault": { "type": "boolean", "default": false },
+              "isColorCapable": { "type": "boolean", "default": false },
+              "isDuplexCapable": { "type": "boolean", "default": false },
+              "supportedPaperSizes": { "type": "array", "items": { "type": "string", "enum": ["A4", "A3"] } },
+              "defaultPrintSettings": {
+                "type": "object",
+                "required": ["copies", "orientation", "paperSize", "inputTray", "colorMode", "printQualityDpi"],
+                "properties": {
+                  "copies": { "type": "integer", "default": 1 },
+                  "orientation": { "type": "string", "enum": ["PORTRAIT", "LANDSCAPE"] },
+                  "paperSize": { "type": "string", "enum": ["A4", "A3", "LETTER", "LEGAL"] },
+                  "inputTray": { "type": "string", "enum": ["AUTO_SELECT", "MAIN_TRAY", "BYPASS_TRAY", "TRAY_1", "TRAY_2", "TRAY_3"] },
+                  "colorMode": { "type": "string", "enum": ["COLOR", "GRAYSCALE", "MONOCHROME"] },
+                  "printQualityDpi": { "type": "string", "enum": ["DRAFT_300DPI", "STANDARD_600DPI", "HIGH_1200DPI"] }
+                }
+              },
+              "activeJobsCount": { "type": "integer", "default": 0 },
+              "lastSeenAt": { "type": "string", "format": "timestamp" },
+              "createdAt": { "type": "string", "format": "timestamp" },
+              "updatedAt": { "type": "string", "format": "timestamp" }
+            }
+          }
+        },
+        "orders": {
+          "path": "/shops/{shopId}/orders/{orderId}",
+          "description": "Core real-time order document streamed to desktop client.",
+          "schema": {
+            "type": "object",
+            "required": ["id", "orderNumber", "shopId", "status", "amounts", "payment", "documents", "items", "lifecycle", "updatedAt"],
+            "properties": {
+              "id": { "type": "string" },
+              "orderNumber": { "type": "string" },
+              "shopId": { "type": "string" },
+              "printUserId": { "type": "string" },
+              "status": {
+                "type": "string",
+                "enum": ["CREATED", "CONFIGURING", "PAYMENT_PENDING", "SUBMITTED", "SHOP_ACCEPTED", "PRINTING", "READY", "COMPLETED", "CANCELLED", "REJECTED", "PRINT_FAILED"]
+              },
+              "pickupCode": { "type": "string" },
+              "amounts": {
+                "type": "object",
+                "required": ["currency", "subtotalPaise", "taxPaise", "discountPaise", "totalPaise"],
+                "properties": {
+                  "currency": { "type": "string", "default": "INR" },
+                  "subtotalPaise": { "type": "integer", "minimum": 0 },
+                  "taxPaise": { "type": "integer", "minimum": 0 },
+                  "discountPaise": { "type": "integer", "minimum": 0 },
+                  "totalPaise": { "type": "integer", "minimum": 0 }
+                }
+              },
+              "payment": {
+                "type": "object",
+                "required": ["method", "status", "amountPaise"],
+                "properties": {
+                  "method": { "type": "string", "enum": ["ONLINE", "CASH"] },
+                  "status": { "type": "string", "enum": ["PENDING", "PAID", "FAILED", "REFUNDED", "PARTIALLY_REFUNDED"] },
+                  "amountPaise": { "type": "integer", "minimum": 0 },
+                  "paidAt": { "type": ["string", "null"], "format": "timestamp" },
+                  "cashTenderedPaise": { "type": ["integer", "null"] },
+                  "changeReturnedPaise": { "type": ["integer", "null"] },
+                  "collectedByUserId": { "type": ["string", "null"] },
+                  "collectedAt": { "type": ["string", "null"], "format": "timestamp" },
+                  "providerTransactionId": { "type": ["string", "null"] }
+                }
+              },
+              "documents": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "originalFilename", "storageKey", "mimeType", "fileSizeBytes", "pageCount", "config"],
+                  "properties": {
+                    "id": { "type": "string" },
+                    "originalFilename": { "type": "string" },
+                    "storageKey": { "type": "string", "description": "Railway S3 Object Key" },
+                    "mimeType": { "type": "string", "default": "application/pdf" },
+                    "fileSizeBytes": { "type": "integer" },
+                    "pageCount": { "type": "integer", "minimum": 1 },
+                    "sha256Hash": { "type": "string" },
+                    "status": { "type": "string", "enum": ["UPLOADING", "UPLOADED", "PROCESSING", "READY", "FAILED", "DELETED"] },
+                    "config": {
+                      "type": "object",
+                      "required": ["colorMode", "copies", "paperSize"],
+                      "properties": {
+                        "colorMode": { "type": "string", "enum": ["BW", "COLOR"] },
+                        "copies": { "type": "integer", "minimum": 1 },
+                        "paperSize": { "type": "string", "enum": ["A4", "A3"] },
+                        "pageSelection": { "type": ["string", "null"] },
+                        "billablePages": { "type": "integer" }
+                      }
+                    },
+                    "shreddedAt": { "type": ["string", "null"], "format": "timestamp" }
+                  }
+                }
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["description", "quantity", "unitPricePaise", "totalPricePaise"],
+                  "properties": {
+                    "description": { "type": "string" },
+                    "quantity": { "type": "integer", "minimum": 1 },
+                    "unitPricePaise": { "type": "integer", "minimum": 0 },
+                    "totalPricePaise": { "type": "integer", "minimum": 0 }
+                  }
+                }
+              },
+              "rejection": {
+                "type": "object",
+                "properties": {
+                  "rejectedAt": { "type": ["string", "null"], "format": "timestamp" },
+                  "reason": { "type": ["string", "null"] },
+                  "category": { "type": ["string", "null"] }
+                }
+              },
+              "lifecycle": {
+                "type": "object",
+                "required": ["createdAt"],
+                "properties": {
+                  "createdAt": { "type": "string", "format": "timestamp" },
+                  "acceptedAt": { "type": ["string", "null"], "format": "timestamp" },
+                  "readyAt": { "type": ["string", "null"], "format": "timestamp" },
+                  "completedAt": { "type": ["string", "null"], "format": "timestamp" },
+                  "cancelledAt": { "type": ["string", "null"], "format": "timestamp" },
+                  "acceptedByUserId": { "type": ["string", "null"] },
+                  "completedByUserId": { "type": ["string", "null"] }
+                }
+              },
+              "updatedAt": { "type": "string", "format": "timestamp" }
+            }
+          },
+          "subcollections": {
+            "printJobs": {
+              "path": "/shops/{shopId}/orders/{orderId}/printJobs/{jobId}",
+              "description": "Windows Spooler physical job execution record.",
+              "schema": {
+                "type": "object",
+                "required": ["id", "orderId", "documentId", "printerId", "agentId", "status", "pagesTotal", "pagesPrinted", "resolvedSettings", "createdAt", "updatedAt"],
+                "properties": {
+                  "id": { "type": "string" },
+                  "orderId": { "type": "string" },
+                  "documentId": { "type": "string" },
+                  "printerId": { "type": "string" },
+                  "agentId": { "type": "string" },
+                  "spoolerJobId": { "type": ["integer", "null"] },
+                  "status": { "type": "string", "enum": ["QUEUED", "DISPATCHING", "PRINTING", "COMPLETED", "FAILED", "CANCELLED"] },
+                  "priority": { "type": "integer", "default": 0 },
+                  "retryCount": { "type": "integer", "default": 0 },
+                  "pagesTotal": { "type": "integer", "minimum": 1 },
+                  "pagesPrinted": { "type": "integer", "default": 0 },
+                  "requestedOverrides": { "type": "object" },
+                  "resolvedSettings": { "type": "object" },
+                  "errorCode": { "type": ["string", "null"] },
+                  "errorMessage": { "type": ["string", "null"] },
+                  "spooledAt": { "type": ["string", "null"], "format": "timestamp" },
+                  "startedAt": { "type": ["string", "null"], "format": "timestamp" },
+                  "completedAt": { "type": ["string", "null"], "format": "timestamp" },
+                  "createdAt": { "type": "string", "format": "timestamp" },
+                  "updatedAt": { "type": "string", "format": "timestamp" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "accessLogs": {
+      "path": "/accessLogs/{logId}",
+      "description": "Zero-retention privacy audit log for file preview, spooling, and cryptographic shredding.",
+      "schema": {
+        "type": "object",
+        "required": ["id", "documentId", "actorType", "accessType", "createdAt"],
+        "properties": {
+          "id": { "type": "string" },
+          "documentId": { "type": "string" },
+          "actorType": { "type": "string", "enum": ["SHOP_USER", "SYSTEM", "CUSTOMER"] },
+          "actorId": { "type": ["string", "null"] },
+          "accessType": { "type": "string", "enum": ["DOWNLOADED", "PREVIEWED", "SPOOLED_TO_PRINTER", "SHREDDED"] },
+          "ipAddress": { "type": ["string", "null"] },
+          "createdAt": { "type": "string", "format": "timestamp" }
+        }
+      }
+    },
+    "idempotencyKeys": {
+      "path": "/idempotencyKeys/{key}",
+      "description": "Distributed deduplication locks with 24h TTL.",
+      "schema": {
+        "type": "object",
+        "required": ["key", "shopId", "requestPath", "responseCode", "responseBody", "createdAt", "expiresAt"],
+        "properties": {
+          "key": { "type": "string" },
+          "shopId": { "type": "string" },
+          "requestPath": { "type": "string" },
+          "responseCode": { "type": "integer" },
+          "responseBody": { "type": "object" },
+          "createdAt": { "type": "string", "format": "timestamp" },
+          "expiresAt": { "type": "string", "format": "timestamp" }
+        }
+      }
+    }
+  }
+}
