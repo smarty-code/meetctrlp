@@ -31,7 +31,15 @@ export const syncPrintersRequestSchema = z.object({
     .max(50),
 });
 
-export const updatePrinterPresetRequestSchema = printSettingsSchema;
+export const updatePrinterPresetRequestSchema = z.object({
+  isDefault: z.boolean(),
+  colorMode: z.enum(["BW", "COLOR"]),
+  copies: z.number().int().min(1).max(999),
+  paperSize: z.enum(["A4", "A3"]),
+  orientation: z.enum(["PORTRAIT", "LANDSCAPE"]),
+  inputTray: z.enum(["AUTO_SELECT", "MAIN_TRAY", "BYPASS_TRAY", "TRAY_1", "TRAY_2", "TRAY_3"]),
+  printQualityDpi: z.enum(["DRAFT_300DPI", "STANDARD_600DPI", "HIGH_1200DPI"]),
+});
 
 export const printerTelemetryRequestSchema = z.object({
   previousStatus: z.enum(["ONLINE", "OFFLINE", "PRINTING", "ERROR"]),

@@ -264,7 +264,7 @@ Phase 05, 27 Sep 2026.
 
 - Installed Windows printers are registered at `shops/{shopId}/printers/{printerId}` with a baseline preset: color or black and white, 1 copy, A4, pages `all`, tray `AUTO`. Duplex is off.
 - New order documents store `config` with color, copies, paper size, and page selection.
-- **Edit print settings** on an order lets the operator change printer, copies, color, paper, page range, and tray. The server merges those overrides onto the printer preset and writes `printJobs/{jobId}` with `requestedOverrides` and a frozen `resolvedSettings`.
+- Default print settings for each printer are edited on **Shop settings**, including which printer is the shop default. A new order is assigned automatically: the default printer when it can print that job, otherwise the least-busy compatible printer. The assignment is stored on `printJobs/{jobId}`.
 - Page ranges such as `1,3,5-8` and `all` are checked against the document page count.
 - If color is chosen for a printer that cannot print color, the dialog and the queue notice show a warning. The job is still saved.
 - A preset saved later does not rewrite print jobs already queued.

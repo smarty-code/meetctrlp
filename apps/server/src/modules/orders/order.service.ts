@@ -362,6 +362,13 @@ export async function createShopOrder(user: AuthSessionUser, input: CheckoutOrde
     });
   });
 
+  try {
+    const { queueIncomingOrder } = await import("@/src/modules/printing/print-job.service");
+    await queueIncomingOrder(user, orderId);
+  } catch (error) {
+    console.error("Failed to assign a printer to the new order", error);
+  }
+
   return getShopOrder(user, orderId);
 }
 

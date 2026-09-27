@@ -52,6 +52,16 @@ function defaultSettings(isColorCapable: boolean): PrintSettings {
   };
 }
 
+function readPreset(value: unknown, fallback: PrintSettings) {
+  const settings = asSettings(value, fallback);
+  const record = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const orientation = record.orientation === "LANDSCAPE" ? "LANDSCAPE" : "PORTRAIT";
+  const quality = ["DRAFT_300DPI", "STANDARD_600DPI", "HIGH_1200DPI"].includes(String(record.printQualityDpi))
+    ? String(record.printQualityDpi)
+    : "STANDARD_600DPI";
+  return { ...settings, orientation, printQualityDpi: quality, pageSelection: settings.pageSelection || "all" };
+}
+
 function asSettings(value: unknown, fallback: PrintSettings): PrintSettings {
   const record = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
   const colorMode = record.colorMode === "COLOR" || record.colorMode === "BW" ? record.colorMode : fallback.colorMode;
@@ -86,12 +96,13 @@ export async function syncShopPrinters(user: AuthSessionUser, input: SyncPrinter
         isDuplexCapable: printer.isDuplexCapable ?? false,
         capabilities: printerCapabilities(printer),
         maximumCopies: printer.maximumCopies,
-        isDefault: printer.isDefault,
         status: printer.status ?? "ONLINE",
         statusReason: printer.statusReason ?? null,
         activeSpoolJobs: printer.activeSpoolJobs ?? 0,
         duplex: false,
-        ...(existing.exists ? {} : { defaultPrintSettings: defaults, createdAt: now }),
+        ...(existing.exists
+          ? {}
+          : { defaultPrintSettings: defaults, isDefault: printer.isDefault, createdAt: now }),
         updatedAt: now,
       },
       { merge: true },
@@ -103,8 +114,8 @@ export async function syncShopPrinters(user: AuthSessionUser, input: SyncPrinter
       name: printer.name,
       isColorCapable: printer.isColorCapable,
       maximumCopies: printer.maximumCopies,
-      isDefault: printer.isDefault,
-      defaultPrintSettings: asSettings(saved.get("defaultPrintSettings"), defaults),
+      isDefault: saved.get("isDefault") === true,
+      defaultPrintSettings: readPreset(saved.get("defaultPrintSettings"), defaults),
     });
   }
 
@@ -122,26 +133,34 @@ export async function updatePrinterPreset(
     throw new AuthServiceError(404, "printer is not registered");
   }
 
-  try {
-    parsePageSelection(settings.pageSelection, 10_000);
-  } catch (error) {
-    throw new AuthServiceError(400, error instanceof Error ? error.message : "invalid page selection");
-  }
-  await reference.set(
-    {
-      defaultPrintSettings: {
-        ...settings,
-        duplex: false,
-      },
-      updatedAt: FieldValue.serverTimestamp(),
-    },
-    { merge: true },
-  );
-
-  return {
-    id: printerId,
-    defaultPrintSettings: { ...settings, duplex: false },
+  const db = getFirebaseFirestore();
+  const now = FieldValue.serverTimestamp();
+  const preset = {
+    colorMode: settings.colorMode,
+    copies: settings.copies,
+    paperSize: settings.paperSize,
+    orientation: settings.orientation,
+    inputTray: settings.inputTray,
+    printQualityDpi: settings.printQualityDpi,
+    pageSelection: "all",
+    duplex: false,
   };
+
+  if (settings.isDefault) {
+    const others = await db.collection(`shops/${user.shopId}/printers`).get();
+    const batch = db.batch();
+    for (const document of others.docs) {
+      if (document.id !== printerId && document.get("isDefault") === true) {
+        batch.set(document.ref, { isDefault: false, updatedAt: now }, { merge: true });
+      }
+    }
+    batch.set(reference, { isDefault: true, defaultPrintSettings: preset, updatedAt: now }, { merge: true });
+    await batch.commit();
+  } else {
+    await reference.set({ isDefault: false, defaultPrintSettings: preset, updatedAt: now }, { merge: true });
+  }
+
+  return { id: printerId, isDefault: settings.isDefault, defaultPrintSettings: preset };
 }
 
 export async function dispatchPrintJob(user: AuthSessionUser, orderId: string, input: DispatchPrintJobRequestInput) {
@@ -228,6 +247,43 @@ export async function dispatchPrintJob(user: AuthSessionUser, orderId: string, i
   };
 }
 
+export async function queueIncomingOrder(user: AuthSessionUser, orderId: string) {
+  const order = await getShopOrder(user, orderId);
+  for (const document of order.documents) {
+    const record = document as {
+      id?: string;
+      docId?: string;
+      colorMode?: "BW" | "COLOR";
+      copies?: number;
+      paperSize?: "A4" | "A3";
+      pageCount?: number;
+      config?: { colorMode?: "BW" | "COLOR"; copies?: number; paperSize?: "A4" | "A3"; pageSelection?: string };
+    };
+    const documentId = record.docId || record.id;
+    if (!documentId) {
+      continue;
+    }
+
+    const colorMode = record.config?.colorMode ?? record.colorMode ?? "BW";
+    const paperSize = record.config?.paperSize ?? record.paperSize ?? "A4";
+    try {
+      const route = await routePrintJob(user, { colorMode, paperSize });
+      await dispatchPrintJob(user, orderId, {
+        printerId: route.printerId,
+        documentId,
+        overrides: {
+          colorMode,
+          copies: record.config?.copies ?? record.copies ?? 1,
+          paperSize,
+          pageSelection: record.config?.pageSelection ?? "all",
+        },
+      });
+    } catch (error) {
+      console.error("No printer assigned for document", documentId, error);
+    }
+  }
+}
+
 export async function writePrinterTelemetry(
   user: AuthSessionUser,
   printerId: string,
@@ -273,11 +329,11 @@ export async function routePrintJob(user: AuthSessionUser, input: RoutePrintJobR
       return required.every((capability) => capabilities.includes(capability));
     })
     .sort((left, right) => {
-      const jobs = Number(left.data.activeSpoolJobs ?? 0) - Number(right.data.activeSpoolJobs ?? 0);
-      if (jobs !== 0) {
-        return jobs;
+      const defaultRank = Number(right.data.isDefault === true) - Number(left.data.isDefault === true);
+      if (defaultRank !== 0) {
+        return defaultRank;
       }
-      return left.data.isDefault === true ? -1 : 1;
+      return Number(left.data.activeSpoolJobs ?? 0) - Number(right.data.activeSpoolJobs ?? 0);
     });
 
   const match = candidates[0];
