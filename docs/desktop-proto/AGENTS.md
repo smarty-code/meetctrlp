@@ -78,7 +78,9 @@ If `dotnet` is missing, install **.NET 8 SDK**, then open a **new** terminal.
 - Show the signed-in operator, read-only shop profile, active staff, connectivity, and app version.
 - Edit shop page rates, color and A3 capability, and weekly hours from Shop settings.
 - Watch the shop order queue, accept or reject new orders, and move them through printing, pickup, and completion.
-- Discover printers from Windows (`LocalPrintServer` + installed printer names).
+- Preview order PDFs from a short-lived download link, check the file hash and page count, and wipe the local copy after printing.
+- Resolve print settings from the printer preset plus operator overrides, including page ranges such as `1,3,5-8`, and freeze that recipe on the print job.
+- Discover installed printers, show live status, print a one-page test, and route a job to the least-busy compatible printer.
 - Read every setting the selected printer reports (Print Schema XML, with GDI fallback).
 - Show those settings in a single capabilities window: printer dropdown, Refresh, grouped list.
 - Keep printing logic out of XAML.

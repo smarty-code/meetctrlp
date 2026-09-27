@@ -1,4 +1,16 @@
 export {
+  dispatchPrintJobRequestSchema,
+  printerTelemetryRequestSchema,
+  routePrintJobRequestSchema,
+  syncPrintersRequestSchema,
+  updatePrinterPresetRequestSchema,
+  type DispatchPrintJobRequestInput,
+  type PrinterTelemetryRequestInput,
+  type RoutePrintJobRequestInput,
+  type SyncPrintersRequestInput,
+  type UpdatePrinterPresetRequestInput,
+} from "./print-jobs";
+export {
   checkoutDocumentSchema,
   checkoutOrderRequestSchema,
   orderTransitionRequestSchema,

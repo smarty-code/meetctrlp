@@ -253,3 +253,39 @@ async function createPrintJobWithResolvedSettings(
 
 > [!TIP]
 > All monetary values (e.g. job cost) are stored as integer minor units (paise) using Firestore `number` type — equivalent to the former `BIGINT` columns in PostgreSQL.
+
+---
+
+## 7. Developer log
+
+Phase 05, 27 Sep 2026.
+
+### Built
+
+- Installed Windows printers are registered at `shops/{shopId}/printers/{printerId}` with a baseline preset: color or black and white, 1 copy, A4, pages `all`, tray `AUTO`. Duplex is off.
+- New order documents store `config` with color, copies, paper size, and page selection.
+- **Edit print settings** on an order lets the operator change printer, copies, color, paper, page range, and tray. The server merges those overrides onto the printer preset and writes `printJobs/{jobId}` with `requestedOverrides` and a frozen `resolvedSettings`.
+- Page ranges such as `1,3,5-8` and `all` are checked against the document page count.
+- If color is chosen for a printer that cannot print color, the dialog and the queue notice show a warning. The job is still saved.
+- A preset saved later does not rewrite print jobs already queued.
+
+### Decisions
+
+- Duplex is rejected. This phase is simplex only.
+- Copies above the printer's reported maximum are rejected. Microsoft Print to PDF on this PC reports a maximum of 1.
+- The printer preset is written the first time that printer is seen. Later syncs update capability flags and do not replace `defaultPrintSettings`.
+- The desktop still does not use a Firebase SDK. Dispatch goes through `apps/server`.
+
+### Test cases
+
+Restart the server and the desktop app. Open Orders once so the installed printer is registered. Create or select an order that has at least one document.
+
+| # | Do this | It passes when |
+| --- | --- | --- |
+| 1 | Open Orders | Firestore has `shops/{shopId}/printers/{printerId}` for Microsoft Print to PDF, with `defaultPrintSettings` and `maximumCopies` 1. |
+| 2 | Select an order | The order card shows a line like `1 copy · B&W · Pages: all · A4`. |
+| 3 | Edit print settings, set pages to `1,3,5-8` on a 2-page document, and queue | The dialog stays open and says the range is outside the document. |
+| 4 | Set pages to `1-1` or `all`, copies to `1`, and queue | A `printJobs` document is `QUEUED`. `resolvedSettings` contains color, copies, paper, page selection, and tray. `requestedOverrides` contains only what you changed. |
+| 5 | Change the printer preset after that job exists | The existing `resolvedSettings` stay the same. |
+| 6 | Set copies to `2` on Microsoft Print to PDF | The dialog says this printer only prints 1 copy. |
+| 7 | Send `duplex: true` in the dispatch body | The server returns 400 and no job is written. |

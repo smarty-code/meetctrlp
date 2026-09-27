@@ -373,3 +373,39 @@ interface FirestorePrinterDoc {
 
 > [!TIP]
 > For intelligent routing, keep `activeSpoolJobs` on the top-level `printers/{printerId}` document (updated via the same telemetry batch write). This lets the routing query avoid reading the entire telemetry subcollection — a single `.where("status", "==", "ONLINE").get()` is sufficient to rank candidates.
+
+---
+
+## 7. Developer log
+
+Phase 06, 27 Sep 2026.
+
+### Built
+
+- Opening the app reads every installed Windows print queue: name, driver, port, color, A4, A3, duplex, job count, and status (`ONLINE`, `OFFLINE`, `PRINTING`, `ERROR`).
+- That inventory is saved on `shops/{shopId}/printers/{printerId}`, including `capabilities` such as `A4` and `COLOR`.
+- The printer list is checked every 5 seconds. A status or job-count change writes `printers/{printerId}/telemetry/{logId}` and updates the live status.
+- The Printers screen shows a card with badges and a status line, plus **Print test page**.
+- **Edit print settings** asks the server which online printer can do the color and paper size with the fewest spool jobs, and selects that printer. The operator can still pick another one.
+
+### Decisions
+
+- Routing treats `ONLINE` and `PRINTING` as available. `OFFLINE` and `ERROR` are not candidates.
+- A black and white job can use a color printer. A color job requires the `COLOR` capability.
+- Duplex is recorded from the driver and is not used for routing. Two-sided printing stays out of this phase.
+- The desktop still has no Firebase SDK. Discovery is pushed to `apps/server`.
+- Telemetry is written when the status, reason, or job count changes, not on every unchanged poll.
+- Driver installation is left to Windows.
+
+### Test cases
+
+Restart the server and the desktop app. This PC has Microsoft Print to PDF.
+
+| # | Do this | It passes when |
+| --- | --- | --- |
+| 1 | Open the app and look at Printers | A card shows Microsoft Print to PDF, its driver, port, color or black and white, A4, and **Online (0 active jobs)**. |
+| 2 | Check Firestore `shops/{shopId}/printers` | The printer document has `driverName`, `portName`, `capabilities` including `A4`, `status` `ONLINE`, and `activeSpoolJobs` 0. |
+| 3 | Click Print test page | A one-page portrait PDF is saved under `Documents\CtrlP\jobs\test-Microsoft Print to PDF.pdf`. |
+| 4 | Open Edit print settings on a black and white A4 order | The printer chosen by routing is Microsoft Print to PDF. |
+| 5 | `POST /api/v1/shops/{shopId}/routing` with `{ "colorMode": "COLOR", "paperSize": "A4" }` while that printer is online and color-capable | The response names that printer and its job count. |
+| 6 | Set the printer offline in Windows, wait about 5 seconds | The card turns offline or error, and a telemetry document records the previous and new status. |

@@ -315,3 +315,40 @@ const logsSnap = await db
 
 const logs = logsSnap.docs.map((d) => d.data());
 ```
+
+---
+
+## 7. Developer log
+
+Phase 04, 27 Sep 2026.
+
+### Built
+
+- A shop can upload one or more PDFs onto an order. Each file is stored privately and the order keeps the filename, size, page count, and SHA-256.
+- Download links last 15 minutes. When Railway S3 is configured, the link is a presigned S3 URL. Otherwise the server stores the file locally and signs its own link. The file is never public.
+- The desktop downloads into `%LOCALAPPDATA%\MeetCtrlP\Cache\Orders\{orderId}\`, checks the hash, and checks the page count before preview.
+- Preview shows the first page with the watermark **MeetCtrlP Operator Preview - Confidential**.
+- After the order is marked ready, the local PDF is overwritten with zeroes and deleted. Firestore records `shreddedAt`, and `accessLogs` records download, preview, and shred.
+
+### Decisions
+
+- PDF rendering uses the PDFium wrapper Docnet.Core. The desktop still has no Firebase SDK.
+- `shreddedAt` is written as a normal timestamp. Firestore does not allow a server timestamp inside an array element.
+- A corrupt or non-PDF upload is rejected. A hash or page-count mismatch blocks preview.
+- Page count on the server is read from the PDF page dictionary. The desktop counts pages again with PDFium and stops if the two counts differ.
+- The single-page text print path from the previous test is unchanged. PDF preview and shredding apply to orders created with the documents upload.
+
+### Test cases
+
+Restart the server and the desktop app. Save a page rate first. Use two small PDFs.
+
+| # | Do this | It passes when |
+| --- | --- | --- |
+| 1 | `POST /api/v1/shops/{shopId}/orders/documents` with two PDF files, `colorMode=BW`, `paperSize=A4`, `copies=1` | One order is created. `documents` has two entries, each with `storageKey`, `fileSizeBytes`, `pageCount`, and a 64-character `sha256Hash`. |
+| 2 | Upload a `.txt` file renamed to `.pdf`, or a PDF with no pages | The request returns 400 and no order is stored. |
+| 3 | Open the order and select a document, then Preview | The first page opens with the confidential watermark. The notice says the SHA-256 matches. `accessLogs` has `DOWNLOADED` and `PREVIEWED`. |
+| 4 | Change one byte of the cached PDF before preview finishes | Preview stops and says the SHA-256 does not match. |
+| 5 | Request the download URL, wait 16 minutes, and open it | The link is rejected. |
+| 6 | Open the download URL with no signature | The response is 401. |
+| 7 | Accept the order and start printing so it becomes ready | The cache file under `%LOCALAPPDATA%\MeetCtrlP\Cache\Orders\{orderId}\` is gone. The document `shreddedAt` is set. `accessLogs` has `SHREDDED`. Preview is no longer offered. |
+| 8 | Upload two PDFs with different page counts | The order details list both filenames, sizes, and page counts. Preview of each checks its own page count. |

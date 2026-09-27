@@ -272,6 +272,13 @@ export async function createShopOrder(user: AuthSessionUser, input: CheckoutOrde
         paperSize: document.paperSize,
         unitPricePaise: quote.unitPricePaise,
         totalPaise: quote.totalPaise,
+        config: {
+          colorMode: document.colorMode,
+          copies: document.copies,
+          paperSize: document.paperSize,
+          pageSelection: "all",
+          inputTray: null,
+        },
       },
       item: {
         description,
