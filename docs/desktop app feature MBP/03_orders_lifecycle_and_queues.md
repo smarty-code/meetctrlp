@@ -286,3 +286,46 @@ db.collection(`shops/${shopId}/orders`)
     });
   });
 ```
+
+---
+
+## 7. Developer log
+
+Phase 03, 27 Sep 2026.
+
+### Built
+
+- Orders live on `shops/{shopId}/orders/{orderId}` with a `statusHistory` entry for every change.
+- Checkout freezes the current page rates into the order. A later settings change does not rewrite that order.
+- The desktop **Orders** screen has New, Active, Ready, and Completed tabs, search by order number, phone, or pickup code, and the accept / reject / printing / ready / complete actions.
+- A live server stream plays a chime and flashes the taskbar when a new order arrives. **Receive test order** creates a 10-page black and white A4 cash order so the queue can be tested without the customer web app.
+- Accept only succeeds while the order is `SUBMITTED`. If the customer already cancelled it, the server returns 409 `ORDER_ALREADY_CANCELLED`.
+- Reject stores a category and reason. Cash orders are marked paid when they are completed. Online payment stays pending until the payments phase.
+
+### Decisions
+
+- The desktop still has no Firebase SDK. The server listens to Firestore and sends server-sent events to the app.
+- Routes are under `/api/v1/shops/{shopId}/orders` so each call is limited to the signed-in shop. That avoids a collection-group index.
+- Order numbers start at `ORD-1042` and then increment on the shop document. The pickup code is the last four digits of that sequence.
+- Rejected and cancelled orders leave the four tabs. Search still finds them.
+- Completed shows orders completed today. Older completed orders remain searchable.
+- There is no separate rejected tab. The details text shows the rejection reason when one is selected.
+- The reject button uses the existing danger red, not a new color.
+- Tax is 0. Page ranges and real customer checkout stay in later documents.
+
+### Test cases
+
+Restart the server. Close and reopen the desktop app. Save a B&W A4 rate of at least ₹0.50 in Shop settings before receiving an order.
+
+| # | Do this | It passes when |
+| --- | --- | --- |
+| 1 | Open Orders | Tabs read New, Active, Ready, and Completed, each with a count. The notice says the app is watching for orders. |
+| 2 | Click Receive test order | A chime plays. A new card appears under New with an `ORD-` number, pickup code, phone `+919800011122`, and total equal to 10 times the saved B&W A4 rate. |
+| 3 | Select that order | Details show the file name, 10 pages, B&W A4, pickup code, and `CASH · PENDING`. |
+| 4 | Search `ORD-`, then the phone, then clear the box | The order stays in the list while the text matches. Clearing the box shows only the tab you last selected. |
+| 5 | Accept the order | It leaves New and appears under Active as `SHOP_ACCEPTED`. Firestore has `lifecycle.acceptedByUserId` and a status history row from `SUBMITTED` to `SHOP_ACCEPTED`. |
+| 6 | Start printing, then Ready for pickup, then Complete | Status moves `PRINTING`, then `READY`, then `COMPLETED`. The card ends on Completed. Payment reads `CASH · PAID`. |
+| 7 | Receive another test order and Reject it with Out of paper | It leaves New. Search still finds it, and the details include the rejection reason. Firestore `rejection.category` is `OUT_OF_PAPER`. |
+| 8 | Receive a third order. `POST /api/v1/shops/{shopId}/orders/{orderId}/cancel` with `{ "idempotencyKey": "cancel-test-0001", "currentStatus": "SUBMITTED" }`, then click Accept | Accept shows **Order was cancelled by customer before acceptance.** The order is not accepted. |
+| 9 | Change the B&W rate, then receive another test order | The new order uses the new rate. The earlier order totals stay the same. |
+| 10 | Call accept again on an order that is already accepted, with a new idempotency key | Returns 409 `ORDER_STATUS_CONFLICT`. |

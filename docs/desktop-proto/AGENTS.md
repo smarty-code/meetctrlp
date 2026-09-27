@@ -77,6 +77,7 @@ If `dotnet` is missing, install **.NET 8 SDK**, then open a **new** terminal.
 - Register this PC after sign-in and send a 30-second heartbeat (`/api/v1/devices/*`).
 - Show the signed-in operator, read-only shop profile, active staff, connectivity, and app version.
 - Edit shop page rates, color and A3 capability, and weekly hours from Shop settings.
+- Watch the shop order queue, accept or reject new orders, and move them through printing, pickup, and completion.
 - Discover printers from Windows (`LocalPrintServer` + installed printer names).
 - Read every setting the selected printer reports (Print Schema XML, with GDI fallback).
 - Show those settings in a single capabilities window: printer dropdown, Refresh, grouped list.

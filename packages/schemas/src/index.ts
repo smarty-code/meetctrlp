@@ -1,4 +1,13 @@
 export {
+  checkoutDocumentSchema,
+  checkoutOrderRequestSchema,
+  orderTransitionRequestSchema,
+  rejectOrderRequestSchema,
+  type CheckoutOrderRequestInput,
+  type OrderTransitionRequestInput,
+  type RejectOrderRequestInput,
+} from "./orders";
+export {
   businessHourSchema,
   priceQuoteRequestSchema,
   updateShopCapabilitiesRequestSchema,
