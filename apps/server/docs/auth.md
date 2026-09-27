@@ -40,6 +40,16 @@ All JSON. Errors: `{ "error": "message" }`.
 | GET | `/api/v1/shops/profile` | Bearer idToken | shop name, phone, email, status, and address when stored |
 | GET | `/api/v1/shops/staff` | Bearer idToken | ACTIVE staff on the caller's shop |
 
+Shop settings, for the signed-in shop only:
+
+| Method | Path | Body |
+| --- | --- | --- |
+| GET | `/api/v1/shops/{shopId}/pricing` | pricing, capabilities, business hours, `openNow` |
+| PUT | `/api/v1/shops/{shopId}/pricing` | `{ bwA4PricePaise, colorA4PricePaise, colorA3PricePaise }` from 50 to 10000 |
+| PUT | `/api/v1/shops/{shopId}/capabilities` | `{ colorPrinting, a3Printing }` |
+| PUT | `/api/v1/shops/{shopId}/hours` | `{ businessHours: [{ dayOfWeek, opensAt, closesAt, isClosed }] }` seven days |
+| POST | `/api/v1/shops/{shopId}/pricing/quote` | `{ billablePages, copies, colorMode, paperSize }` |
+
 Device register returns `{ deviceId, heartbeatIntervalSeconds: 30, status: "ONLINE" }`. The agent document is `shops/{shopId}/agents/{agentId}` in Firestore. The same PC and shop always map to the same `deviceId`. Heartbeat only updates liveness and telemetry. Agents with `lastSeenAt` older than 90 seconds are marked `OFFLINE` on the next heartbeat from that shop.
 
 Success for register/login/refresh:

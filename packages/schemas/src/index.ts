@@ -1,4 +1,15 @@
 export {
+  businessHourSchema,
+  priceQuoteRequestSchema,
+  updateShopCapabilitiesRequestSchema,
+  updateShopHoursRequestSchema,
+  updateShopPricingRequestSchema,
+  type PriceQuoteRequestInput,
+  type UpdateShopCapabilitiesRequestInput,
+  type UpdateShopHoursRequestInput,
+  type UpdateShopPricingRequestInput,
+} from "./shop-config";
+export {
   deviceHeartbeatRequestSchema,
   deviceOfflineRequestSchema,
   registerDeviceRequestSchema,

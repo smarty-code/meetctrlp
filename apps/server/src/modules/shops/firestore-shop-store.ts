@@ -177,6 +177,7 @@ export async function createShopWithOwner(input: {
       phone: input.phone,
       email: input.email,
       status: "ACTIVE",
+      service: "DOCUMENT_PRINT",
       address: null,
       capabilities: {
         bwPrinting: true,

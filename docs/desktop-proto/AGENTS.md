@@ -76,6 +76,7 @@ If `dotnet` is missing, install **.NET 8 SDK**, then open a **new** terminal.
 - Shop-owner email/phone + password auth against `apps/server` (no Firebase SDK in this app).
 - Register this PC after sign-in and send a 30-second heartbeat (`/api/v1/devices/*`).
 - Show the signed-in operator, read-only shop profile, active staff, connectivity, and app version.
+- Edit shop page rates, color and A3 capability, and weekly hours from Shop settings.
 - Discover printers from Windows (`LocalPrintServer` + installed printer names).
 - Read every setting the selected printer reports (Print Schema XML, with GDI fallback).
 - Show those settings in a single capabilities window: printer dropdown, Refresh, grouped list.

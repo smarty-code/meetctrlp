@@ -270,3 +270,47 @@ async function getActivePricing(shopId: string): Promise<{
 > - Capabilities fields: `capabilities.bwPrinting`, `capabilities.colorPrinting`, `capabilities.a4Printing`, `capabilities.a3Printing`
 > - All monetary values stored as `number` (integer paise / minor units, ≥ 0) — equivalent to the former `BIGINT` constraint
 > - Prices are frozen into `shops/{shopId}/orders/{orderId}` at order-creation time to satisfy the Immutable Snapshot Rule
+
+---
+
+## 7. Developer log
+
+Phase 02, 27 Sep 2026.
+
+### Built
+
+- Shop settings in the desktop app, opened with **Shop settings**. Printers stay on **Printers**.
+- Rates are entered in rupees and stored as integer paise on `shops/{shopId}.pricing`: B&W A4, color A4, and color A3. Allowed range is ₹0.50 to ₹100.00 (50 to 10000 paise). Currency stays `INR`.
+- Capability toggles save color printing and A3 printing. Black and white and A4 stay on.
+- Weekly hours save to `shops/{shopId}.businessHours`. The screen shows **Open now** or **Closed** using India time (Asia/Kolkata).
+- The only service stored for this phase is `DOCUMENT_PRINT`.
+- A 10-page B&W A4 preview uses integer paise math. `POST /api/v1/shops/{shopId}/pricing/quote` prices a document from the saved rates without creating an order.
+
+### Decisions
+
+- The desktop still has no Firebase SDK. Settings go through `apps/server`.
+- Order documents are the next phase. This phase does not write `orders/{orderId}`. The quote reads the current shop rates. A later order must copy those paise onto the order so a later rate change does not rewrite it.
+- A3 has a color rate only. A black and white A3 quote is rejected.
+- B&W printing and A4 printing are forced on. The settings screen only toggles color and A3.
+- Save calls three routes: pricing, capabilities, then hours. Each update is its own Firestore transaction.
+- The shop id in the URL must match the signed-in shop. Any active staff member of that shop can save.
+- New shops still start at 0 paise until the operator saves a rate. A quote is rejected until a rate of at least 50 paise is saved.
+- The primary button stays ecto green `#58CC02` from the shared palette.
+
+### Test cases
+
+Restart the server so it loads this phase. Sign in on the desktop app, then open **Shop settings**.
+
+| # | Do this | It passes when |
+| --- | --- | --- |
+| 1 | Open Shop settings on a new shop | Rates are empty. Hours show a suggested week and **Hours are not saved yet.** Service reads **Document print**. |
+| 2 | Enter B&W A4 `2.00`, color A4 `10.00`, color A3 `25.00` | The preview reads **10 B&W A4 pages × 1 copy = ₹20.00**. |
+| 3 | Enter `0.10` or `150` and save | Save stays on the screen and asks for a rate from ₹0.50 to ₹100.00. |
+| 4 | Turn on color and A3, keep the suggested hours, and save | Status says the settings were saved. Firestore `shops/{shopId}` has `pricing.bwA4PricePaise` 200, `colorA4PricePaise` 1000, `colorA3PricePaise` 2500, `capabilities.colorPrinting` true, `capabilities.a3Printing` true, and seven `businessHours` entries. |
+| 5 | Set today's India hours to include the current time, save, then reopen settings | The hours line reads **Open now**. |
+| 6 | Mark today closed, or set hours that exclude the current India time, and save | The hours line reads **Closed**. |
+| 7 | `PUT /api/v1/shops/{shopId}/pricing` with another shop's id | Returns 403. |
+| 8 | `POST /api/v1/shops/{shopId}/pricing/quote` with `{ "billablePages": 10, "copies": 1, "colorMode": "BW", "paperSize": "A4" }` after saving ₹2.00 | Returns `unitPricePaise` 200 and `totalPaise` 2000. No order document is created. |
+| 9 | Quote color A4 while color printing is off | Returns 400 `this shop does not offer color printing`. |
+| 10 | Save a new B&W rate of ₹3.00 and quote 10 pages again | The new quote is 3000 paise. The previous quote response is unchanged. |
+| 11 | Return to Printers | The printer list and capability groups are still there. |
