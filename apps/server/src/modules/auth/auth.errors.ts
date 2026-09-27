@@ -18,38 +18,6 @@ export function isMissingEnvError(error: unknown) {
   );
 }
 
-function postgresCode(error: unknown) {
-  if (error && typeof error === "object" && "code" in error) {
-    return String(error.code);
-  }
-
-  return undefined;
-}
-
-export function isUniqueViolation(error: unknown, fragment?: string) {
-  if (postgresCode(error) !== "23505") {
-    return false;
-  }
-
-  if (!fragment) {
-    return true;
-  }
-
-  const constraint =
-    error && typeof error === "object"
-      ? "constraint_name" in error
-        ? String(error.constraint_name)
-        : "constraint" in error
-          ? String(error.constraint)
-          : ""
-      : "";
-  const message = error instanceof Error ? error.message : "";
-  return (
-    constraint.toLowerCase().includes(fragment.toLowerCase()) ||
-    message.toLowerCase().includes(fragment.toLowerCase())
-  );
-}
-
 export function mapFirebaseAuthError(error: unknown): AuthServiceError | undefined {
   if (!(error instanceof FirebaseAuthRestError)) {
     return undefined;

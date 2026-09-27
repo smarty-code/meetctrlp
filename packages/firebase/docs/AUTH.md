@@ -7,7 +7,7 @@ Firebase owns passwords and session tokens. `@ctrlp/firebase` exposes two surfac
 
 The desktop app must not use a Firebase client SDK. It sends email/phone + password to `apps/server`, which calls these helpers.
 
-Shop-owner register/login/me/refresh go through REST so they keep working if the Admin service-account JWT cannot be minted (`invalid_grant` / clock skew / revoked key). Phone numbers are stored in Postgres; they are not written onto the Firebase user via Admin.
+Shop-owner register/login/me/refresh go through REST so password checks keep working if the Admin service-account JWT cannot be minted (`invalid_grant` / clock skew / revoked key). Shop and staff profiles are stored in Cloud Firestore. Phone numbers are not written onto the Firebase user via Admin.
 
 ## Phone + password
 
@@ -24,7 +24,7 @@ Helpers:
 - `isInternalPhoneEmail`
 - `looksLikeEmail`
 
-When a shop user also has a real email, sign-in with phone must look up that email in Postgres, then call `signInWithPassword`.
+When a shop user also has a real email, sign-in with phone must look up that email in Firestore, then call `signInWithPassword`.
 
 ## Sign-up / sign-in result
 

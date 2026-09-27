@@ -25,8 +25,9 @@ Flow:
 
 ```text
 Open app
-  → restore session (refresh token) or show login/register
-  → list installed printers
+ → restore session (refresh token) or show login/register
+ → register this PC and start the 30-second heartbeat
+ → list installed printers
   → user picks one (default printer is pre-selected)
   → read capabilities from Windows
   → show them grouped in a scrollable list
@@ -73,6 +74,8 @@ If `dotnet` is missing, install **.NET 8 SDK**, then open a **new** terminal.
 ### In scope (current)
 
 - Shop-owner email/phone + password auth against `apps/server` (no Firebase SDK in this app).
+- Register this PC after sign-in and send a 30-second heartbeat (`/api/v1/devices/*`).
+- Show the signed-in operator, read-only shop profile, active staff, connectivity, and app version.
 - Discover printers from Windows (`LocalPrintServer` + installed printer names).
 - Read every setting the selected printer reports (Print Schema XML, with GDI fallback).
 - Show those settings in a single capabilities window: printer dropdown, Refresh, grouped list.
@@ -82,7 +85,7 @@ If `dotnet` is missing, install **.NET 8 SDK**, then open a **new** terminal.
 
 - Submitting print jobs / PDFs / page ranges
 - Windows print dialog bypass for actual printing
-- Agent registration / printer inventory upload via the shop session
+- Printer inventory upload (device registration and heartbeat are already in scope)
 - Shop navigation (Print / Printers / Cloud pages)
 - Windows Service / background agent
 - Tauri, Rust, React desktop shells
@@ -106,6 +109,7 @@ If `dotnet` is missing, install **.NET 8 SDK**, then open a **new** terminal.
    - Desktop = WPF + Windows Credential Manager
 7. **No Firebase client SDK.** Credentials go to `apps/server`. The refresh token is stored in Windows Credential Manager; the ID token stays in memory.
 8. **Design tokens in the WPF app** use the shared palette (paper, graphite, ecto green `#58CC02`, 12px radius, no drop shadows). Do not invent a new visual language. Full web design-system rules still live in `docs/design-system/`; this app is WPF, not `@ctrlp/ui`.
+9. **Firestore is the only application database.** Shops and staff live at `shops/{shopId}` and `shops/{shopId}/users/{userId}`. Print agents live at `shops/{shopId}/agents/{agentId}`. The refresh token stays in Windows Credential Manager (`Ctrlp.Desktop/refreshToken`).
 
 ---
 
@@ -156,7 +160,7 @@ Ctrlp.Desktop
 | Cloud | HTTP to `apps/server`, JSON DTOs | WPF, Windows print APIs, Credential Manager |
 | Desktop | Bind UI, store refresh token, host login | Call `LocalPrintServer` / Print Schema from the window |
 
-Composition is in `App` / `MainWindow`: printers via `WindowsPrinterDiscovery` and `WindowsPrinterCapabilitiesReader`; auth via `AuthApiClient` + `AuthSession`.
+Composition is in `App` / `MainWindow`: printers via `WindowsPrinterDiscovery` and `WindowsPrinterCapabilitiesReader`; auth via `AuthApiClient` + `AuthSession`; device registration via `DeviceApiClient` + `ShopDeviceController`. Spooler counts for the heartbeat come from `WindowsSpoolerTelemetry` in the Printing project.
 
 ---
 
@@ -166,6 +170,7 @@ Composition is in `App` / `MainWindow`: printers via `WindowsPrinterDiscovery` a
 App.OnStartup
   → restore refresh token or LoginWindow
   → MainWindow.Loaded
+  → register device, load shop profile and staff, start heartbeat
   → MainViewModel.InitializeAsync
   → IPrinterDiscovery.GetPrinters / GetDefaultPrinterName
   → SelectedPrinter = default or first

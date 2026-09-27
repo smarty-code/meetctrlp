@@ -217,3 +217,60 @@ function watchShopAgents(shopId: string): void {
 > - Agent document → `/shops/{shopId}/agents/{agentId}`
 > - Key fields: `deviceIdentifier` (unique), `status`, `lastSeenAt`, `hostname`, `osVersion`, `appVersion`, `agentVersion`
 > - Liveness index equivalent: query `agents` collection filtered by `status == 'ONLINE'` and ordered by `lastSeenAt DESC`
+
+---
+
+## 7. Developer log
+
+Phase 01, 27 Sep 2026.
+
+### Built
+
+- Desktop sign-in still goes through `apps/server` with no Firebase SDK. The sign-in button label is **Sign In to Print Shop**. A stored refresh token still restores the session.
+- After sign-in or restore, the desktop registers this PC with `POST /api/v1/devices/register` and heartbeats every 30 seconds with `POST /api/v1/devices/heartbeat`.
+- The fingerprint is SHA-256 of Windows `MachineGuid` plus the first active MAC address. The same shop and PC always get the same Firestore agent id.
+- Agent documents are written to `shops/{shopId}/agents/{agentId}` with hostname, OS version, app version `1.0.0`, agent version `1.0.0`, status, and `lastSeenAt`. Heartbeats also store working-set memory, spooler job count, and online printer count.
+- Sign out and closing the app call `POST /api/v1/devices/offline`. Sign out still revokes the Firebase refresh token and deletes the Windows Credential Manager entry. Closing the window keeps the refresh token.
+- The capabilities window shows the operator name and role, a connectivity pill (Connected / Reconnecting / Offline), the machine badge `HOSTNAME (v1.0.0)`, a read-only shop card, the active staff list, and the app version in the footer.
+- Shop profile and staff are `GET /api/v1/shops/profile` and `GET /api/v1/shops/staff`.
+
+### Decisions
+
+- Firestore is the only application database. Register writes `shops/{shopId}` and `shops/{shopId}/users/{userId}`. Staff and shop profile are read from those documents. Postgres is not used by the server.
+- Refresh tokens stay in Windows Credential Manager (`CredWrite` target `Ctrlp.Desktop/refreshToken`). That is the DPAPI-backed store named in the spec. A separate `auth.dat` file was not added.
+- This build is one process, so `agentVersion` and `appVersion` are both the desktop assembly version `1.0.0`.
+- The shared palette has no amber token. Connected uses ecto green, Reconnecting uses macaw blue, Offline uses the existing danger red.
+- Shop address is returned as `null`. The Postgres `shops` row has no address columns yet, and profile editing belongs on the web dashboard.
+- Any active shop user can read their own shop's staff list. Role grants stay on the web portal.
+- There is no Cloud Function sweeper. Each heartbeat marks other agents on that shop `OFFLINE` when `lastSeenAt` is older than 90 seconds. A clean sign-out or process exit marks this agent offline immediately.
+- A failed device registration still opens the capabilities window so the operator can see the offline reason and sign out. The pill stays Offline until register succeeds.
+
+### Test cases
+
+Run the server first (`pnpm run server:dev` from the repo, with `apps/server/.env.local` containing `FIREBASE_WEB_API_KEY` and `FIREBASE_SERVICE_ACCOUNT_BASE64`). Postgres is not required. Then from `apps/desktop-proto`:
+
+```powershell
+dotnet build .\Ctrlp.Desktop.sln -c Debug
+dotnet run --project .\src\Ctrlp.Desktop\Ctrlp.Desktop.csproj -c Debug
+```
+
+`src/Ctrlp.Desktop/appsettings.json` must point `ServerBaseUrl` at that server (default `http://localhost:3000`).
+
+| # | Case | Pass when |
+| --- | --- | --- |
+| 1 | Cold start with no saved session | Login window opens. Button reads **Sign In to Print Shop**. |
+| 2 | Sign in with a known shop email or `+91` phone and password | Capabilities window opens. Header shows `Name · ROLE`. |
+| 3 | Wrong password | Login stays open and shows the server error. |
+| 4 | After a successful sign-in | Pill turns **Connected** (green). Badge shows this PC name and `(v1.0.0)`. Shop card shows the shop name and status. Staff card lists the owner. Footer shows `CtrlP 1.0.0`. |
+| 5 | Firestore shop, staff, and agent | `shops/{shopId}` and `shops/{shopId}/users/{userId}` exist for the signed-in owner. `shops/{shopId}/agents/{agentId}` is `ONLINE` and has this hostname and `deviceIdentifier`. |
+| 6 | Wait at least 35 seconds | `lastSeenAt` moves forward. Document also has `memoryWorkingSetBytes`, `spoolerJobCount`, and `onlinePrinterCount`. |
+| 7 | Stop the server, wait for the next heartbeat | Pill turns **Reconnecting** (blue) and shows a reachability message. Start the server again and the following heartbeat returns **Connected**. |
+| 8 | Sign out | Login window returns. Credential Manager no longer has `Ctrlp.Desktop/refreshToken`. Agent `status` is `OFFLINE`. |
+| 9 | Sign in again, then close the window with the X button | Agent becomes `OFFLINE`. Reopen the app and it restores the session without asking for the password, then returns to **Connected**. |
+| 10 | `GET /api/v1/shops/profile` and `GET /api/v1/shops/staff` without a bearer token | Both return 401. With the ID token they return only that shop. |
+| 11 | `POST /api/v1/devices/heartbeat` with an unknown `deviceId` | Returns 404 `device is not registered`. |
+| 12 | Second sign-in on the same PC and shop | The same `deviceId` is reused (upsert), and `createdAt` from the first registration is still present. |
+
+### Update — Firestore only
+
+Shop registration and staff no longer use Postgres. `POST /api/auth/register` writes `shops/{shopId}`, `shops/{shopId}/users/{userId}`, and `authLookups/{hash}` for the Firebase uid, phone, and email. Those lookup documents are direct reads, so registration does not need a collection-group index. Profile and staff read the shop documents. Accounts created before this change exist in Firebase Auth only. Registering again with the same email and password creates the missing Firestore shop and owner. Restart the server after pulling this change. The PC clock still has to match real time, or Firestore rejects the service-account token.

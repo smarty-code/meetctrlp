@@ -45,6 +45,14 @@
       ]
     },
     {
+      "collectionGroup": "agents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "lastSeenAt", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "accessLogs",
       "queryScope": "COLLECTION",
       "fields": [

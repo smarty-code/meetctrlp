@@ -1,4 +1,12 @@
 export {
+  deviceHeartbeatRequestSchema,
+  deviceOfflineRequestSchema,
+  registerDeviceRequestSchema,
+  type DeviceHeartbeatRequestInput,
+  type DeviceOfflineRequestInput,
+  type RegisterDeviceRequestInput,
+} from "./devices";
+export {
   authErrorResponseSchema,
   authMeResponseSchema,
   authSessionResponseSchema,

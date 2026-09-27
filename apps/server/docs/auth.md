@@ -1,6 +1,6 @@
 # Shop-owner authentication
 
-The desktop app does not talk to Firebase. It POSTs credentials to this server. Firebase Authentication owns passwords and session tokens. Postgres stores the shop and OWNER profile.
+The desktop app does not talk to Firebase. It POSTs credentials to this server. Firebase Authentication owns passwords and session tokens. Cloud Firestore stores the shop and staff profile.
 
 Package docs:
 
@@ -13,20 +13,15 @@ Package docs:
 Fill `apps/server/.env.local` (gitignored). Do not commit secrets.
 
 ```env
-DATABASE_URL=
 FIREBASE_SERVICE_ACCOUNT_BASE64=
 FIREBASE_WEB_API_KEY=
 ```
 
 `FIREBASE_WEB_API_KEY` is the Web API key in Firebase Console → Project settings → General. Enable the Email/Password provider.
 
-Register, login, refresh, and `/me` use that Web API key. Firebase Admin (`FIREBASE_SERVICE_ACCOUNT_BASE64`) is only required for custom claims and server-side refresh-token revocation. If Admin logs `invalid_grant` / JWT timeframe, check Windows clock sync with Google, or mint a new service-account key. Do not leave a trailing `%` on the base64 value.
+Register, login, refresh, and `/me` use that Web API key for passwords. Firebase Admin (`FIREBASE_SERVICE_ACCOUNT_BASE64`) writes the shop and staff documents to Firestore, sets custom claims, and revokes refresh tokens. If Admin logs `invalid_grant` / JWT timeframe, check Windows clock sync with Google, or mint a new service-account key. Do not leave a trailing `%` on the base64 value.
 
-Schema: apply [`docs/db/printkro_mvp_schema_v3.sql`](../../../docs/db/printkro_mvp_schema_v3.sql) if tables are missing, then [`docs/db/migrations/001_shop_user_firebase_auth.sql`](../../../docs/db/migrations/001_shop_user_firebase_auth.sql). From `apps/server` with `DATABASE_URL` in `.env.local`:
-
-```bash
-pnpm --filter server db:apply-auth
-```
+Registration writes `shops/{shopId}`, `shops/{shopId}/users/{userId}`, and `authLookups/{hash}` for the Firebase uid, phone, and email. Those lookup documents replace collection-group queries.
 
 ## Endpoints
 
@@ -39,6 +34,13 @@ All JSON. Errors: `{ "error": "message" }`.
 | POST | `/api/auth/refresh` | none | `{ refreshToken }` |
 | POST | `/api/auth/logout` | Bearer idToken | revokes Firebase refresh tokens |
 | GET | `/api/auth/me` | Bearer idToken | current ACTIVE shop user |
+| POST | `/api/v1/devices/register` | Bearer idToken | `{ deviceIdentifier, hostname, osVersion, appVersion, agentVersion }` |
+| POST | `/api/v1/devices/heartbeat` | Bearer idToken | `{ deviceId, memoryWorkingSetBytes?, spoolerJobCount?, onlinePrinterCount? }` |
+| POST | `/api/v1/devices/offline` | Bearer idToken | `{ deviceId }` |
+| GET | `/api/v1/shops/profile` | Bearer idToken | shop name, phone, email, status, and address when stored |
+| GET | `/api/v1/shops/staff` | Bearer idToken | ACTIVE staff on the caller's shop |
+
+Device register returns `{ deviceId, heartbeatIntervalSeconds: 30, status: "ONLINE" }`. The agent document is `shops/{shopId}/agents/{agentId}` in Firestore. The same PC and shop always map to the same `deviceId`. Heartbeat only updates liveness and telemetry. Agents with `lastSeenAt` older than 90 seconds are marked `OFFLINE` on the next heartbeat from that shop.
 
 Success for register/login/refresh:
 
@@ -71,11 +73,11 @@ The internal Firebase phone-mapping email (`*@phone.meetctrlp.app`) is never ret
 - `403` shop user not ACTIVE
 - `409` email or phone already exists
 - `429` Firebase rate limit
-- `503` `DATABASE_URL` or Firebase env not configured
+- `503` Firebase Admin credentials missing, rejected, or this PC's clock is out of sync with Google
 
 ## Code
 
 - Routes: `app/api/auth/*/route.ts`
 - Service: `src/modules/auth/auth.service.ts`
-- Guard: `requireShopUser(idToken)` — verify Firebase ID token, load ACTIVE `shop_users` row
-- DB: Drizzle models for `shops` and `shop_users` only (`src/db/`)
+- Guard: `requireShopUser(idToken)` — verify the Firebase ID token, then load the ACTIVE user from `shops/{shopId}/users/{userId}`
+- Store: `src/modules/shops/firestore-shop-store.ts`
