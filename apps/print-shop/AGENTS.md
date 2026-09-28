@@ -54,6 +54,7 @@ pnpm shop:typecheck
 | Change | Where |
 | --- | --- |
 | Screen copy/layout | `src/App.tsx` (and later `src/screens/` if split) |
+| Login / shop identity | `src/screens/LoginScreen.tsx` + `src/lib/cloud.ts` (HTTP to `apps/server`, no Firebase SDK) |
 | New agent operation | C# handler first, then `commands.rs`, then `src/lib/agent.ts` |
 | Pipe/framing | keep in sync with `Ctrlp.PrintAgent.Ipc` |
 | Sidecar file name | `tauri.conf.json` `externalBin` + `publish-sidecar.mjs` |

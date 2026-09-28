@@ -15,7 +15,10 @@ Fill `apps/server/.env.local` (gitignored). Do not commit secrets.
 ```env
 FIREBASE_SERVICE_ACCOUNT_BASE64=
 FIREBASE_WEB_API_KEY=
+DESKTOP_ORIGIN=
 ```
+
+`DESKTOP_ORIGIN` is optional. CORS already allows the Tauri print-shop origins (`http://localhost:1420`, `https://tauri.localhost`). Add extra origins as a comma-separated list if needed. The desktop app still has no Firebase SDK; it calls these HTTP APIs.
 
 `FIREBASE_WEB_API_KEY` is the Web API key in Firebase Console → Project settings → General. Enable the Email/Password provider.
 

@@ -52,7 +52,6 @@ Windows Print Spooler → printer driver → hardware
 
 - Submitting a real PDF/image to the Windows spooler
 - Durable job queue (jobs live in memory; lost on restart)
-- Cloud / Firestore / shop auth in this app
 - The six full MVP screens (orders, pricing, payments, etc.)
 - Windows Service host (agent currently dies with the UI via `--parent-pid`)
 
@@ -125,6 +124,11 @@ Windows APIs stay in `Ctrlp.PrintAgent.Windows`. React never calls Win32.
 | `jobs.list` | `{}` | `{ jobs }` |
 | `jobs.get` | `{ id }` | `JobDto` |
 | `jobs.cancel` | `{ id }` | `JobDto` |
+| `secrets.getRefreshToken` | `{}` | `{ refreshToken }` |
+| `secrets.setRefreshToken` | `{ refreshToken }` | `{ ok }` |
+| `secrets.clearRefreshToken` | `{}` | `{ ok }` |
+| `host.identity` | `{}` | `{ deviceIdentifier, hostname, osVersion, appVersion, agentVersion }` |
+| `host.telemetry` | `{}` | `{ memoryWorkingSetBytes }` |
 
 `PrinterDto` fields: `id`, `name`, `isDefault`, `status`, `jobCount`, `portName`, `driverName`, `isShared`.  
 Printer `id` is the Windows printer name for now.
@@ -143,6 +147,8 @@ React calls `@tauri-apps/api/core` `invoke`:
 | `list_printers` / `get_printer` / `refresh_printers` | printers.* |
 | `enqueue_job` / `list_jobs` / `get_job` / `cancel_job` | jobs.* |
 | `shutdown_agent` | `agent.shutdown` |
+| `get_refresh_token` / `set_refresh_token` / `clear_refresh_token` | secrets.* (Windows Credential Manager) |
+| `get_host_identity` / `get_host_telemetry` | host.identity / host.telemetry |
 
 Notifications from the agent (JSON-RPC without `id`) are forwarded as Tauri event `agent:event`.
 
@@ -278,7 +284,18 @@ Output is under `apps/print-shop/src-tauri/target/release/bundle/nsis/`.
 
 The shop UI uses `@ctrlp/ui` and `docs/design-system/` (`DESIGN copy.md`, tokens). No new color/radius tokens. Flat, 12px radius, green primary.
 
-Opening `pnpm shop:dev` in a browser shows the shell but cannot talk to the agent. Use `pnpm desktop:dev`.
+Opening `pnpm shop:dev` in a browser shows login but cannot store a refresh token or register this PC. Use `pnpm desktop:dev` plus `pnpm server:dev`.
+
+### Shop authentication (Firebase via `apps/server`)
+
+The desktop app has **no Firebase SDK**. Email or Indian phone + password go to `apps/server`, which talks to Firebase Auth and writes Firestore `shops/{shopId}`, `shops/{shopId}/users/{userId}`, and `shops/{shopId}/agents/{agentId}`. Phone accounts use the internal `{digits}@phone.meetctrlp.app` mapping and do **not** use OTP.
+
+- ID token stays in UI memory.
+- Refresh token is stored by the C# agent in Windows Credential Manager (`Ctrlp.PrintShop/refreshToken`).
+- After sign-in the UI registers this PC and heartbeats every 30 seconds.
+- Sign out revokes Firebase refresh tokens, deletes the credential, and marks the agent `OFFLINE`.
+
+Server env: `FIREBASE_WEB_API_KEY`, `FIREBASE_SERVICE_ACCOUNT_BASE64`. Shop UI env: `VITE_SERVER_BASE_URL` (default `http://localhost:3000`).
 
 ---
 

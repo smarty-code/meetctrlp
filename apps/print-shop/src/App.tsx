@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Badge } from "@ctrlp/ui/badge"
 import { Button } from "@ctrlp/ui/button"
 import {
@@ -12,16 +12,44 @@ import { cn } from "@ctrlp/ui/utils"
 import { ClipboardList, LayoutDashboard, Printer, Settings } from "lucide-react"
 
 import {
+  clearStoredRefreshToken,
   enqueueJob,
   getAgentStatus,
+  getHostIdentity,
+  getHostTelemetry,
+  getStoredRefreshToken,
   isTauriRuntime,
   listJobs,
   listPrinters,
   pingAgent,
   refreshPrinters,
+  storeRefreshToken,
+  waitForAgent,
 } from "./lib/agent"
+import {
+  fetchShopProfile,
+  fetchShopStaff,
+  loginOwner,
+  logoutSession,
+  markDeviceOffline,
+  refreshSession,
+  registerDevice,
+  registerOwner,
+  sendDeviceHeartbeat,
+} from "./lib/cloud"
 import { shopError, shopLog, shopWarn } from "./lib/debug"
-import type { AgentStatus, PrintJob, Printer as PrinterModel } from "./lib/protocol"
+import {
+  appVersion,
+  type AgentStatus,
+  type AuthSession,
+  type CloudLinkState,
+  type PrintJob,
+  type Printer as PrinterModel,
+  type ShopProfile,
+  type ShopStaffMember,
+  type ShopUser,
+} from "./lib/protocol"
+import { LoginScreen } from "./screens/LoginScreen"
 
 type Screen = "dashboard" | "printers" | "jobs" | "settings"
 
@@ -33,12 +61,149 @@ const nav = [
 ] as const
 
 export default function App() {
+  const [bootstrapping, setBootstrapping] = useState(true)
+  const [authBusy, setAuthBusy] = useState(false)
+  const [user, setUser] = useState<ShopUser | null>(null)
+  const [idToken, setIdToken] = useState<string | null>(null)
+  const [shop, setShop] = useState<ShopProfile | null>(null)
+  const [staff, setStaff] = useState<ShopStaffMember[]>([])
+  const [deviceId, setDeviceId] = useState<string | null>(null)
+  const [hostName, setHostName] = useState<string | null>(null)
+  const [cloud, setCloud] = useState<CloudLinkState>("offline")
+  const [cloudMessage, setCloudMessage] = useState<string | null>(null)
   const [screen, setScreen] = useState<Screen>("dashboard")
   const [status, setStatus] = useState<AgentStatus>({ state: "starting" })
   const [printers, setPrinters] = useState<PrinterModel[]>([])
   const [jobs, setJobs] = useState<PrintJob[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const sessionRef = useRef({ idToken: null as string | null, deviceId: null as string | null })
+
+  sessionRef.current = { idToken, deviceId }
+
+  async function persistSession(session: AuthSession) {
+    setUser(session.user)
+    setIdToken(session.tokens.idToken)
+    if (isTauriRuntime()) {
+      await storeRefreshToken(session.tokens.refreshToken)
+    }
+  }
+
+  async function loadShopContext(token: string) {
+    const [profile, staffResult] = await Promise.all([
+      fetchShopProfile(token),
+      fetchShopStaff(token),
+    ])
+    setShop(profile.shop)
+    setStaff(staffResult.staff)
+  }
+
+  async function connectDevice(token: string, nextPrinters: PrinterModel[]) {
+    if (!isTauriRuntime()) {
+      setCloud("offline")
+      setCloudMessage("Open with pnpm desktop:dev to register this PC.")
+      return
+    }
+
+    try {
+      const identity = await getHostIdentity()
+      setHostName(identity.hostname)
+      const registered = await registerDevice(token, identity)
+      setDeviceId(registered.deviceId)
+      setCloud("connected")
+      setCloudMessage(null)
+      shopLog("device", "registered", registered.deviceId, identity.hostname)
+      await beatOnce(token, registered.deviceId, nextPrinters)
+    } catch (err) {
+      shopWarn("device", "register failed", err)
+      setCloud("offline")
+      setCloudMessage(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function beatOnce(token: string, currentDeviceId: string, nextPrinters: PrinterModel[]) {
+    const telemetry = await getHostTelemetry().catch(() => ({ memoryWorkingSetBytes: 0 }))
+    await sendDeviceHeartbeat(token, {
+      deviceId: currentDeviceId,
+      memoryWorkingSetBytes: telemetry.memoryWorkingSetBytes,
+      spoolerJobCount: nextPrinters.reduce((sum, printer) => sum + printer.jobCount, 0),
+      onlinePrinterCount: nextPrinters.filter((printer) => printer.status !== "offline").length,
+    })
+    setCloud("connected")
+    setCloudMessage(null)
+  }
+
+  async function enterSession(session: AuthSession) {
+    await persistSession(session)
+    await loadShopContext(session.tokens.idToken)
+    const nextPrinters = isTauriRuntime() ? await listPrinters().catch(() => []) : []
+    const nextJobs = isTauriRuntime() ? await listJobs().catch(() => []) : []
+    setPrinters(nextPrinters)
+    setJobs(nextJobs)
+    await connectDevice(session.tokens.idToken, nextPrinters)
+  }
+
+  async function restoreSession() {
+    shopLog("auth", "restore begin")
+    if (isTauriRuntime()) {
+      const agent = await waitForAgent().catch((err) => {
+        shopWarn("auth", "agent wait failed", err)
+        return getAgentStatus().catch(() => ({ state: "starting" }) as AgentStatus)
+      })
+      setStatus(agent)
+      const refreshToken = await getStoredRefreshToken().catch(() => null)
+      if (!refreshToken) {
+        shopLog("auth", "no stored refresh token")
+        return
+      }
+      const session = await refreshSession(refreshToken)
+      await enterSession(session)
+      return
+    }
+
+    shopLog("auth", "browser preview; skipping credential restore")
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        await restoreSession()
+      } catch (err) {
+        shopWarn("auth", "restore failed", err)
+        if (isTauriRuntime()) {
+          await clearStoredRefreshToken().catch(() => undefined)
+        }
+      } finally {
+        if (!cancelled) {
+          setBootstrapping(false)
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!idToken || !deviceId) {
+      return
+    }
+
+    const timer = window.setInterval(() => {
+      void (async () => {
+        try {
+          await beatOnce(idToken, deviceId, printers)
+        } catch (err) {
+          shopWarn("device", "heartbeat failed", err)
+          setCloud("reconnecting")
+          setCloudMessage(err instanceof Error ? err.message : String(err))
+        }
+      })()
+    }, 30_000)
+
+    return () => window.clearInterval(timer)
+  }, [idToken, deviceId, printers])
 
   async function refreshAll(userInitiated = false) {
     shopLog("ui", "refreshAll begin", { userInitiated, busy })
@@ -90,13 +255,87 @@ export default function App() {
   }
 
   useEffect(() => {
-    shopLog("ui", "mount", { tauri: isTauriRuntime() })
+    if (!user) {
+      return
+    }
+    shopLog("ui", "shell mount", { tauri: isTauriRuntime() })
     void refreshAll(true)
     const timer = window.setInterval(() => {
       void pollStatus()
     }, 5000)
     return () => window.clearInterval(timer)
-  }, [])
+  }, [user])
+
+  async function handleAuthSession(session: AuthSession) {
+    setAuthBusy(true)
+    setError(null)
+    try {
+      await enterSession(session)
+    } catch (err) {
+      shopError("auth", "session enter failed", err)
+      setError(err instanceof Error ? err.message : String(err))
+      throw err
+    } finally {
+      setAuthBusy(false)
+    }
+  }
+
+  async function handleLogin(identifier: string, password: string) {
+    setAuthBusy(true)
+    setError(null)
+    try {
+      await handleAuthSession(await loginOwner(identifier, password))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      setAuthBusy(false)
+    }
+  }
+
+  async function handleRegister(input: {
+    name: string
+    shopName: string
+    identifier: string
+    password: string
+  }) {
+    setAuthBusy(true)
+    setError(null)
+    try {
+      await handleAuthSession(await registerOwner(input))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      setAuthBusy(false)
+    }
+  }
+
+  async function handleSignOut() {
+    const current = sessionRef.current
+    shopLog("auth", "sign out")
+    try {
+      if (current.idToken && current.deviceId) {
+        await markDeviceOffline(current.idToken, current.deviceId).catch((err) => {
+          shopWarn("device", "offline failed", err)
+        })
+      }
+      if (current.idToken) {
+        await logoutSession(current.idToken).catch((err) => {
+          shopWarn("auth", "logout failed", err)
+        })
+      }
+    } finally {
+      if (isTauriRuntime()) {
+        await clearStoredRefreshToken().catch(() => undefined)
+      }
+      setUser(null)
+      setIdToken(null)
+      setShop(null)
+      setStaff([])
+      setDeviceId(null)
+      setCloud("offline")
+      setPrinters([])
+      setJobs([])
+      setError(null)
+    }
+  }
 
   async function handlePing() {
     shopLog("ui", "ping")
@@ -140,12 +379,36 @@ export default function App() {
     }
   }
 
+  if (bootstrapping) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-paper text-body text-ash">
+        Restoring shop session…
+      </div>
+    )
+  }
+
+  if (!user) {
+    return (
+      <LoginScreen
+        busy={authBusy}
+        error={error}
+        onLogin={handleLogin}
+        onRegister={handleRegister}
+      />
+    )
+  }
+
   return (
     <div className="flex min-h-screen bg-paper">
       <aside className="flex w-60 flex-col border-r border-graphite bg-paper p-4">
         <div className="px-2 py-3">
           <p className="text-caption tracking-[0.69px] text-ash">MeetCtrlP</p>
-          <h1 className="text-heading-sm font-bold text-midnight">Print Shop</h1>
+          <h1 className="text-heading-sm font-bold text-midnight">
+            {shop?.name ?? "Print Shop"}
+          </h1>
+          <p className="mt-1 text-caption text-ash">
+            {user.name} · {user.role}
+          </p>
         </div>
         <nav className="mt-4 flex flex-1 flex-col gap-2">
           {nav.map((item) => {
@@ -169,7 +432,16 @@ export default function App() {
             )
           })}
         </nav>
-        <StatusPill status={status} />
+        <div className="space-y-3">
+          <CloudPill state={cloud} message={cloudMessage} />
+          <StatusPill status={status} />
+          <p className="px-1 text-caption text-ash">
+            {hostName ?? "This PC"} (v{appVersion})
+          </p>
+          <Button variant="outline" className="w-full rounded-[12px]" onClick={() => void handleSignOut()}>
+            Sign out
+          </Button>
+        </div>
       </aside>
 
       <main className="flex-1 p-8">
@@ -179,7 +451,8 @@ export default function App() {
               {nav.find((item) => item.id === screen)?.label}
             </h2>
             <p className="text-body text-ash">
-              UI talks to the C# Windows agent over JSON-RPC named pipes.
+              Signed in as {user.name}. Shop identity lives in Firebase Auth and
+              Firestore.
             </p>
           </div>
           <Button onClick={() => void refreshAll(true)} disabled={busy}>
@@ -196,6 +469,8 @@ export default function App() {
         {screen === "dashboard" ? (
           <Dashboard
             status={status}
+            shop={shop}
+            staff={staff}
             printers={printers}
             jobs={jobs}
             onPing={() => void handlePing()}
@@ -212,8 +487,40 @@ export default function App() {
         {screen === "jobs" ? (
           <Jobs jobs={jobs} onEnqueue={() => void handleTestJob()} />
         ) : null}
-        {screen === "settings" ? <SettingsPanel status={status} /> : null}
+        {screen === "settings" ? (
+          <SettingsPanel
+            status={status}
+            user={user}
+            shop={shop}
+            hostName={hostName}
+            deviceId={deviceId}
+          />
+        ) : null}
       </main>
+    </div>
+  )
+}
+
+function CloudPill({ state, message }: { state: CloudLinkState; message: string | null }) {
+  const label =
+    state === "connected" ? "Connected" : state === "reconnecting" ? "Reconnecting" : "Offline"
+  return (
+    <div className="rounded-[12px] border border-graphite px-3 py-3">
+      <p className="text-caption text-ash">Shop cloud</p>
+      <div className="mt-1 flex items-center gap-2">
+        <span
+          className={cn(
+            "size-2 rounded-full",
+            state === "connected"
+              ? "bg-primary"
+              : state === "reconnecting"
+                ? "bg-macaw-blue"
+                : "bg-destructive"
+          )}
+        />
+        <span className="text-body font-bold">{label}</span>
+      </div>
+      {message ? <p className="mt-1 text-caption text-ash">{message}</p> : null}
     </div>
   )
 }
@@ -238,12 +545,16 @@ function StatusPill({ status }: { status: AgentStatus }) {
 
 function Dashboard({
   status,
+  shop,
+  staff,
   printers,
   jobs,
   onPing,
   tauri,
 }: {
   status: AgentStatus
+  shop: ShopProfile | null
+  staff: ShopStaffMember[]
   printers: PrinterModel[]
   jobs: PrintJob[]
   onPing: () => void
@@ -251,6 +562,34 @@ function Dashboard({
 }) {
   return (
     <div className="grid gap-4 md:grid-cols-3">
+      <Card>
+        <CardHeader>
+          <CardTitle>Shop</CardTitle>
+          <CardDescription>{shop?.status ?? "Unknown status"}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <p className="text-heading-sm font-bold text-midnight">{shop?.name ?? "—"}</p>
+          <p className="text-caption text-ash">{shop?.email ?? shop?.phone ?? "No contact yet"}</p>
+          <p className="text-caption text-ash">{shop?.address ?? "Address is managed on the web dashboard."}</p>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Staff</CardTitle>
+          <CardDescription>Active operators on this shop</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {staff.length === 0 ? (
+            <p className="text-caption text-ash">No staff loaded.</p>
+          ) : (
+            staff.map((member) => (
+              <p key={member.id} className="text-body">
+                {member.name} · {member.role}
+              </p>
+            ))
+          )}
+        </CardContent>
+      </Card>
       <Card>
         <CardHeader>
           <CardTitle>Agent</CardTitle>
@@ -264,27 +603,12 @@ function Dashboard({
             Protocol {status.protocolVersion ?? "—"} · Agent{" "}
             {status.agentVersion ?? "—"}
           </p>
+          <p className="text-caption text-ash">
+            {printers.length} printers · {jobs.length} local jobs
+          </p>
           <Button variant="outline" onClick={onPing}>
             Ping agent
           </Button>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>Printers</CardTitle>
-          <CardDescription>Discovered through winspool.drv</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <p className="text-heading font-bold">{printers.length}</p>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>Queue</CardTitle>
-          <CardDescription>Local jobs held by the agent</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <p className="text-heading font-bold">{jobs.length}</p>
         </CardContent>
       </Card>
     </div>
@@ -374,22 +698,50 @@ function Jobs({
   )
 }
 
-function SettingsPanel({ status }: { status: AgentStatus }) {
+function SettingsPanel({
+  status,
+  user,
+  shop,
+  hostName,
+  deviceId,
+}: {
+  status: AgentStatus
+  user: ShopUser
+  shop: ShopProfile | null
+  hostName: string | null
+  deviceId: string | null
+}) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Local IPC</CardTitle>
-        <CardDescription>
-          JSON-RPC 2.0, 4-byte little-endian frames, Windows named pipe.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-2 text-body">
-        <p>Pipe: {status.pipeName ?? "not connected"}</p>
-        <p>Uptime: {status.uptimeMs ? `${Math.round(status.uptimeMs / 1000)}s` : "—"}</p>
-        <p>Queued jobs: {status.queuedJobs ?? 0}</p>
-        <p>Agent log: %LOCALAPPDATA%\Ctrlp\PrintAgent\agent.log</p>
-        <p>UI logs: DevTools console (Ctrl+Shift+I). Rust/agent lines are in the desktop:dev terminal.</p>
-      </CardContent>
-    </Card>
+    <div className="grid gap-4 md:grid-cols-2">
+      <Card>
+        <CardHeader>
+          <CardTitle>Shop identity</CardTitle>
+          <CardDescription>Read-only on desktop. Edit the profile on the web dashboard.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2 text-body">
+          <p>Shop: {shop?.name ?? "—"}</p>
+          <p>Status: {shop?.status ?? "—"}</p>
+          <p>Operator: {user.name} ({user.role})</p>
+          <p>Email: {user.email ?? "—"}</p>
+          <p>Phone: {user.phone ?? "—"}</p>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>This PC</CardTitle>
+          <CardDescription>
+            JSON-RPC 2.0, 4-byte little-endian frames, Windows named pipe.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2 text-body">
+          <p>Hostname: {hostName ?? "—"}</p>
+          <p>Device id: {deviceId ?? "not registered"}</p>
+          <p>Pipe: {status.pipeName ?? "not connected"}</p>
+          <p>App: CtrlP {appVersion}</p>
+          <p>Uptime: {status.uptimeMs ? `${Math.round(status.uptimeMs / 1000)}s` : "—"}</p>
+          <p>Agent log: %LOCALAPPDATA%\Ctrlp\PrintAgent\agent.log</p>
+        </CardContent>
+      </Card>
+    </div>
   )
 }

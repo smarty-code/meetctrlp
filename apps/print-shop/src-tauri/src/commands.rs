@@ -86,6 +86,52 @@ pub async fn shutdown_agent(bridge: State<'_, AgentBridge>) -> Result<Value, Str
     traced(&bridge, "shutdown_agent", "agent.shutdown", json!({})).await
 }
 
+#[tauri::command]
+pub async fn get_refresh_token(bridge: State<'_, AgentBridge>) -> Result<Value, String> {
+    traced(
+        &bridge,
+        "get_refresh_token",
+        "secrets.getRefreshToken",
+        json!({}),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn set_refresh_token(
+    bridge: State<'_, AgentBridge>,
+    refresh_token: String,
+) -> Result<Value, String> {
+    traced(
+        &bridge,
+        "set_refresh_token",
+        "secrets.setRefreshToken",
+        json!({ "refreshToken": refresh_token }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn clear_refresh_token(bridge: State<'_, AgentBridge>) -> Result<Value, String> {
+    traced(
+        &bridge,
+        "clear_refresh_token",
+        "secrets.clearRefreshToken",
+        json!({}),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn get_host_identity(bridge: State<'_, AgentBridge>) -> Result<Value, String> {
+    traced(&bridge, "get_host_identity", "host.identity", json!({})).await
+}
+
+#[tauri::command]
+pub async fn get_host_telemetry(bridge: State<'_, AgentBridge>) -> Result<Value, String> {
+    traced(&bridge, "get_host_telemetry", "host.telemetry", json!({})).await
+}
+
 async fn traced(
     bridge: &AgentBridge,
     command: &str,

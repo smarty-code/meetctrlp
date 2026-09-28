@@ -1,8 +1,11 @@
-import { invoke } from "@tauri-apps/api/core"
-import { listen, type UnlistenFn } from "@tauri-apps/api/event"
-
 import { shopError, shopLog, shopWarn } from "./debug"
-import type { AgentStatus, PrintJob, Printer } from "./protocol"
+import type { AgentStatus, HostIdentity, PrintJob, Printer } from "./protocol"
+
+const SECRET_COMMANDS = new Set([
+  "get_refresh_token",
+  "set_refresh_token",
+  "clear_refresh_token",
+])
 
 export function isTauriRuntime() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
@@ -14,8 +17,9 @@ async function call<T>(command: string, args?: Record<string, unknown>) {
     throw new Error("Open this UI with pnpm desktop:dev so it can talk to the Windows agent.")
   }
 
+  const { invoke } = await import("@tauri-apps/api/core")
   const started = performance.now()
-  shopLog("ipc", "begin", command, args ?? {})
+  shopLog("ipc", "begin", command, SECRET_COMMANDS.has(command) ? "{redacted}" : (args ?? {}))
   try {
     const result = await invoke<T>(command, args)
     shopLog(
@@ -23,7 +27,7 @@ async function call<T>(command: string, args?: Record<string, unknown>) {
       "ok",
       command,
       `${Math.round(performance.now() - started)}ms`,
-      result
+      SECRET_COMMANDS.has(command) ? "{redacted}" : result
     )
     return result
   } catch (error) {
@@ -84,10 +88,49 @@ export function cancelJob(id: string) {
   return call<PrintJob>("cancel_job", { id })
 }
 
-export function listenAgentEvents(onEvent: (payload: unknown) => void) {
-  if (!isTauriRuntime()) {
-    return Promise.resolve((): UnlistenFn => () => undefined)
+export async function getStoredRefreshToken() {
+  const result = await call<{ refreshToken: string | null }>("get_refresh_token")
+  return result.refreshToken
+}
+
+export function storeRefreshToken(refreshToken: string) {
+  return call<{ ok: boolean }>("set_refresh_token", { refreshToken })
+}
+
+export function clearStoredRefreshToken() {
+  return call<{ ok: boolean }>("clear_refresh_token")
+}
+
+export function getHostIdentity() {
+  return call<HostIdentity>("get_host_identity")
+}
+
+export function getHostTelemetry() {
+  return call<{ memoryWorkingSetBytes: number }>("get_host_telemetry")
+}
+
+export async function waitForAgent(timeoutMs = 20_000) {
+  const started = Date.now()
+  while (Date.now() - started < timeoutMs) {
+    try {
+      const status = await getAgentStatus()
+      if (status.state === "ready" || status.state === "connected") {
+        return status
+      }
+    } catch {
+      // Agent still booting.
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 250))
   }
 
+  throw new Error("Print agent is still starting.")
+}
+
+export async function listenAgentEvents(onEvent: (payload: unknown) => void) {
+  if (!isTauriRuntime()) {
+    return () => undefined
+  }
+
+  const { listen } = await import("@tauri-apps/api/event")
   return listen("agent:event", (event) => onEvent(event.payload))
 }

@@ -27,7 +27,7 @@ Windows-only. Needs the .NET 8 SDK.
 Contracts   models + RPC names. No pipes, no Win32, no Host.
 Ipc         framing, dispatcher, NamedPipeServerStream.
 Core        AgentRuntime + handlers + InMemoryJobStore.
-Windows     EnumPrinters / GetDefaultPrinter only.
+Windows     EnumPrinters / GetDefaultPrinter / Credential Manager / machine fingerprint.
 Host        Program, CLI, log file, parent watcher.
 Tests       framing + hello/auth/printers/jobs (no Host).
 ```
@@ -83,6 +83,6 @@ Do **not**:
 
 - `jobs.enqueue` records a queued job; it does not spool.
 - Queue is not durable.
-- No cloud/auth in this process yet.
+- Cloud auth stays in `apps/server`; this process only stores the refresh token and machine identity.
 
 Logs: `%LOCALAPPDATA%\Ctrlp\PrintAgent\agent.log` (mirrored to stderr). Each RPC logs method, id, and elapsedMs. Winspool logs EnumPrinters probe size, returned count, and timeouts.

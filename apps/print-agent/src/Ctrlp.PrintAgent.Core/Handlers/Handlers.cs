@@ -248,3 +248,89 @@ internal sealed class JobsCancelHandler : RpcHandler<JobIdRequest, JobDto>
         return _runtime.Jobs.Cancel(request.Id) ?? throw RpcException.JobNotFound(request.Id);
     }
 }
+
+internal sealed class SecretsGetHandler : RpcHandler<object, RefreshTokenResponse>
+{
+    private readonly AgentRuntime _runtime;
+
+    public SecretsGetHandler(AgentRuntime runtime) => _runtime = runtime;
+
+    public override string Method => RpcMethods.SecretsGetRefreshToken;
+
+    protected override RefreshTokenResponse Handle(object? request, RpcContext context)
+    {
+        var token = _runtime.Secrets.GetRefreshToken();
+        AgentTrace.Write($"secrets.getRefreshToken present={token is not null}");
+        return new(token);
+    }
+}
+
+internal sealed class SecretsSetHandler : RpcHandler<RefreshTokenRequest, OkResponse>
+{
+    private readonly AgentRuntime _runtime;
+
+    public SecretsSetHandler(AgentRuntime runtime) => _runtime = runtime;
+
+    public override string Method => RpcMethods.SecretsSetRefreshToken;
+
+    protected override OkResponse Handle(RefreshTokenRequest? request, RpcContext context)
+    {
+        if (request is null || string.IsNullOrWhiteSpace(request.RefreshToken))
+        {
+            throw RpcException.InvalidParams("refreshToken is required");
+        }
+
+        _runtime.Secrets.SetRefreshToken(request.RefreshToken);
+        AgentTrace.Write("secrets.setRefreshToken stored");
+        return new(true);
+    }
+}
+
+internal sealed class SecretsClearHandler : RpcHandler<object, OkResponse>
+{
+    private readonly AgentRuntime _runtime;
+
+    public SecretsClearHandler(AgentRuntime runtime) => _runtime = runtime;
+
+    public override string Method => RpcMethods.SecretsClearRefreshToken;
+
+    protected override OkResponse Handle(object? request, RpcContext context)
+    {
+        _runtime.Secrets.ClearRefreshToken();
+        AgentTrace.Write("secrets.clearRefreshToken");
+        return new(true);
+    }
+}
+
+internal sealed class HostIdentityHandler : RpcHandler<object, HostIdentityDto>
+{
+    private readonly AgentRuntime _runtime;
+
+    public HostIdentityHandler(AgentRuntime runtime) => _runtime = runtime;
+
+    public override string Method => RpcMethods.HostIdentity;
+
+    protected override HostIdentityDto Handle(object? request, RpcContext context)
+    {
+        var identity = _runtime.Host.Read();
+        AgentTrace.Write(
+            $"host.identity hostname={identity.Hostname} os={identity.OsVersion} device={identity.DeviceIdentifier[..Math.Min(12, identity.DeviceIdentifier.Length)]}…");
+        return identity;
+    }
+}
+
+internal sealed class HostTelemetryHandler : RpcHandler<object, HostTelemetryDto>
+{
+    private readonly AgentRuntime _runtime;
+
+    public HostTelemetryHandler(AgentRuntime runtime) => _runtime = runtime;
+
+    public override string Method => RpcMethods.HostTelemetry;
+
+    protected override HostTelemetryDto Handle(object? request, RpcContext context)
+    {
+        var telemetry = _runtime.Host.Telemetry();
+        AgentTrace.Write($"host.telemetry memoryWorkingSetBytes={telemetry.MemoryWorkingSetBytes}");
+        return telemetry;
+    }
+}

@@ -23,7 +23,13 @@ internal static class Program
         IPrinterCatalog printers = OperatingSystem.IsWindows()
             ? new WinspoolPrinterCatalog(log.Write)
             : new StaticPrinterCatalog();
-        var runtime = new AgentRuntime(options, printers, new InMemoryJobStore());
+        ISecretStore secrets = OperatingSystem.IsWindows()
+            ? new WindowsCredentialStore()
+            : new MemorySecretStore();
+        IHostIdentity host = OperatingSystem.IsWindows()
+            ? new WindowsHostIdentity(options.AgentVersion, options.AgentVersion)
+            : new FallbackHostIdentity(options);
+        var runtime = new AgentRuntime(options, printers, new InMemoryJobStore(), secrets, host);
         var dispatcher = runtime.CreateDispatcher();
         var server = new NamedPipeIpcServer(
             options.PipeName,

@@ -64,7 +64,10 @@ impl AgentBridge {
         let started = Instant::now();
         log::write(
             "rpc",
-            format!("begin method={method} id={id} params={params}"),
+            format!(
+                "begin method={method} id={id} params={}",
+                redact_params(method, &params)
+            ),
         );
         let (tx, rx) = oneshot::channel();
         {
@@ -138,8 +141,9 @@ impl AgentBridge {
             Ok(value) => log::write(
                 "rpc",
                 format!(
-                    "ok method={method} id={id} elapsedMs={} result={value}",
-                    started.elapsed().as_millis()
+                    "ok method={method} id={id} elapsedMs={} result={}",
+                    started.elapsed().as_millis(),
+                    redact_params(method, value)
                 ),
             ),
             Err(error) => log::write(
@@ -301,4 +305,12 @@ pub async fn connect_pipe(_name: &str) -> std::io::Result<tokio::net::TcpStream>
 
 pub fn split_pipe(stream: PipeStream) -> (ReadHalf<PipeStream>, WriteHalf<PipeStream>) {
     split(stream)
+}
+
+fn redact_params(method: &str, params: &Value) -> String {
+    if method.starts_with("secrets.") {
+        "{redacted}".to_string()
+    } else {
+        params.to_string()
+    }
 }

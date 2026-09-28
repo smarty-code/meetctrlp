@@ -14,3 +14,16 @@ public interface IJobStore
     JobDto? Get(string id);
     JobDto? Cancel(string id);
 }
+
+public interface ISecretStore
+{
+    string? GetRefreshToken();
+    void SetRefreshToken(string refreshToken);
+    void ClearRefreshToken();
+}
+
+public interface IHostIdentity
+{
+    HostIdentityDto Read();
+    HostTelemetryDto Telemetry();
+}

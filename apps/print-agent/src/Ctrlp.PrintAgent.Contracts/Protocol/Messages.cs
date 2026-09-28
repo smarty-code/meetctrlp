@@ -90,3 +90,24 @@ public sealed record JobIdRequest(
 
 public sealed record ShutdownResponse(
     [property: JsonPropertyName("ok")] bool Ok);
+
+public sealed record RefreshTokenRequest(
+    [property: JsonPropertyName("refreshToken")] string RefreshToken);
+
+public sealed record RefreshTokenResponse(
+    [property: JsonPropertyName("refreshToken")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+    string? RefreshToken);
+
+public sealed record OkResponse(
+    [property: JsonPropertyName("ok")] bool Ok);
+
+public sealed record HostIdentityDto(
+    [property: JsonPropertyName("deviceIdentifier")] string DeviceIdentifier,
+    [property: JsonPropertyName("hostname")] string Hostname,
+    [property: JsonPropertyName("osVersion")] string OsVersion,
+    [property: JsonPropertyName("appVersion")] string AppVersion,
+    [property: JsonPropertyName("agentVersion")] string AgentVersion);
+
+public sealed record HostTelemetryDto(
+    [property: JsonPropertyName("memoryWorkingSetBytes")] long MemoryWorkingSetBytes);

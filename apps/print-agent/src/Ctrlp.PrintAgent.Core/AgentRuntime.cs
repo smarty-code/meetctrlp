@@ -18,17 +18,26 @@ public sealed class AgentRuntime
     private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
     private int _printerCount;
 
-    public AgentRuntime(AgentOptions options, IPrinterCatalog printers, IJobStore jobs)
+    public AgentRuntime(
+        AgentOptions options,
+        IPrinterCatalog printers,
+        IJobStore jobs,
+        ISecretStore? secrets = null,
+        IHostIdentity? host = null)
     {
         Options = options;
         Printers = printers;
         Jobs = jobs;
+        Secrets = secrets ?? new MemorySecretStore();
+        Host = host ?? new FallbackHostIdentity(options);
         State = AgentRunState.Starting;
     }
 
     public AgentOptions Options { get; }
     public IPrinterCatalog Printers { get; }
     public IJobStore Jobs { get; }
+    public ISecretStore Secrets { get; }
+    public IHostIdentity Host { get; }
     public AgentRunState State { get; private set; }
     public CancellationToken ShutdownToken => _shutdown.Token;
 
@@ -73,6 +82,11 @@ public sealed class AgentRuntime
         dispatcher.Register(new Handlers.JobsListHandler(this));
         dispatcher.Register(new Handlers.JobsGetHandler(this));
         dispatcher.Register(new Handlers.JobsCancelHandler(this));
+        dispatcher.Register(new Handlers.SecretsGetHandler(this));
+        dispatcher.Register(new Handlers.SecretsSetHandler(this));
+        dispatcher.Register(new Handlers.SecretsClearHandler(this));
+        dispatcher.Register(new Handlers.HostIdentityHandler(this));
+        dispatcher.Register(new Handlers.HostTelemetryHandler(this));
         return dispatcher;
     }
 }

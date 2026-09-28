@@ -1,4 +1,5 @@
 export const protocolVersion = "1.0.0"
+export const appVersion = "0.1.0"
 
 export const rpcMethods = {
   hello: "agent.hello",
@@ -12,6 +13,11 @@ export const rpcMethods = {
   jobsList: "jobs.list",
   jobsGet: "jobs.get",
   jobsCancel: "jobs.cancel",
+  secretsGetRefreshToken: "secrets.getRefreshToken",
+  secretsSetRefreshToken: "secrets.setRefreshToken",
+  secretsClearRefreshToken: "secrets.clearRefreshToken",
+  hostIdentity: "host.identity",
+  hostTelemetry: "host.telemetry",
 } as const
 
 export type Printer = {
@@ -46,6 +52,58 @@ export type AgentStatus = {
   error?: string
 }
 
+export type ShopUserRole = "OWNER" | "MANAGER" | "STAFF"
+export type ShopUserStatus = "ACTIVE" | "INACTIVE" | "SUSPENDED"
+
+export type ShopUser = {
+  id: string
+  shopId: string
+  name: string
+  email: string | null
+  phone: string | null
+  role: ShopUserRole
+  status: ShopUserStatus
+  lastLoginAt: string | null
+}
+
+export type AuthTokens = {
+  idToken: string
+  refreshToken: string
+  expiresIn: number
+}
+
+export type AuthSession = {
+  user: ShopUser
+  tokens: AuthTokens
+}
+
+export type ShopProfile = {
+  id: string
+  name: string
+  phone: string | null
+  email: string | null
+  status: string
+  address: string | null
+}
+
+export type ShopStaffMember = {
+  id: string
+  name: string
+  role: ShopUserRole
+  status: ShopUserStatus
+  lastLoginAt: string | null
+}
+
+export type HostIdentity = {
+  deviceIdentifier: string
+  hostname: string
+  osVersion: string
+  appVersion: string
+  agentVersion: string
+}
+
+export type CloudLinkState = "connected" | "reconnecting" | "offline"
+
 export type JsonRpcRequest = {
   jsonrpc: "2.0"
   id: string
@@ -64,4 +122,8 @@ export function createRpcRequest(
     method,
     params,
   }
+}
+
+export function looksLikeEmail(value: string) {
+  return value.includes("@")
 }

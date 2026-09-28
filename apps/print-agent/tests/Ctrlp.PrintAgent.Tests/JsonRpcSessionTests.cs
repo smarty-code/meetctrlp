@@ -24,6 +24,31 @@ public class JsonRpcSessionTests
     }
 
     [Fact]
+    public async Task StoresAndClearsRefreshToken()
+    {
+        var secrets = new MemorySecretStore();
+        var runtime = new AgentRuntime(
+            new AgentOptions { PipeName = "test", Token = "secret" },
+            new StaticPrinterCatalog(),
+            new InMemoryJobStore(),
+            secrets);
+        runtime.MarkReady();
+        var session = new JsonRpcSession(
+            runtime.CreateDispatcher(),
+            new RpcContext { ExpectedToken = "secret", AllowAnonymous = false });
+
+        await Send(session, RpcMethods.Hello, """{"token":"secret"}""", id: 1);
+        var set = await Send(session, RpcMethods.SecretsSetRefreshToken, """{"refreshToken":"refresh-1"}""", id: 2);
+        Assert.True(set.TryGetProperty("result", out var setResult), set.GetRawText());
+        Assert.True(setResult.GetProperty("ok").GetBoolean());
+        var stored = await Send(session, RpcMethods.SecretsGetRefreshToken, "{}", id: 3);
+        Assert.Equal("refresh-1", stored.GetProperty("result").GetProperty("refreshToken").GetString());
+        await Send(session, RpcMethods.SecretsClearRefreshToken, "{}", id: 4);
+        var cleared = await Send(session, RpcMethods.SecretsGetRefreshToken, "{}", id: 5);
+        Assert.Equal(JsonValueKind.Null, cleared.GetProperty("result").GetProperty("refreshToken").ValueKind);
+    }
+
+    [Fact]
     public async Task RejectsWrongToken()
     {
         var runtime = CreateRuntime();
