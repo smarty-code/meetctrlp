@@ -51,6 +51,43 @@ public sealed record AgentStatusDto(
     [property: JsonPropertyName("printerCount")] int PrinterCount,
     [property: JsonPropertyName("queuedJobs")] int QueuedJobs);
 
+public sealed record PrinterOptionsDto(
+    [property: JsonPropertyName("colorModes")] IReadOnlyList<string> ColorModes,
+    [property: JsonPropertyName("paperSizes")] IReadOnlyList<string> PaperSizes,
+    [property: JsonPropertyName("paperSizeLabels")] IReadOnlyList<string> PaperSizeLabels,
+    [property: JsonPropertyName("orientations")] IReadOnlyList<string> Orientations,
+    [property: JsonPropertyName("duplexModes")] IReadOnlyList<string> DuplexModes,
+    [property: JsonPropertyName("inputTrays")] IReadOnlyList<string> InputTrays,
+    [property: JsonPropertyName("printQualities")] IReadOnlyList<string> PrintQualities,
+    [property: JsonPropertyName("copiesMin")] int CopiesMin,
+    [property: JsonPropertyName("copiesMax")] int CopiesMax,
+    [property: JsonPropertyName("currentColorMode")] string? CurrentColorMode,
+    [property: JsonPropertyName("currentPaperSize")] string? CurrentPaperSize,
+    [property: JsonPropertyName("currentOrientation")] string? CurrentOrientation,
+    [property: JsonPropertyName("currentInputTray")] string? CurrentInputTray,
+    [property: JsonPropertyName("currentPrintQuality")] string? CurrentPrintQuality,
+    [property: JsonPropertyName("currentCopies")] int CurrentCopies,
+    [property: JsonPropertyName("raw")] IReadOnlyList<string> Raw)
+{
+    public static PrinterOptionsDto Empty { get; } = new(
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        1,
+        1,
+        null,
+        null,
+        null,
+        null,
+        null,
+        1,
+        []);
+}
+
 public sealed record PrinterDto(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("name")] string Name,
@@ -59,7 +96,15 @@ public sealed record PrinterDto(
     [property: JsonPropertyName("jobCount")] int JobCount,
     [property: JsonPropertyName("portName")] string? PortName,
     [property: JsonPropertyName("driverName")] string? DriverName,
-    [property: JsonPropertyName("isShared")] bool IsShared);
+    [property: JsonPropertyName("isShared")] bool IsShared,
+    [property: JsonPropertyName("systemName")] string? SystemName = null,
+    [property: JsonPropertyName("statusReason")] string? StatusReason = null,
+    [property: JsonPropertyName("isColorCapable")] bool IsColorCapable = false,
+    [property: JsonPropertyName("isDuplexCapable")] bool IsDuplexCapable = false,
+    [property: JsonPropertyName("supportedPaperSizes")] IReadOnlyList<string>? SupportedPaperSizes = null,
+    [property: JsonPropertyName("maximumCopies")] int MaximumCopies = 1,
+    [property: JsonPropertyName("isWindowsDefault")] bool IsWindowsDefault = false,
+    [property: JsonPropertyName("options")] PrinterOptionsDto? Options = null);
 
 public sealed record PrinterListResponse(
     [property: JsonPropertyName("printers")] IReadOnlyList<PrinterDto> Printers);
@@ -71,7 +116,12 @@ public sealed record EnqueueJobRequest(
     [property: JsonPropertyName("printerId")] string? PrinterId,
     [property: JsonPropertyName("documentPath")] string? DocumentPath,
     [property: JsonPropertyName("documentName")] string? DocumentName,
-    [property: JsonPropertyName("copies")] int Copies = 1);
+    [property: JsonPropertyName("copies")] int Copies = 1,
+    [property: JsonPropertyName("cloudJobId")] string? CloudJobId = null,
+    [property: JsonPropertyName("documentSha256")] string? DocumentSha256 = null,
+    [property: JsonPropertyName("resolvedSettings")] string? ResolvedSettings = null,
+    [property: JsonPropertyName("idempotencyKey")] string? IdempotencyKey = null,
+    [property: JsonPropertyName("pagesTotal")] int PagesTotal = 0);
 
 public sealed record JobDto(
     [property: JsonPropertyName("id")] string Id,
@@ -80,7 +130,20 @@ public sealed record JobDto(
     [property: JsonPropertyName("documentName")] string? DocumentName,
     [property: JsonPropertyName("copies")] int Copies,
     [property: JsonPropertyName("createdAt")] long CreatedAt,
-    [property: JsonPropertyName("error")] string? Error);
+    [property: JsonPropertyName("error")] string? Error,
+    [property: JsonPropertyName("cloudJobId")] string? CloudJobId = null,
+    [property: JsonPropertyName("pagesTotal")] int PagesTotal = 0,
+    [property: JsonPropertyName("pagesPrinted")] int PagesPrinted = 0,
+    [property: JsonPropertyName("retryCount")] int RetryCount = 0,
+    [property: JsonPropertyName("spoolerJobId")] int? SpoolerJobId = null,
+    [property: JsonPropertyName("updatedAt")] long? UpdatedAt = null,
+    [property: JsonPropertyName("startedAt")] long? StartedAt = null,
+    [property: JsonPropertyName("completedAt")] long? CompletedAt = null,
+    [property: JsonIgnore] string? DocumentPath = null);
+
+public sealed record JobEventDto(
+    [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("job")] JobDto Job);
 
 public sealed record JobListResponse(
     [property: JsonPropertyName("jobs")] IReadOnlyList<JobDto> Jobs);

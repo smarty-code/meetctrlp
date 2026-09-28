@@ -13,7 +13,26 @@ public interface IJobStore
     IReadOnlyList<JobDto> List();
     JobDto? Get(string id);
     JobDto? Cancel(string id);
+    JobDto? ClaimNext();
+    JobDto? Complete(string id, int? spoolerJobId = null);
+    JobDto? Fail(string id, string reason);
+    JobDto? Retry(string id);
 }
+
+public interface IJobRepository : IJobStore
+{
+    void Initialize();
+}
+
+public interface IPrintExecutor
+{
+    Task<PrintExecutionResult> ExecuteAsync(JobDto job, CancellationToken cancellationToken);
+}
+
+public sealed record PrintExecutionResult(
+    bool Succeeded,
+    int? SpoolerJobId = null,
+    string? Error = null);
 
 public interface ISecretStore
 {

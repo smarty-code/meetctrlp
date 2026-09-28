@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ shopId: string; orderId: string; docId: string }> };
-const ACCESS_TYPES = new Set(["DOWNLOADED", "PREVIEWED", "SPOOLED", "SHREDDED"]);
+const ACCESS_TYPES = new Set(["DOWNLOADED", "PREVIEWED", "SPOOLED_TO_PRINTER", "SHREDDED"]);
 
 export async function POST(request: Request, context: RouteContext) {
   try {
@@ -15,7 +15,10 @@ export async function POST(request: Request, context: RouteContext) {
     const body = (await request.json().catch(() => undefined)) as { accessType?: string } | undefined;
     const accessType = body?.accessType ?? "";
     if (!ACCESS_TYPES.has(accessType)) {
-      throw new AuthServiceError(400, "accessType must be DOWNLOADED, PREVIEWED, SPOOLED, or SHREDDED");
+      throw new AuthServiceError(
+        400,
+        "accessType must be DOWNLOADED, PREVIEWED, SPOOLED_TO_PRINTER, or SHREDDED",
+      );
     }
 
     return runShopOrder(request, shopId, (user) =>
@@ -23,7 +26,7 @@ export async function POST(request: Request, context: RouteContext) {
         user,
         orderId,
         docId,
-        accessType as "DOWNLOADED" | "PREVIEWED" | "SPOOLED" | "SHREDDED",
+        accessType as "DOWNLOADED" | "PREVIEWED" | "SPOOLED_TO_PRINTER" | "SHREDDED",
         request,
       ),
     );

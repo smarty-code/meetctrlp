@@ -82,6 +82,7 @@ public sealed class AgentRuntime
         dispatcher.Register(new Handlers.JobsListHandler(this));
         dispatcher.Register(new Handlers.JobsGetHandler(this));
         dispatcher.Register(new Handlers.JobsCancelHandler(this));
+        dispatcher.Register(new Handlers.JobsRetryHandler(this));
         dispatcher.Register(new Handlers.SecretsGetHandler(this));
         dispatcher.Register(new Handlers.SecretsSetHandler(this));
         dispatcher.Register(new Handlers.SecretsClearHandler(this));

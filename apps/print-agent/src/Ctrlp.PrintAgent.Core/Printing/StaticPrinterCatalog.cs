@@ -16,7 +16,8 @@ public sealed class StaticPrinterCatalog : IPrinterCatalog
     public PrinterDto? Get(string id) =>
         _printers.FirstOrDefault(printer =>
             string.Equals(printer.Id, id, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(printer.Name, id, StringComparison.OrdinalIgnoreCase));
+            || string.Equals(printer.Name, id, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(printer.SystemName, id, StringComparison.OrdinalIgnoreCase));
 
     public IReadOnlyList<PrinterDto> Refresh() => _printers;
 

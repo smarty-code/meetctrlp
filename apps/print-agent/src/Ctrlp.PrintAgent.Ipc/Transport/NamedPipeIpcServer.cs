@@ -9,6 +9,7 @@ public sealed class NamedPipeIpcServer
     private readonly string? _token;
     private readonly bool _allowAnonymous;
     private readonly Action<string>? _log;
+    private JsonRpcSession? _activeSession;
 
     public NamedPipeIpcServer(
         string pipeName,
@@ -48,6 +49,7 @@ public sealed class NamedPipeIpcServer
                 IsAuthenticated = _allowAnonymous && string.IsNullOrEmpty(_token),
             };
             var session = new JsonRpcSession(_dispatcher, context, _log);
+            _activeSession = session;
 
             try
             {
@@ -61,8 +63,33 @@ public sealed class NamedPipeIpcServer
             {
                 return;
             }
+            finally
+            {
+                if (ReferenceEquals(_activeSession, session))
+                {
+                    _activeSession = null;
+                }
+            }
 
             _log?.Invoke("client disconnected");
+        }
+    }
+
+    public async Task PublishAsync(string method, object parameters, CancellationToken cancellationToken = default)
+    {
+        var session = Volatile.Read(ref _activeSession);
+        if (session is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await session.SendNotificationAsync(method, parameters, cancellationToken).ConfigureAwait(false);
+        }
+        catch (IOException)
+        {
+            _log?.Invoke($"rpc notification dropped method={method}: client disconnected");
         }
     }
 

@@ -29,7 +29,7 @@ export type StoredOrderDocument = {
   shreddedAt: string | null;
 };
 
-type AccessType = "DOWNLOADED" | "PREVIEWED" | "SPOOLED" | "SHREDDED";
+type AccessType = "DOWNLOADED" | "PREVIEWED" | "SPOOLED_TO_PRINTER" | "SHREDDED";
 
 function inspectPdf(bytes: Buffer) {
   if (bytes.length < 5 || bytes.subarray(0, 5).toString("utf8") !== "%PDF-") {

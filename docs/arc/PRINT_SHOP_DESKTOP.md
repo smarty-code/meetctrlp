@@ -1,8 +1,9 @@
 # CtrlP Print Shop Desktop (Tauri UI + C# Agent)
 
-> **Status:** Scaffold complete (IPC, printer discovery, sidecar bundling). Physical print execution is not implemented yet.  
+> **Status:** Auth, device heartbeat, printer capabilities/shop config, server-streamed orders, and the durable local queue are in. Physical PDF execution and agent-to-cloud reconciliation remain.  
 > **Platform:** Windows 10/11 x64 only.  
-> **Source of truth for this stack:** this file, plus `apps/print-shop/AGENTS.md` and `apps/print-agent/AGENTS.md`.
+> **Source of truth for this stack:** this file, plus `apps/print-shop/AGENTS.md` and `apps/print-agent/AGENTS.md`.  
+> **PRD progress checklist:** [`docs/developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md`](../developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md).
 
 This is the current shop desktop product path. It is **not** the WPF prototype in `apps/desktop-proto`, and it is **not** the older all-Rust agent described in `SHOP_DESKTOP_AGENT_V1.md`.
 
@@ -24,7 +25,7 @@ Print Shop UI  (React in Tauri 2 webview)
    │  invoke(...)
    ▼
 Thin Rust shell  (spawn sidecar, named-pipe JSON-RPC client)
-   │  \\.\pipe\ctrlp-print-agent-{id}
+   │  \\.\pipe\ctrlp-print-agent
    ▼
 C# print agent  (sidecar EXE, infinite listen loop)
    │  winspool.drv
@@ -38,22 +39,23 @@ Windows Print Spooler → printer driver → hardware
 
 | Layer | Location | Role | Implemented |
 | --- | --- | --- | --- |
-| Shop UI | `apps/print-shop` | Dashboard, Printers, Print queue, Settings | Shell + live agent/printer/queue views |
-| Tauri commands | `apps/print-shop/src-tauri/src/commands.rs` | Thin RPC proxy | Ping, status, printers, jobs |
+| Shop UI | `apps/print-shop` | Login, dashboard shell, Orders/details, Printers drawer, queue, settings | Auth, printer config, streamed orders, queue state |
+| Tauri commands | `apps/print-shop/src-tauri/src/commands.rs` | Thin RPC proxy | Ping, status, printers, jobs, secrets, host |
 | Rust IPC | `apps/print-shop/src-tauri/src/agent/` | Spawn sidecar, framed JSON-RPC | Hello handshake, request/response, events |
-| C# host | `apps/print-agent/.../Host` | Process loop, CLI, parent watch, log file | Yes |
+| C# host | `apps/print-agent/.../Host` | Detached single-instance process, CLI, log file | Yes |
 | C# IPC | `apps/print-agent/.../Ipc` | Named pipe server, JSON-RPC 2.0 | Yes |
-| C# core | `apps/print-agent/.../Core` | Handlers, in-memory job store | Yes |
-| Windows adapter | `apps/print-agent/.../Windows` | `EnumPrinters` / default printer | Discovery and status only |
+| C# core | `apps/print-agent/.../Core` | Handlers, SQLite WAL job journal, worker | Durable queue; PDF executor pending |
+| Windows adapter | `apps/print-agent/.../Windows` | winspool + Print Schema/GDI catalog | Discovery, live status, capabilities |
+| Cloud HTTP | `apps/print-shop/src/lib/cloud.ts` | Auth, device, printer GET/POST/PATCH | Yes (no Firebase SDK) |
 | Sidecar bundle | `externalBin` + publish script | Agent EXE next to Tauri binary | Yes |
 | NSIS installer | `tauri.conf.json` `bundle.targets: ["nsis"]` | Single setup EXE for the shop PC | Configured; needs `pnpm desktop:build` |
 
-**Not built yet (intentional scaffold gap):**
+**Not in this stack yet** (full leftover list: [progress checklist](../developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md)):
 
 - Submitting a real PDF/image to the Windows spooler
-- Durable job queue (jobs live in memory; lost on restart)
-- The six full MVP screens (orders, pricing, payments, etc.)
-- Windows Service host (agent currently dies with the UI via `--parent-pid`)
+- Physical PDF print execution, spooler correlation, and agent-to-cloud reconciliation
+- Pickup/cash workflow, dashboard metrics, pricing/hours editors
+- Windows Service host (the current detached agent is per-user, not a service)
 
 ---
 
@@ -65,7 +67,7 @@ apps/print-agent/                         C# sidecar
   src/
     Ctrlp.PrintAgent.Contracts/          DTOs, RPC method names, errors
     Ctrlp.PrintAgent.Ipc/                framing + JSON-RPC + named pipe
-    Ctrlp.PrintAgent.Core/               runtime, handlers, in-memory jobs
+    Ctrlp.PrintAgent.Core/               runtime, handlers, SQLite queue, worker
     Ctrlp.PrintAgent.Windows/            winspool.drv P/Invoke
     Ctrlp.PrintAgent.Host/               console/WinExe entrypoint
   tests/Ctrlp.PrintAgent.Tests/
@@ -103,8 +105,8 @@ Windows APIs stay in `Ctrlp.PrintAgent.Windows`. React never calls Win32.
 
 ### Handshake
 
-1. Tauri generates a random pipe name `ctrlp-print-agent-{uuid}` and a token.
-2. Spawns sidecar: `--pipe … --token … --parent-pid {tauri pid}`.
+1. Tauri reads or creates a stable per-user pipe token in its local app data.
+2. Connects to or starts the single per-user sidecar with `--pipe ctrlp-print-agent --token …`.
 3. Connects to `\\.\pipe\{pipe}`.
 4. First RPC must be `agent.hello` with `{ "token", "client": "print-shop" }`.
 5. Later methods are rejected until hello succeeds (`-32001 Unauthorized`).
@@ -124,17 +126,17 @@ Windows APIs stay in `Ctrlp.PrintAgent.Windows`. React never calls Win32.
 | `jobs.list` | `{}` | `{ jobs }` |
 | `jobs.get` | `{ id }` | `JobDto` |
 | `jobs.cancel` | `{ id }` | `JobDto` |
+| `jobs.retry` | `{ id }` | `JobDto` |
 | `secrets.getRefreshToken` | `{}` | `{ refreshToken }` |
 | `secrets.setRefreshToken` | `{ refreshToken }` | `{ ok }` |
 | `secrets.clearRefreshToken` | `{}` | `{ ok }` |
 | `host.identity` | `{}` | `{ deviceIdentifier, hostname, osVersion, appVersion, agentVersion }` |
 | `host.telemetry` | `{}` | `{ memoryWorkingSetBytes }` |
 
-`PrinterDto` fields: `id`, `name`, `isDefault`, `status`, `jobCount`, `portName`, `driverName`, `isShared`.  
-Printer `id` is the Windows printer name for now.
+`PrinterDto` includes identity, live `status` / `statusReason` / `jobCount`, Windows default, hardware flags (`isColorCapable`, `isDuplexCapable`, `supportedPaperSizes`), copies max, and `options` (color modes, papers, trays, duplex, dpi, current driver defaults, unmatched `raw` names). Printer `id` is still the Windows queue name; Firestore `printerId` is `sha256(systemName).slice(0,32)`.
 
-`JobDto` fields: `id`, `state`, `printerId`, `documentName`, `copies`, `createdAt`, `error`.  
-Enqueue validates `printerId` if present; it does **not** print.
+`JobDto` includes identity, cloud-job correlation, state/progress/retry and terminal timing. Local paths are never serialized through IPC or logs. The SQLite journal uses WAL and restart recovery turns an ambiguous in-progress print into an explicit failure for operator retry.  
+Enqueue validates `printerId` if present; physical PDF execution is still intentionally unavailable until the PrintTicket-aware renderer is installed.
 
 ### UI → Rust commands
 
@@ -309,4 +311,5 @@ Server env: `FIREBASE_WEB_API_KEY`, `FIREBASE_SERVICE_ACCOUNT_BASE64`. Shop UI e
 | `docs/desktop-proto/AGENTS.md` | WPF capabilities prototype only |
 | `docs/arc/DESKTOP_AGENT_ARC.md` | Older WPF product sketch |
 | `docs/arc/SHOP_DESKTOP_AGENT_V1.md` | Retired all-Rust-in-Tauri plan |
-| `docs/developer-requirement/desktop-app/` | Product MVP (screens, FRD) — future work on this stack |
+| `docs/developer-requirement/desktop-app/Print Shop Partner Desktop MVP.md` | Product contract (screens, FR-01–FR-46) |
+| `docs/developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md` | Built vs leftover against that PRD |

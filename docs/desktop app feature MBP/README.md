@@ -2,6 +2,8 @@
 
 This directory contains the comprehensive technical specification, architectural blueprints, functional requirements, and the **finalized Google Cloud Firestore real-time NoSQL data model** for the **MeetCtrlP Print Shop Partner Desktop Application (MVP)**.
 
+The **shipping Windows app** is Tauri + C# sidecar, not WPF. Track built vs leftover against the product PRD in [`../developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md`](../developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md).
+
 It reflects the strategic transition from relational PostgreSQL to **Google Cloud Firestore**, enabling native sub-second real-time streaming, built-in offline synchronization, and single-document atomic operations.
 
 ---

@@ -2,6 +2,8 @@
   <PropertyGroup>
     <TargetFramework>net8.0-windows</TargetFramework>
     <RootNamespace>Ctrlp.PrintAgent.Windows</RootNamespace>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Ctrlp.PrintAgent.Contracts\Ctrlp.PrintAgent.Contracts.csproj" />

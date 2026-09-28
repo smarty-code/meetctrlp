@@ -362,13 +362,6 @@ export async function createShopOrder(user: AuthSessionUser, input: CheckoutOrde
     });
   });
 
-  try {
-    const { queueIncomingOrder } = await import("@/src/modules/printing/print-job.service");
-    await queueIncomingOrder(user, orderId);
-  } catch (error) {
-    console.error("Failed to assign a printer to the new order", error);
-  }
-
   return getShopOrder(user, orderId);
 }
 
@@ -584,12 +577,14 @@ export function subscribeShopOrders(
     onSnapshot: (orders: OrderDto[]) => void;
     onCreated: (order: OrderDto) => void;
     onChanged: (order: OrderDto) => void;
+    onJobChanged: (job: Record<string, unknown>) => void;
     onError: (error: Error) => void;
   },
 ) {
   let seeded = false;
+  let jobsSeeded = false;
 
-  return ordersCollection(shopId).onSnapshot(
+  const unsubscribeOrders = ordersCollection(shopId).onSnapshot(
     (snapshot) => {
       if (!seeded) {
         seeded = true;
@@ -608,4 +603,27 @@ export function subscribeShopOrders(
     },
     (error) => handlers.onError(error),
   );
+
+  const unsubscribeJobs = getFirebaseFirestore()
+    .collectionGroup("printJobs")
+    .where("shopId", "==", shopId)
+    .onSnapshot(
+      (snapshot) => {
+        if (!jobsSeeded) {
+          jobsSeeded = true;
+          return;
+        }
+        for (const change of snapshot.docChanges()) {
+          if (change.type !== "removed") {
+            handlers.onJobChanged({ id: change.doc.id, ...change.doc.data() });
+          }
+        }
+      },
+      (error) => handlers.onError(error),
+    );
+
+  return () => {
+    unsubscribeOrders();
+    unsubscribeJobs();
+  };
 }

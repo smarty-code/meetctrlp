@@ -81,7 +81,9 @@ public sealed class WinspoolPrinterCatalog : IPrinterCatalog
                     JobCount: 0,
                     PortName: info.ServerName,
                     DriverName: null,
-                    IsShared: (info.Attributes & WinspoolNative.AttributeShared) != 0));
+                    IsShared: (info.Attributes & WinspoolNative.AttributeShared) != 0,
+                    SystemName: name,
+                    IsWindowsDefault: string.Equals(name, defaultName, StringComparison.OrdinalIgnoreCase)));
                 _log?.Invoke(
                     $"EnumPrinters[{i}] name={name} server={info.ServerName ?? "(local)"} attributes=0x{info.Attributes:X}");
             }

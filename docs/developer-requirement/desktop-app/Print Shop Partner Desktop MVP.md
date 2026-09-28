@@ -2,6 +2,8 @@
 
 **Owner:** MeetCtrlP Product · **Team:** Product / Design / Engineering · **Status:** Draft · **Target:** MVP Release
 
+**Implementation progress (what is built vs left):** [`CtrlP_Print_Shop_Desktop_MVP_Progress.md`](./CtrlP_Print_Shop_Desktop_MVP_Progress.md). That file tracks the current Tauri + C# sidecar app against this PRD. Keep the PRD as the product contract; keep the progress file as the living checklist.
+
 ---
 
 ## 1. Objective Statement

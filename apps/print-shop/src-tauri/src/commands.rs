@@ -82,6 +82,11 @@ pub async fn cancel_job(bridge: State<'_, AgentBridge>, id: String) -> Result<Va
 }
 
 #[tauri::command]
+pub async fn retry_job(bridge: State<'_, AgentBridge>, id: String) -> Result<Value, String> {
+    traced(&bridge, "retry_job", "jobs.retry", json!({ "id": id })).await
+}
+
+#[tauri::command]
 pub async fn shutdown_agent(bridge: State<'_, AgentBridge>) -> Result<Value, String> {
     traced(&bridge, "shutdown_agent", "agent.shutdown", json!({})).await
 }

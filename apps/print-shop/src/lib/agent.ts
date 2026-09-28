@@ -88,6 +88,10 @@ export function cancelJob(id: string) {
   return call<PrintJob>("cancel_job", { id })
 }
 
+export function retryJob(id: string) {
+  return call<PrintJob>("retry_job", { id })
+}
+
 export async function getStoredRefreshToken() {
   const result = await call<{ refreshToken: string | null }>("get_refresh_token")
   return result.refreshToken

@@ -11,6 +11,16 @@ internal static class Program
     {
         var options = AgentCli.Parse(args);
         using var log = AgentLog.Open();
+        using var singleInstance = new Mutex(
+            initiallyOwned: true,
+            name: @"Local\Ctrlp.PrintAgent",
+            createdNew: out var isPrimaryInstance);
+        if (!isPrimaryInstance)
+        {
+            log.Write("agent already running for this Windows user; exiting duplicate process");
+            return 0;
+        }
+
         AgentTrace.Sink = log.Write;
         using var shutdown = new CancellationTokenSource();
 
@@ -21,7 +31,7 @@ internal static class Program
         };
 
         IPrinterCatalog printers = OperatingSystem.IsWindows()
-            ? new WinspoolPrinterCatalog(log.Write)
+            ? new WindowsPrintCatalog(log.Write)
             : new StaticPrinterCatalog();
         ISecretStore secrets = OperatingSystem.IsWindows()
             ? new WindowsCredentialStore()
@@ -29,7 +39,13 @@ internal static class Program
         IHostIdentity host = OperatingSystem.IsWindows()
             ? new WindowsHostIdentity(options.AgentVersion, options.AgentVersion)
             : new FallbackHostIdentity(options);
-        var runtime = new AgentRuntime(options, printers, new InMemoryJobStore(), secrets, host);
+        var dataRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Ctrlp",
+            "PrintAgent");
+        var jobs = new SqliteJobStore(Path.Combine(dataRoot, "queue.db"));
+        jobs.Initialize();
+        var runtime = new AgentRuntime(options, printers, jobs, secrets, host);
         var dispatcher = runtime.CreateDispatcher();
         var server = new NamedPipeIpcServer(
             options.PipeName,
@@ -37,6 +53,10 @@ internal static class Program
             options.Token,
             options.DevMode,
             log.Write);
+        var queueWorker = new PrintQueueWorker(
+            jobs,
+            new UnavailablePrintExecutor(),
+            notification => _ = server.PublishAsync(notification.Type, notification));
 
         if (options.ParentPid is int parentPid)
         {
@@ -50,9 +70,13 @@ internal static class Program
 
         try
         {
-            await server.RunAsync(CancellationTokenSource.CreateLinkedTokenSource(
+            using var lifecycle = CancellationTokenSource.CreateLinkedTokenSource(
                 shutdown.Token,
-                runtime.ShutdownToken).Token).ConfigureAwait(false);
+                runtime.ShutdownToken);
+            var worker = queueWorker.RunAsync(lifecycle.Token);
+            await server.RunAsync(lifecycle.Token).ConfigureAwait(false);
+            lifecycle.Cancel();
+            await worker.ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {

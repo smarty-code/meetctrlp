@@ -9,10 +9,11 @@ import {
   CardTitle,
 } from "@ctrlp/ui/card"
 import { cn } from "@ctrlp/ui/utils"
-import { ClipboardList, LayoutDashboard, Printer, Settings } from "lucide-react"
+import { ClipboardList, FileText, LayoutDashboard, Printer, Settings } from "lucide-react"
 
 import {
   clearStoredRefreshToken,
+  cancelJob,
   enqueueJob,
   getAgentStatus,
   getHostIdentity,
@@ -21,23 +22,46 @@ import {
   isTauriRuntime,
   listJobs,
   listPrinters,
+  listenAgentEvents,
   pingAgent,
   refreshPrinters,
+  retryJob,
   storeRefreshToken,
   waitForAgent,
 } from "./lib/agent"
 import {
   fetchShopProfile,
   fetchShopStaff,
+  getDocumentDownloadUrl,
+  getShopOrder,
+  listShopOrders,
+  listShopPrinters,
+  listOrderPrintJobs,
   loginOwner,
   logoutSession,
   markDeviceOffline,
+  patchShopPrinter,
   refreshSession,
   registerDevice,
   registerOwner,
   sendDeviceHeartbeat,
+  sendPrinterTelemetry,
+  dispatchOrderPrintJob,
+  rejectShopOrder,
+  recordDocumentAccess,
+  streamShopOrders,
+  syncShopPrinters,
+  transitionShopOrder,
 } from "./lib/cloud"
 import { shopError, shopLog, shopWarn } from "./lib/debug"
+import { emptyOrderStore, reduceOrderEvent, type OrderStore } from "./lib/orders"
+import {
+  cloudPrinterStatus,
+  mergeLiveStatus,
+  mergeShopPrinters,
+  telemetrySignature,
+  toSyncPrinter,
+} from "./lib/printers"
 import {
   appVersion,
   type AgentStatus,
@@ -46,15 +70,21 @@ import {
   type PrintJob,
   type Printer as PrinterModel,
   type ShopProfile,
+  type ShopOrder,
   type ShopStaffMember,
   type ShopUser,
 } from "./lib/protocol"
 import { LoginScreen } from "./screens/LoginScreen"
+import { OrderDetailsScreen } from "./screens/OrderDetailsScreen"
+import { OrdersScreen } from "./screens/OrdersScreen"
+import { PrintQueueScreen } from "./screens/PrintQueueScreen"
+import { PrintersScreen } from "./screens/PrintersScreen"
 
-type Screen = "dashboard" | "printers" | "jobs" | "settings"
+type Screen = "dashboard" | "orders" | "printers" | "jobs" | "settings"
 
 const nav = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "orders", label: "Orders", icon: FileText },
   { id: "printers", label: "Printers", icon: Printer },
   { id: "jobs", label: "Print queue", icon: ClipboardList },
   { id: "settings", label: "Settings", icon: Settings },
@@ -75,11 +105,31 @@ export default function App() {
   const [status, setStatus] = useState<AgentStatus>({ state: "starting" })
   const [printers, setPrinters] = useState<PrinterModel[]>([])
   const [jobs, setJobs] = useState<PrintJob[]>([])
+  const [orderStore, setOrderStore] = useState<OrderStore>(emptyOrderStore)
+  const [selectedOrder, setSelectedOrder] = useState<ShopOrder | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const sessionRef = useRef({ idToken: null as string | null, deviceId: null as string | null })
+  const [selectedPrinter, setSelectedPrinter] = useState<PrinterModel | null>(null)
+  const sessionRef = useRef({
+    idToken: null as string | null,
+    deviceId: null as string | null,
+    shopId: null as string | null,
+  })
+  const telemetryRef = useRef(new Map<string, string>())
+  const printersRef = useRef<PrinterModel[]>([])
+  const orderStoreRef = useRef<OrderStore>(emptyOrderStore)
 
-  sessionRef.current = { idToken, deviceId }
+  sessionRef.current = { idToken, deviceId, shopId: user?.shopId ?? null }
+  printersRef.current = printers
+  orderStoreRef.current = orderStore
+
+  function applyPrinters(next: PrinterModel[]) {
+    setPrinters(next)
+    printersRef.current = next
+    setSelectedPrinter((current) =>
+      current ? (next.find((printer) => printer.id === current.id) ?? current) : null
+    )
+  }
 
   async function persistSession(session: AuthSession) {
     setUser(session.user)
@@ -98,7 +148,7 @@ export default function App() {
     setStaff(staffResult.staff)
   }
 
-  async function connectDevice(token: string, nextPrinters: PrinterModel[]) {
+  async function connectDevice(token: string, shopId: string, nextPrinters: PrinterModel[]) {
     if (!isTauriRuntime()) {
       setCloud("offline")
       setCloudMessage("Open with pnpm desktop:dev to register this PC.")
@@ -114,6 +164,7 @@ export default function App() {
       setCloudMessage(null)
       shopLog("device", "registered", registered.deviceId, identity.hostname)
       await beatOnce(token, registered.deviceId, nextPrinters)
+      await syncDiscoveredPrinters(token, shopId, registered.deviceId, nextPrinters, true)
     } catch (err) {
       shopWarn("device", "register failed", err)
       setCloud("offline")
@@ -127,10 +178,69 @@ export default function App() {
       deviceId: currentDeviceId,
       memoryWorkingSetBytes: telemetry.memoryWorkingSetBytes,
       spoolerJobCount: nextPrinters.reduce((sum, printer) => sum + printer.jobCount, 0),
-      onlinePrinterCount: nextPrinters.filter((printer) => printer.status !== "offline").length,
+      onlinePrinterCount: nextPrinters.filter(
+        (printer) => cloudPrinterStatus(printer.status) !== "OFFLINE"
+      ).length,
     })
     setCloud("connected")
     setCloudMessage(null)
+  }
+
+  async function syncDiscoveredPrinters(
+    token: string,
+    shopId: string,
+    agentId: string,
+    local: PrinterModel[],
+    refresh = false
+  ) {
+    if (!shopId) {
+      applyPrinters(local)
+      return local
+    }
+
+    const discovered = refresh ? await refreshPrinters() : local
+    if (discovered.length === 0) {
+      applyPrinters(discovered)
+      return discovered
+    }
+    await syncShopPrinters(token, shopId, {
+      agentId,
+      printers: discovered.map(toSyncPrinter),
+    })
+    const cloud = await listShopPrinters(token, shopId)
+    const merged = mergeShopPrinters(discovered, cloud.printers)
+    applyPrinters(merged)
+    await reportPrinterTelemetry(token, shopId, merged)
+    return merged
+  }
+
+  async function reportPrinterTelemetry(token: string, shopId: string, nextPrinters: PrinterModel[]) {
+    for (const printer of nextPrinters) {
+      if (!printer.cloudId) {
+        continue
+      }
+      const signature = telemetrySignature(printer)
+      const previous = telemetryRef.current.get(printer.cloudId)
+      if (!previous) {
+        telemetryRef.current.set(printer.cloudId, signature)
+        continue
+      }
+      if (previous === signature) {
+        continue
+      }
+      const previousStatus = previous.split("|")[1] ?? cloudPrinterStatus(printer.status)
+      try {
+        await sendPrinterTelemetry(token, shopId, printer.cloudId, {
+          previousStatus,
+          newStatus: cloudPrinterStatus(printer.status),
+          errorDescription: printer.statusReason ?? null,
+          activeSpoolJobs: printer.jobCount,
+        })
+        telemetryRef.current.set(printer.cloudId, signature)
+      } catch (err) {
+        shopWarn("printers", "telemetry failed", printer.name, err)
+      }
+    }
   }
 
   async function enterSession(session: AuthSession) {
@@ -138,9 +248,9 @@ export default function App() {
     await loadShopContext(session.tokens.idToken)
     const nextPrinters = isTauriRuntime() ? await listPrinters().catch(() => []) : []
     const nextJobs = isTauriRuntime() ? await listJobs().catch(() => []) : []
-    setPrinters(nextPrinters)
+    applyPrinters(nextPrinters)
     setJobs(nextJobs)
-    await connectDevice(session.tokens.idToken, nextPrinters)
+    await connectDevice(session.tokens.idToken, session.user.shopId, nextPrinters)
   }
 
   async function restoreSession() {
@@ -186,6 +296,25 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    if (!idToken || !user) {
+      return
+    }
+
+    const abort = new AbortController()
+    void listShopOrders(idToken, user.shopId)
+      .then(({ orders }) => {
+        setOrderStore((current) => reduceOrderEvent(current, { type: "ORDERS_SNAPSHOT", orders }))
+      })
+      .catch((err) => {
+        shopWarn("orders", "initial fetch failed", err)
+      })
+    void streamShopOrders(idToken, user.shopId, (event) => {
+      setOrderStore((current) => reduceOrderEvent(current, event))
+    }, abort.signal)
+    return () => abort.abort()
+  }, [idToken, user])
+
+  useEffect(() => {
     if (!idToken || !deviceId) {
       return
     }
@@ -228,7 +357,7 @@ export default function App() {
         printers: nextPrinters.length,
         jobs: nextJobs.length,
       })
-      setPrinters(nextPrinters)
+      applyPrinters(mergeLiveStatus(printersRef.current, nextPrinters))
       setJobs(nextJobs)
     } catch (err) {
       shopError("ui", "refreshAll failed", err)
@@ -249,6 +378,16 @@ export default function App() {
         queued: nextStatus.queuedJobs,
       })
       setStatus(nextStatus)
+      if (nextStatus.state === "disconnected" || nextStatus.state === "starting") {
+        return
+      }
+      const live = await listPrinters()
+      const merged = mergeLiveStatus(printersRef.current, live)
+      applyPrinters(merged)
+      const current = sessionRef.current
+      if (current.idToken && current.shopId) {
+        await reportPrinterTelemetry(current.idToken, current.shopId, merged)
+      }
     } catch (err) {
       shopWarn("ui", "poll status failed", err)
     }
@@ -264,6 +403,37 @@ export default function App() {
       void pollStatus()
     }, 5000)
     return () => window.clearInterval(timer)
+  }, [user])
+
+  useEffect(() => {
+    if (!user || !isTauriRuntime()) {
+      return
+    }
+
+    let unlisten: (() => void) | undefined
+    let disposed = false
+    void listenAgentEvents((payload) => {
+      const event = payload as { method?: string; params?: { job?: PrintJob } }
+      if (!event.method?.startsWith("job.") || !event.params?.job) {
+        return
+      }
+      setJobs((current) => {
+        const next = event.params!.job!
+        const index = current.findIndex((job) => job.id === next.id)
+        return index === -1 ? [next, ...current] : current.map((job) => (job.id === next.id ? next : job))
+      })
+    }).then((stop) => {
+      if (disposed) {
+        stop()
+      } else {
+        unlisten = stop
+      }
+    })
+
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
   }, [user])
 
   async function handleAuthSession(session: AuthSession) {
@@ -332,7 +502,10 @@ export default function App() {
       setDeviceId(null)
       setCloud("offline")
       setPrinters([])
+      setSelectedPrinter(null)
       setJobs([])
+      setOrderStore(emptyOrderStore)
+      setSelectedOrder(null)
       setError(null)
     }
   }
@@ -354,12 +527,173 @@ export default function App() {
     setBusy(true)
     setError(null)
     try {
-      setPrinters(await refreshPrinters())
+      const current = sessionRef.current
+      if (current.idToken && current.deviceId && current.shopId) {
+        await syncDiscoveredPrinters(
+          current.idToken,
+          current.shopId,
+          current.deviceId,
+          printersRef.current,
+          true
+        )
+        return
+      }
+      applyPrinters(await refreshPrinters())
     } catch (err) {
       shopError("ui", "rediscover failed", err)
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function handlePrinterConfig(
+    printer: PrinterModel,
+    input: { isDefault?: boolean; enabled?: boolean; offered?: { color?: boolean; a3?: boolean } }
+  ) {
+    const current = sessionRef.current
+    if (!current.idToken || !current.shopId || !printer.cloudId) {
+      throw new Error("This printer is not synced to the shop yet. Rediscover first.")
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      const saved = await patchShopPrinter(current.idToken, current.shopId, printer.cloudId, input)
+      applyPrinters(
+        printersRef.current.map((entry) =>
+          entry.id === printer.id
+            ? {
+                ...entry,
+                cloudId: saved.id,
+                enabled: saved.enabled,
+                offered: saved.offered,
+                isShopDefault: saved.isDefault,
+                capabilities: saved.capabilities,
+              }
+            : input.isDefault
+              ? { ...entry, isShopDefault: false }
+              : entry
+        )
+      )
+    } catch (err) {
+      shopError("ui", "printer config failed", err)
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function refreshSelectedOrder(order: ShopOrder) {
+    const current = sessionRef.current
+    if (!current.idToken || !current.shopId) {
+      return
+    }
+    const [fresh, jobResult] = await Promise.all([
+      getShopOrder(current.idToken, current.shopId, order.id),
+      listOrderPrintJobs(current.idToken, current.shopId, order.id),
+    ])
+    setOrderStore((previous) => {
+      let next = reduceOrderEvent(previous, { type: "ORDER_STATUS_CHANGED", order: fresh })
+      for (const job of jobResult.jobs) {
+        next = reduceOrderEvent(next, { type: "PRINT_JOB_CHANGED", job })
+      }
+      return next
+    })
+    setSelectedOrder(fresh)
+  }
+
+  async function handleOrderTransition(
+    order: ShopOrder,
+    action: "accept" | "printing" | "ready" | "complete"
+  ) {
+    const current = sessionRef.current
+    if (!current.idToken || !current.shopId) {
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      const saved = await transitionShopOrder(current.idToken, current.shopId, order.id, action, order.status)
+      setOrderStore((previous) => reduceOrderEvent(previous, { type: "ORDER_STATUS_CHANGED", order: saved }))
+      setSelectedOrder(saved)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleRejectOrder(order: ShopOrder) {
+    const current = sessionRef.current
+    if (!current.idToken || !current.shopId) {
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      const saved = await rejectShopOrder(
+        current.idToken,
+        current.shopId,
+        order.id,
+        order.status,
+        "Rejected by shop operator"
+      )
+      setOrderStore((previous) => reduceOrderEvent(previous, { type: "ORDER_STATUS_CHANGED", order: saved }))
+      setSelectedOrder(saved)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleDispatchOrderDocument(order: ShopOrder, documentId: string) {
+    const current = sessionRef.current
+    const printer = printersRef.current.find((entry) => entry.enabled !== false && entry.cloudId)
+    if (!current.idToken || !current.shopId || !printer?.cloudId) {
+      setError("Rediscover and enable a compatible shop printer before printing.")
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      await dispatchOrderPrintJob(current.idToken, current.shopId, order.id, {
+        printerId: printer.cloudId,
+        documentId,
+      })
+      await refreshSelectedOrder(order)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handlePreviewDocument(order: ShopOrder, documentId: string) {
+    const current = sessionRef.current
+    if (!current.idToken || !current.shopId) {
+      return { valid: false, message: "Your shop session is unavailable." }
+    }
+    try {
+      const download = await getDocumentDownloadUrl(current.idToken, current.shopId, order.id, documentId)
+      const response = await fetch(download.url)
+      if (!response.ok) {
+        throw new Error(`Download failed (${response.status})`)
+      }
+      const bytes = await response.arrayBuffer()
+      const digest = await crypto.subtle.digest("SHA-256", bytes)
+      const actualHash = Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("")
+      if (actualHash !== download.sha256Hash) {
+        throw new Error("The downloaded document hash does not match the order.")
+      }
+      await recordDocumentAccess(current.idToken, current.shopId, order.id, documentId, "DOWNLOADED")
+      await recordDocumentAccess(current.idToken, current.shopId, order.id, documentId, "PREVIEWED")
+      const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }))
+      window.open(url, "_blank", "noopener,noreferrer")
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+      return { valid: true, message: `Validated ${download.pageCount} pages and opened a temporary preview.` }
+    } catch (err) {
+      return { valid: false, message: err instanceof Error ? err.message : String(err) }
     }
   }
 
@@ -376,6 +710,32 @@ export default function App() {
     } catch (err) {
       shopError("ui", "enqueue failed", err)
       setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function handleCancelJob(id: string) {
+    setBusy(true)
+    setError(null)
+    try {
+      await cancelJob(id)
+      setJobs(await listJobs())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleRetryJob(id: string) {
+    setBusy(true)
+    setError(null)
+    try {
+      await retryJob(id)
+      setJobs(await listJobs())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -451,8 +811,7 @@ export default function App() {
               {nav.find((item) => item.id === screen)?.label}
             </h2>
             <p className="text-body text-ash">
-              Signed in as {user.name}. Shop identity lives in Firebase Auth and
-              Firestore.
+              Signed in as {user.name}. Order stream: {orderStore.streamState}.
             </p>
           </div>
           <Button onClick={() => void refreshAll(true)} disabled={busy}>
@@ -477,15 +836,54 @@ export default function App() {
             tauri={isTauriRuntime()}
           />
         ) : null}
-        {screen === "printers" ? (
-          <Printers
+        {screen === "orders" && !selectedOrder ? (
+          <OrdersScreen
+            orders={orderStore.orders}
+            busy={busy}
+            onOpen={(order) => {
+              setSelectedOrder(order)
+              void refreshSelectedOrder(order)
+            }}
+            onAccept={(order) => void handleOrderTransition(order, "accept")}
+            onReject={(order) => void handleRejectOrder(order)}
+          />
+        ) : null}
+        {screen === "orders" && selectedOrder ? (
+          <OrderDetailsScreen
+            order={selectedOrder}
+            jobs={orderStore.jobsByOrderId[selectedOrder.id] ?? []}
             printers={printers}
+            busy={busy}
+            onBack={() => setSelectedOrder(null)}
+            onAccept={() => void handleOrderTransition(selectedOrder, "accept")}
+            onReject={() => void handleRejectOrder(selectedOrder)}
+            onDispatch={(documentId) => void handleDispatchOrderDocument(selectedOrder, documentId)}
+            onReady={() => void handleOrderTransition(selectedOrder, "ready")}
+            onComplete={() => void handleOrderTransition(selectedOrder, "complete")}
+            onPreview={(documentId) => handlePreviewDocument(selectedOrder, documentId)}
+          />
+        ) : null}
+        {screen === "printers" ? (
+          <PrintersScreen
+            printers={printers}
+            busy={busy}
             onRefresh={() => void handleRefreshPrinters()}
             onTest={(printer) => void handleTestJob(printer)}
+            onOpen={setSelectedPrinter}
+            selected={selectedPrinter}
+            onClose={() => setSelectedPrinter(null)}
+            onToggleEnabled={(printer, enabled) => void handlePrinterConfig(printer, { enabled })}
+            onToggleOffered={(printer, offered) => void handlePrinterConfig(printer, { offered })}
+            onSetDefault={(printer) => void handlePrinterConfig(printer, { isDefault: true })}
           />
         ) : null}
         {screen === "jobs" ? (
-          <Jobs jobs={jobs} onEnqueue={() => void handleTestJob()} />
+          <PrintQueueScreen
+            jobs={jobs}
+            busy={busy}
+            onCancel={(id) => void handleCancelJob(id)}
+            onRetry={(id) => void handleRetryJob(id)}
+          />
         ) : null}
         {screen === "settings" ? (
           <SettingsPanel
@@ -611,89 +1009,6 @@ function Dashboard({
           </Button>
         </CardContent>
       </Card>
-    </div>
-  )
-}
-
-function Printers({
-  printers,
-  onRefresh,
-  onTest,
-}: {
-  printers: PrinterModel[]
-  onRefresh: () => void
-  onTest: (printer: PrinterModel) => void
-}) {
-  return (
-    <div className="space-y-4">
-      <Button variant="outline" onClick={onRefresh}>
-        Rediscover printers
-      </Button>
-      {printers.length === 0 ? (
-        <Card>
-          <CardContent className="pt-6 text-ash">
-            No printers reported yet. Confirm the agent is running on Windows.
-          </CardContent>
-        </Card>
-      ) : (
-        printers.map((printer) => (
-          <Card key={printer.id}>
-            <CardHeader className="flex-row items-start justify-between">
-              <div>
-                <CardTitle>{printer.name}</CardTitle>
-                <CardDescription>
-                  {printer.driverName ?? "Unknown driver"} ·{" "}
-                  {printer.portName ?? "No port"}
-                </CardDescription>
-              </div>
-              <Badge>{printer.status}</Badge>
-            </CardHeader>
-            <CardContent className="flex items-center justify-between">
-              <p className="text-caption text-ash">
-                {printer.isDefault ? "Default printer" : "Installed printer"} ·{" "}
-                {printer.jobCount} spooler jobs
-              </p>
-              <Button size="sm" onClick={() => onTest(printer)}>
-                Queue test job
-              </Button>
-            </CardContent>
-          </Card>
-        ))
-      )}
-    </div>
-  )
-}
-
-function Jobs({
-  jobs,
-  onEnqueue,
-}: {
-  jobs: PrintJob[]
-  onEnqueue: () => void
-}) {
-  return (
-    <div className="space-y-4">
-      <Button onClick={onEnqueue}>Enqueue test job</Button>
-      {jobs.length === 0 ? (
-        <Card>
-          <CardContent className="pt-6 text-ash">
-            The local queue is empty. Jobs created here are handled by the C#
-            agent.
-          </CardContent>
-        </Card>
-      ) : (
-        jobs.map((job) => (
-          <Card key={job.id}>
-            <CardHeader className="flex-row items-center justify-between">
-              <div>
-                <CardTitle>{job.documentName ?? job.id}</CardTitle>
-                <CardDescription>{job.id}</CardDescription>
-              </div>
-              <Badge>{job.state}</Badge>
-            </CardHeader>
-          </Card>
-        ))
-      )}
     </div>
   )
 }

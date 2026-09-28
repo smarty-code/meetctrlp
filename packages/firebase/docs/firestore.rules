@@ -1,0 +1,88 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isShopStaff(shopId) {
+      return isAuthenticated() && (
+        request.auth.token.shopId == shopId ||
+        exists(/databases/$(database)/documents/shops/$(shopId)/users/$(request.auth.uid))
+      );
+    }
+
+    function isOrderOwner(orderData) {
+      return isAuthenticated() && orderData.printUserId == request.auth.uid;
+    }
+
+    // Shops Root Collection
+    match /shops/{shopId} {
+      // Anyone can read public shop profile, address, business hours, and pricing
+      allow read: if true;
+      allow write: if isShopStaff(shopId);
+
+      // Staff Subcollection
+      match /users/{userId} {
+        allow read, write: if isShopStaff(shopId);
+      }
+
+      // Desktop Agent Hardware Subcollection
+      match /agents/{agentId} {
+        allow read, write: if isShopStaff(shopId);
+      }
+
+      // Discovered Printers Subcollection
+      match /printers/{printerId} {
+        allow read: if true; // Customers can view capabilities (color/mono/paper)
+        allow write: if isShopStaff(shopId);
+
+        match /telemetry/{telemetryId} {
+          allow read, write: if isShopStaff(shopId);
+        }
+      }
+
+      // Real-Time Orders Stream
+      match /orders/{orderId} {
+        // Staff can read all shop orders; Customers can only read their own order
+        allow read: if isShopStaff(shopId) || isOrderOwner(resource.data);
+        
+        // Anyone can create an order (guest checkout)
+        allow create: if true;
+        
+        // Only shop staff can update status, mark ready, or complete
+        allow update, delete: if isShopStaff(shopId);
+
+        // Physical Print Jobs Subcollection
+        match /printJobs/{jobId} {
+          allow read, write: if isShopStaff(shopId);
+        }
+
+        // Status History Subcollection
+        match /statusHistory/{historyId} {
+          allow read: if isShopStaff(shopId) || isOrderOwner(get(/databases/$(database)/documents/shops/$(shopId)/orders/$(orderId)).data);
+          allow write: if isShopStaff(shopId);
+        }
+      }
+    }
+
+    // Anonymous Print Users (Guest Sessions)
+    match /printUsers/{userId} {
+      allow read, write: if true;
+    }
+
+    // Document Access & Shredding Compliance Logs (Write-only for audit integrity)
+    match /accessLogs/{logId} {
+      allow read: if isAuthenticated();
+      allow create: if true;
+      allow update, delete: if false; // Immutable audit log
+    }
+
+    // Distributed Idempotency Keys
+    match /idempotencyKeys/{key} {
+      allow read, write: if true;
+    }
+  }
+}

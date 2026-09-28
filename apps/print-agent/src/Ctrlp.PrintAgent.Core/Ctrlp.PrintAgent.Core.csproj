@@ -4,6 +4,7 @@
     <RootNamespace>Ctrlp.PrintAgent.Core</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.14" />
     <ProjectReference Include="..\Ctrlp.PrintAgent.Contracts\Ctrlp.PrintAgent.Contracts.csproj" />
     <ProjectReference Include="..\Ctrlp.PrintAgent.Ipc\Ctrlp.PrintAgent.Ipc.csproj" />
   </ItemGroup>

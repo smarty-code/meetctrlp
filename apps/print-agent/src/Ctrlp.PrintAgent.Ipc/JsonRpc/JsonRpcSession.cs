@@ -11,6 +11,8 @@ public sealed class JsonRpcSession
     private readonly RpcDispatcher _dispatcher;
     private readonly RpcContext _context;
     private readonly Action<string>? _log;
+    private readonly SemaphoreSlim _writeLock = new(1, 1);
+    private Stream? _stream;
 
     public JsonRpcSession(RpcDispatcher dispatcher, RpcContext context, Action<string>? log = null)
     {
@@ -21,6 +23,7 @@ public sealed class JsonRpcSession
 
     public async Task RunAsync(Stream stream, CancellationToken cancellationToken)
     {
+        _stream = stream;
         while (!cancellationToken.IsCancellationRequested)
         {
             byte[] payload;
@@ -47,8 +50,43 @@ public sealed class JsonRpcSession
                 continue;
             }
 
-            _log?.Invoke($"rpc frame send bytes={responseBytes.Length}");
-            await LengthPrefixedFrame.WriteAsync(stream, responseBytes, cancellationToken).ConfigureAwait(false);
+            await WriteAsync(responseBytes, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    public async Task SendNotificationAsync(string method, object parameters, CancellationToken cancellationToken)
+    {
+        var stream = _stream ?? throw new InvalidOperationException("RPC session is not connected.");
+        var payload = Encode(new
+        {
+            jsonrpc = ProtocolInfo.JsonRpcVersion,
+            method,
+            @params = parameters,
+        });
+        _log?.Invoke($"rpc notification method={method} bytes={payload.Length}");
+        await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await LengthPrefixedFrame.WriteAsync(stream, payload, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    private async Task WriteAsync(byte[] payload, CancellationToken cancellationToken)
+    {
+        var stream = _stream ?? throw new InvalidOperationException("RPC session is not connected.");
+        _log?.Invoke($"rpc frame send bytes={payload.Length}");
+        await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await LengthPrefixedFrame.WriteAsync(stream, payload, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _writeLock.Release();
         }
     }
 

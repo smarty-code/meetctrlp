@@ -13,9 +13,10 @@ A long-running .NET 8 process that:
 
 1. Listens on a Windows named pipe (`JSON-RPC 2.0`, length-prefixed frames).
 2. Authenticates the UI with `agent.hello` + token.
-3. Discovers printers through `winspool.drv`.
-4. Holds a local in-memory job list (no physical print yet).
-5. Exits when `--parent-pid` exits (Tauri sets this).
+3. Discovers local printers (winspool + Print Schema/GDI) and caches capabilities.
+4. Persists local print work in `%LOCALAPPDATA%\Ctrlp\PrintAgent\queue.db` (SQLite WAL) and publishes job lifecycle notifications to the connected UI.
+5. Stores the shop refresh token and machine fingerprint for the UI.
+6. Runs detached from the desktop window with a stable per-user pipe and a single-instance lock.
 
 Windows-only. Needs the .NET 8 SDK.
 
@@ -26,8 +27,8 @@ Windows-only. Needs the .NET 8 SDK.
 ```text
 Contracts   models + RPC names. No pipes, no Win32, no Host.
 Ipc         framing, dispatcher, NamedPipeServerStream.
-Core        AgentRuntime + handlers + InMemoryJobStore.
-Windows     EnumPrinters / GetDefaultPrinter / Credential Manager / machine fingerprint.
+Core        AgentRuntime + handlers + SQLite job journal + background worker.
+Windows     EnumPrinters, Print Schema/GDI catalog, Credential Manager, machine fingerprint.
 Host        Program, CLI, log file, parent watcher.
 Tests       framing + hello/auth/printers/jobs (no Host).
 ```
@@ -65,7 +66,7 @@ If `pnpm` is not recognized, prepend `%LOCALAPPDATA%\pnpm` and `%LOCALAPPDATA%\p
 | --- | --- |
 | New RPC method / DTO | `Contracts` first, then a handler in `Core`, then Tauri `commands.rs` + `src/lib/agent.ts` |
 | Framing / auth / pipe | `Ipc` |
-| Job lifecycle (still in-memory) | `Core/Jobs` |
+| Job lifecycle / persistence | `Core/Jobs` |
 | New Windows API | `Windows`, behind an interface in `Contracts` |
 | CLI / process lifetime | `Host` |
 
@@ -81,8 +82,9 @@ Do **not**:
 
 ## Current limits
 
-- `jobs.enqueue` records a queued job; it does not spool.
-- Queue is not durable.
-- Cloud auth stays in `apps/server`; this process only stores the refresh token and machine identity.
+- The queue is durable, but a production PDF renderer / PrintTicket execution adapter is still required before staged work may be physically spooled.
+- Restart recovery marks an ambiguous in-flight print as failed for an explicit operator retry; it never blindly duplicates output.
+- Cloud HTTP (auth, printer inventory) stays in the Tauri UI; this process only stores the refresh token and machine identity.
+- PRD leftover (orders, spool, routing): [`CtrlP_Print_Shop_Desktop_MVP_Progress.md`](../../docs/developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md).
 
-Logs: `%LOCALAPPDATA%\Ctrlp\PrintAgent\agent.log` (mirrored to stderr). Each RPC logs method, id, and elapsedMs. Winspool logs EnumPrinters probe size, returned count, and timeouts.
+Logs: `%LOCALAPPDATA%\Ctrlp\PrintAgent\agent.log` (mirrored to stderr). Each RPC logs method, id, and elapsedMs. Capability reads log per-printer timeouts; winspool is the fallback if `LocalPrintServer` fails.

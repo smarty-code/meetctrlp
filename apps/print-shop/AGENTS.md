@@ -11,9 +11,12 @@ UI design: repo root `AGENTS.md` and `docs/design-system/` (`DESIGN copy.md`, `t
 
 ## What this project is
 
-- React shell: Dashboard, Printers, Print queue, Settings.
+- React shell: login, dashboard summary, Orders/order details, Printers (capabilities + shop default / enable / offer color-A3), durable local queue view, settings.
 - Thin Rust: spawn the C# sidecar, JSON-RPC over a named pipe, Tauri commands.
+- HTTP to `apps/server` for auth, device, printer inventory, orders, documents, and server-mediated SSE (no Firebase SDK).
 - Not a browser app. `pnpm shop:dev` (Vite) cannot reach the agent.
+
+PRD leftover list: [`docs/developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md`](../../docs/developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md).
 
 ---
 
@@ -53,8 +56,9 @@ pnpm shop:typecheck
 
 | Change | Where |
 | --- | --- |
-| Screen copy/layout | `src/App.tsx` (and later `src/screens/` if split) |
+| Screen copy/layout | `src/App.tsx`, `src/screens/LoginScreen.tsx`, `src/screens/PrintersScreen.tsx` |
 | Login / shop identity | `src/screens/LoginScreen.tsx` + `src/lib/cloud.ts` (HTTP to `apps/server`, no Firebase SDK) |
+| Printer shop config | `src/screens/PrintersScreen.tsx` + `src/lib/printers.ts` + `cloud.ts` GET/POST/PATCH |
 | New agent operation | C# handler first, then `commands.rs`, then `src/lib/agent.ts` |
 | Pipe/framing | keep in sync with `Ctrlp.PrintAgent.Ipc` |
 | Sidecar file name | `tauri.conf.json` `externalBin` + `publish-sidecar.mjs` |

@@ -215,6 +215,9 @@ importers:
 
   apps/print-shop:
     dependencies:
+      '@ctrlp/schemas':
+        specifier: workspace:*
+        version: link:../../packages/schemas
       '@ctrlp/ui':
         specifier: workspace:*
         version: link:../../packages/ui

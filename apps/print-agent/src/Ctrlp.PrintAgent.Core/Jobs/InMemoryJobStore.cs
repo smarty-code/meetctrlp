@@ -47,4 +47,63 @@ public sealed class InMemoryJobStore : IJobStore
         _jobs[id] = cancelled;
         return cancelled;
     }
+
+    public JobDto? ClaimNext()
+    {
+        var job = _jobs.Values
+            .Where(candidate => candidate.State == "queued")
+            .OrderBy(candidate => candidate.CreatedAt)
+            .FirstOrDefault();
+        if (job is null)
+        {
+            return null;
+        }
+
+        var claimed = job with
+        {
+            State = JobRunState.Printing.ToString().ToLowerInvariant(),
+            StartedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+        };
+        _jobs[job.Id] = claimed;
+        return claimed;
+    }
+
+    public JobDto? Complete(string id, int? spoolerJobId = null) =>
+        Update(id, job => job with
+        {
+            State = JobRunState.Completed.ToString().ToLowerInvariant(),
+            SpoolerJobId = spoolerJobId,
+            CompletedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            Error = null,
+        });
+
+    public JobDto? Fail(string id, string reason) =>
+        Update(id, job => job with
+        {
+            State = JobRunState.Failed.ToString().ToLowerInvariant(),
+            Error = reason,
+            CompletedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+        });
+
+    public JobDto? Retry(string id) =>
+        Update(id, job => job with
+        {
+            State = JobRunState.Queued.ToString().ToLowerInvariant(),
+            Error = null,
+            RetryCount = job.RetryCount + 1,
+            StartedAt = null,
+            CompletedAt = null,
+        });
+
+    private JobDto? Update(string id, Func<JobDto, JobDto> update)
+    {
+        if (!_jobs.TryGetValue(id, out var job))
+        {
+            return null;
+        }
+
+        var next = update(job) with { UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() };
+        _jobs[id] = next;
+        return next;
+    }
 }

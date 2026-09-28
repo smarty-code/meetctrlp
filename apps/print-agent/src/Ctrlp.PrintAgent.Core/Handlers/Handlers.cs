@@ -249,6 +249,25 @@ internal sealed class JobsCancelHandler : RpcHandler<JobIdRequest, JobDto>
     }
 }
 
+internal sealed class JobsRetryHandler : RpcHandler<JobIdRequest, JobDto>
+{
+    private readonly AgentRuntime _runtime;
+
+    public JobsRetryHandler(AgentRuntime runtime) => _runtime = runtime;
+
+    public override string Method => RpcMethods.JobsRetry;
+
+    protected override JobDto Handle(JobIdRequest? request, RpcContext context)
+    {
+        if (request is null || string.IsNullOrWhiteSpace(request.Id))
+        {
+            throw RpcException.InvalidParams("id is required");
+        }
+
+        return _runtime.Jobs.Retry(request.Id) ?? throw RpcException.JobNotFound(request.Id);
+    }
+}
+
 internal sealed class SecretsGetHandler : RpcHandler<object, RefreshTokenResponse>
 {
     private readonly AgentRuntime _runtime;

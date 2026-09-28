@@ -35,6 +35,7 @@ export async function GET(request: Request, context: RouteContext) {
           onSnapshot: (orders) => send("ORDERS_SNAPSHOT", { orders }),
           onCreated: (order) => send("ORDER_CREATED", order),
           onChanged: (order) => send("ORDER_STATUS_CHANGED", order),
+          onJobChanged: (job) => send("PRINT_JOB_CHANGED", job),
           onError: (error) => send("ERROR", { error: error.message }),
         });
 

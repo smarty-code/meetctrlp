@@ -22,6 +22,7 @@ public static class RpcMethods
     public const string JobsList = "jobs.list";
     public const string JobsGet = "jobs.get";
     public const string JobsCancel = "jobs.cancel";
+    public const string JobsRetry = "jobs.retry";
 
     public const string SecretsGetRefreshToken = "secrets.getRefreshToken";
     public const string SecretsSetRefreshToken = "secrets.setRefreshToken";

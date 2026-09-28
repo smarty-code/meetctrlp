@@ -1,26 +1,19 @@
 use super::{bridge, framing, log, AgentBridge};
 use serde_json::{json, Value};
+use std::fs;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
 
 pub async fn boot(app: AppHandle) -> Result<(), String> {
-    let pipe = format!("ctrlp-print-agent-{}", Uuid::new_v4().simple());
-    let token = Uuid::new_v4().to_string();
-    let parent_pid = std::process::id().to_string();
+    let pipe = "ctrlp-print-agent".to_string();
+    let token = persistent_agent_token(&app)?;
     log::write(
         "boot",
-        format!("start pipe={pipe} parentPid={parent_pid} tokenLen={}", token.len()),
+        format!("start pipe={pipe} tokenLen={}", token.len()),
     );
-    let args = [
-        "--pipe",
-        pipe.as_str(),
-        "--token",
-        token.as_str(),
-        "--parent-pid",
-        parent_pid.as_str(),
-    ];
+    let args = ["--pipe", pipe.as_str(), "--token", token.as_str()];
 
     // Tauri copies externalBin next to the app EXE as `ctrlp-print-agent.exe`.
     // `sidecar("binaries/...")` looks under target/debug/binaries, which `tauri dev` does not create.
@@ -114,4 +107,23 @@ pub async fn boot(app: AppHandle) -> Result<(), String> {
         .become_ready(child, writer, reader, app.clone())
         .await;
     Ok(())
+}
+
+fn persistent_agent_token(app: &AppHandle) -> Result<String, String> {
+    let directory = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| format!("resolve agent data directory: {error}"))?;
+    let token_path = directory.join("agent.pipe-token");
+    if let Ok(existing) = fs::read_to_string(&token_path) {
+        let token = existing.trim().to_string();
+        if !token.is_empty() {
+            return Ok(token);
+        }
+    }
+
+    fs::create_dir_all(&directory).map_err(|error| format!("create agent data directory: {error}"))?;
+    let token = Uuid::new_v4().to_string();
+    fs::write(&token_path, &token).map_err(|error| format!("persist agent token: {error}"))?;
+    Ok(token)
 }
