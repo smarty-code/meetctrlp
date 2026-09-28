@@ -2,7 +2,7 @@ import { spawn } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { applyDevPath } from "../../../scripts/dev-path.mjs"
+import { applyDevPath, prependPath } from "../../../scripts/dev-path.mjs"
 
 const shopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const isWindows = process.platform === "win32"
@@ -39,7 +39,7 @@ function addMsvcLinkDir() {
     for (const version of versions) {
       const binDir = path.join(hostDir, version, "bin", "Hostx64", "x64")
       if (fs.existsSync(path.join(binDir, "link.exe"))) {
-        prependPath(binDir)
+        prependPath(process.env, binDir)
         return
       }
     }

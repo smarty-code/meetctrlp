@@ -10,6 +10,11 @@
       "allow": [
         {
           "args": true,
+          "name": "ctrlp-print-agent",
+          "sidecar": true
+        },
+        {
+          "args": true,
           "name": "binaries/ctrlp-print-agent",
           "sidecar": true
         }
@@ -18,6 +23,11 @@
     {
       "identifier": "shell:allow-execute",
       "allow": [
+        {
+          "args": true,
+          "name": "ctrlp-print-agent",
+          "sidecar": true
+        },
         {
           "args": true,
           "name": "binaries/ctrlp-print-agent",

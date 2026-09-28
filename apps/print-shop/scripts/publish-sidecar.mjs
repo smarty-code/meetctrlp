@@ -86,4 +86,14 @@ if (!fs.existsSync(published)) {
 
 const dest = path.join(binariesDir, `ctrlp-print-agent-${targetTriple()}.exe`)
 fs.copyFileSync(published, dest)
+
+for (const config of ["debug", "release"]) {
+  const outDir = path.join(shopRoot, "src-tauri", "target", config)
+  const sibling = path.join(outDir, "ctrlp-print-agent.exe")
+  const nested = path.join(outDir, "binaries", "ctrlp-print-agent.exe")
+  fs.mkdirSync(path.join(outDir, "binaries"), { recursive: true })
+  fs.copyFileSync(published, sibling)
+  fs.copyFileSync(published, nested)
+}
+
 console.log(`sidecar ready: ${dest}`)

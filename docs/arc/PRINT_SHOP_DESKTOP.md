@@ -170,10 +170,13 @@ On Windows the file **must** be named:
 apps/print-shop/src-tauri/binaries/ctrlp-print-agent-x86_64-pc-windows-msvc.exe
 ```
 
+At runtime Tauri copies that file next to the app as `ctrlp-print-agent.exe` (for example `src-tauri/target/debug/ctrlp-print-agent.exe`). The Rust shell tries `sidecar("ctrlp-print-agent")` first, then `sidecar("binaries/ctrlp-print-agent")`.
+
 `scripts/publish-sidecar.mjs`:
 
 1. `dotnet publish` Host as self-contained, single-file, `win-x64`
-2. Copy `ctrlp-print-agent.exe` to the triple-suffixed sidecar path
+2. Copy to the triple-suffixed sidecar path
+3. Also copy `ctrlp-print-agent.exe` into `target/debug` and `target/debug/binaries` so `tauri dev` can spawn it
 
 `pnpm desktop:dev` and `pnpm desktop:build` run that script first (`beforeDevCommand` / `beforeBuildCommand`).
 

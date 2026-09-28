@@ -9,23 +9,36 @@ pub async fn boot(app: AppHandle) -> Result<(), String> {
     let pipe = format!("ctrlp-print-agent-{}", Uuid::new_v4().simple());
     let token = Uuid::new_v4().to_string();
     let parent_pid = std::process::id().to_string();
+    let args = [
+        "--pipe",
+        pipe.as_str(),
+        "--token",
+        token.as_str(),
+        "--parent-pid",
+        parent_pid.as_str(),
+    ];
 
-    let sidecar = app
-        .shell()
-        .sidecar("binaries/ctrlp-print-agent")
-        .map_err(|err| format!("sidecar not bundled: {err}"))?
-        .args([
-            "--pipe",
-            &pipe,
-            "--token",
-            &token,
-            "--parent-pid",
-            &parent_pid,
-        ]);
+    // Tauri copies externalBin next to the app EXE as `ctrlp-print-agent.exe`.
+    // `sidecar("binaries/...")` looks under target/debug/binaries, which `tauri dev` does not create.
+    let names = ["ctrlp-print-agent", "binaries/ctrlp-print-agent"];
+    let mut last_error = "no sidecar name tried".to_string();
+    let mut spawned = None;
 
-    let (mut rx, child) = sidecar
-        .spawn()
-        .map_err(|err| format!("failed to spawn print agent: {err}"))?;
+    for name in names {
+        match app.shell().sidecar(name) {
+            Ok(command) => match command.args(args).spawn() {
+                Ok(pair) => {
+                    spawned = Some(pair);
+                    break;
+                }
+                Err(error) => last_error = format!("{name}: {error}"),
+            },
+            Err(error) => last_error = format!("{name}: {error}"),
+        }
+    }
+
+    let (mut rx, child) =
+        spawned.ok_or_else(|| format!("failed to spawn print agent: {last_error}"))?;
 
     tauri::async_runtime::spawn(async move {
         while let Some(event) = rx.recv().await {
