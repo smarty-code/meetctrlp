@@ -3,6 +3,8 @@
 **This is the source of truth for `apps/desktop-proto`.**  
 Read this before writing code in that folder.
 
+The **current shop desktop product** (Tauri 2 UI + C# sidecar) is documented in [`docs/arc/PRINT_SHOP_DESKTOP.md`](../arc/PRINT_SHOP_DESKTOP.md). Do not implement that stack inside this WPF folder.
+
 Related files that are **not** the current prototype:
 
 | Doc | Status |

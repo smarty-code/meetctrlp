@@ -1,0 +1,40 @@
+{
+  "name": "print-shop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CtrlP Print Shop Tauri UI",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "tsc --noEmit",
+    "format": "prettier --config ../../packages/config/prettier/index.mjs --ignore-path ../../packages/config/prettier/.prettierignore --write \"src/**/*.{ts,tsx,css}\"",
+    "sidecar": "node scripts/publish-sidecar.mjs",
+    "tauri": "node scripts/run-with-toolchain.mjs",
+    "tauri:dev": "node scripts/run-with-toolchain.mjs dev",
+    "tauri:build": "node scripts/run-with-toolchain.mjs build"
+  },
+  "dependencies": {
+    "@ctrlp/ui": "workspace:*",
+    "@tauri-apps/api": "^2.9.0",
+    "@tauri-apps/plugin-shell": "^2.3.1",
+    "lucide-react": "^1.45.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.13",
+    "@tauri-apps/cli": "^2.9.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^5.0.4",
+    "prettier": "^3.9.6",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "vite": "^7.1.7",
+    "vitest": "^3.2.4"
+  }
+}

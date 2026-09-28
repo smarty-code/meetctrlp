@@ -1,0 +1,19 @@
+@import "tailwindcss";
+@import "@ctrlp/ui/design-system.css";
+@import "@ctrlp/ui/shadcn.css";
+
+@source "./";
+@source "../../../packages/ui/src";
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-din-round);
+  background: var(--color-paper);
+  color: var(--color-charcoal);
+}

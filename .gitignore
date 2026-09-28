@@ -30,7 +30,10 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 .idea/
-.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/extensions.json
 *.swp
 *.swo
 
@@ -44,3 +47,13 @@ graphify-out/
 tmp/
 temp/
 uploads/
+
+# .NET / Tauri desktop
+.vs/
+*.user
+apps/print-agent/**/bin/
+apps/print-agent/**/obj/
+apps/print-shop/src-tauri/target/
+apps/print-shop/src-tauri/gen/
+apps/print-shop/src-tauri/.sidecar-publish/
+apps/print-shop/src-tauri/binaries/*.exe

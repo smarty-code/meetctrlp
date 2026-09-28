@@ -1,0 +1,13 @@
+{
+  "name": "print-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CtrlP Windows print agent sidecar",
+  "scripts": {
+    "restore": "dotnet restore Ctrlp.PrintAgent.sln",
+    "build": "dotnet build Ctrlp.PrintAgent.sln -c Release",
+    "test": "dotnet test Ctrlp.PrintAgent.sln -c Release",
+    "dev": "dotnet run --project src/Ctrlp.PrintAgent.Host/Ctrlp.PrintAgent.Host.csproj -c Debug -- --pipe ctrlp-print-agent --token dev-token --dev",
+    "publish:sidecar": "node ../print-shop/scripts/publish-sidecar.mjs"
+  }
+}

@@ -1,0 +1,16 @@
+namespace Ctrlp.PrintAgent.Contracts;
+
+public interface IPrinterCatalog
+{
+    IReadOnlyList<PrinterDto> List();
+    PrinterDto? Get(string id);
+    IReadOnlyList<PrinterDto> Refresh();
+}
+
+public interface IJobStore
+{
+    JobDto Enqueue(EnqueueJobRequest request);
+    IReadOnlyList<JobDto> List();
+    JobDto? Get(string id);
+    JobDto? Cancel(string id);
+}

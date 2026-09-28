@@ -1,0 +1,29 @@
+{
+  "identifier": "default",
+  "description": "CtrlP Print Shop desktop capabilities",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "args": true,
+          "name": "binaries/ctrlp-print-agent",
+          "sidecar": true
+        }
+      ]
+    },
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "args": true,
+          "name": "binaries/ctrlp-print-agent",
+          "sidecar": true
+        }
+      ]
+    }
+  ]
+}

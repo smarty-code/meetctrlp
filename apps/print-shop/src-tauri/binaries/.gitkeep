@@ -1,0 +1,2 @@
+# Keep this directory so Tauri sidecar copies have a destination.
+# Built binaries are gitignored: ctrlp-print-agent-*.exe

@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Ctrlp.PrintAgent.Ipc</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Ctrlp.PrintAgent.Contracts\Ctrlp.PrintAgent.Contracts.csproj" />
+  </ItemGroup>
+</Project>

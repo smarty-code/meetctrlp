@@ -2,6 +2,8 @@
 
 When building or changing any UI, use the shared design system in `docs/design-system/` as the source of truth. The canonical files are the newer `copy`-suffixed files; do not recreate or use the removed root-named variants.
 
+Shop desktop (Tauri + C# agent): `docs/arc/PRINT_SHOP_DESKTOP.md`.
+
 - Read `docs/design-system/DESIGN copy.md` for visual direction, component patterns, and do/don't rules.
 - Use the tokens from `docs/design-system/tokens copy.json` and `docs/design-system/variables copy.css`; do not invent replacement colors, radii, typography, or spacing values without a design-system update.
 - Reuse styles and components from `@ctrlp/ui` before creating app-local UI primitives.

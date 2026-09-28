@@ -1,0 +1,5 @@
+{
+  "terminal.integrated.env.windows": {
+    "PATH": "C:\\Program Files\\nodejs;${env:LOCALAPPDATA}\\pnpm;${env:LOCALAPPDATA}\\pnpm\\bin;C:\\Program Files\\dotnet;${env:USERPROFILE}\\.cargo\\bin;${env:PATH}"
+  }
+}
