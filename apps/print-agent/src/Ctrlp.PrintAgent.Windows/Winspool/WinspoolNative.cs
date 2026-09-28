@@ -31,6 +31,9 @@ internal static class WinspoolNative
     public const uint StatusDoorOpen = 0x00400000;
 
     public const uint AttributeShared = 0x00000008;
+    public const uint AttributeNetwork = 0x00000010;
+    public const uint AttributeLocal = 0x00000040;
+    public const int ErrorInsufficientBuffer = 122;
 
     [DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern bool EnumPrinters(
@@ -44,6 +47,14 @@ internal static class WinspoolNative
 
     [DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern bool GetDefaultPrinter(IntPtr buffer, ref int bufferSize);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct PrinterInfo4
+    {
+        public string? PrinterName;
+        public string? ServerName;
+        public uint Attributes;
+    }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     public struct PrinterInfo2

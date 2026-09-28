@@ -16,6 +16,7 @@ public sealed class AgentRuntime
 {
     private readonly CancellationTokenSource _shutdown = new();
     private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
+    private int _printerCount;
 
     public AgentRuntime(AgentOptions options, IPrinterCatalog printers, IJobStore jobs)
     {
@@ -33,24 +34,29 @@ public sealed class AgentRuntime
 
     public void MarkReady() => State = AgentRunState.Ready;
 
+    public void RememberPrinterCount(int count) => _printerCount = count;
+
     public void RequestShutdown()
     {
         State = AgentRunState.Stopping;
         _shutdown.Cancel();
+        AgentTrace.Write("agent.shutdown requested");
     }
 
     public AgentStatusDto Status()
     {
-        var printers = Printers.List();
         var jobs = Jobs.List();
+        var queued = jobs.Count(job => job.State is "queued" or "created" or "printing");
+        AgentTrace.Write(
+            $"agent.status state={State} printerCount={_printerCount} jobs={jobs.Count} queued={queued} uptimeMs={(long)(DateTimeOffset.UtcNow - _startedAt).TotalMilliseconds}");
         return new AgentStatusDto(
             ProtocolVersion: ProtocolInfo.Version,
             AgentVersion: Options.AgentVersion,
             State: State.ToString().ToLowerInvariant(),
             PipeName: Options.PipeName,
             UptimeMs: (long)(DateTimeOffset.UtcNow - _startedAt).TotalMilliseconds,
-            PrinterCount: printers.Count,
-            QueuedJobs: jobs.Count(job => job.State is "queued" or "created" or "printing"));
+            PrinterCount: _printerCount,
+            QueuedJobs: queued);
     }
 
     public RpcDispatcher CreateDispatcher()

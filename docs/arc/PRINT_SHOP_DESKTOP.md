@@ -156,7 +156,12 @@ ctrlp-print-agent.exe
   --dev                  allow anonymous after empty token / skip strict hello
 ```
 
-Logs: `%LOCALAPPDATA%\Ctrlp\PrintAgent\agent.log` and stderr.
+Logs:
+
+- Agent file: `%LOCALAPPDATA%\Ctrlp\PrintAgent\agent.log` (also mirrored to sidecar stderr).
+- Rust/Tauri: `[print-shop:…]` lines in the `pnpm desktop:dev` terminal (boot, pipe connect, every RPC).
+- UI: `[print-shop]` lines in DevTools (`Ctrl+Shift+I`).
+
 
 ---
 

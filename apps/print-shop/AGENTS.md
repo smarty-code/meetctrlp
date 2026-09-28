@@ -64,3 +64,5 @@ Do **not**:
 - Call `winspool` or .NET from the UI.
 - Recreate shadcn components here; add them to `packages/ui`.
 - Check in `src-tauri/binaries/*.exe` or `src-tauri/target/`.
+
+Debug: UI logs are `[print-shop]` in DevTools. Rust logs are `[print-shop:…]` in the `pnpm desktop:dev` terminal. Agent logs are `%LOCALAPPDATA%\Ctrlp\PrintAgent\agent.log`.

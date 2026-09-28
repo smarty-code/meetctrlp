@@ -1,33 +1,47 @@
+use crate::agent::log;
 use crate::agent::AgentBridge;
 use serde_json::{json, Value};
 use tauri::State;
 
 #[tauri::command]
 pub async fn agent_ping(bridge: State<'_, AgentBridge>) -> Result<Value, String> {
-    bridge.call("agent.ping", json!({})).await
+    traced(&bridge, "agent_ping", "agent.ping", json!({})).await
 }
 
 #[tauri::command]
 pub async fn get_agent_status(bridge: State<'_, AgentBridge>) -> Result<Value, String> {
-    match bridge.call("agent.status", json!({})).await {
+    match traced(&bridge, "get_agent_status", "agent.status", json!({})).await {
         Ok(value) => Ok(value),
-        Err(_) => Ok(bridge.snapshot().await),
+        Err(error) => {
+            let snapshot = bridge.snapshot().await;
+            log::write(
+                "command",
+                format!("get_agent_status fallback snapshot={snapshot} error={error}"),
+            );
+            Ok(snapshot)
+        }
     }
 }
 
 #[tauri::command]
 pub async fn list_printers(bridge: State<'_, AgentBridge>) -> Result<Value, String> {
-    bridge.call("printers.list", json!({})).await
+    traced(&bridge, "list_printers", "printers.list", json!({})).await
 }
 
 #[tauri::command]
 pub async fn get_printer(bridge: State<'_, AgentBridge>, id: String) -> Result<Value, String> {
-    bridge.call("printers.get", json!({ "id": id })).await
+    traced(
+        &bridge,
+        "get_printer",
+        "printers.get",
+        json!({ "id": id }),
+    )
+    .await
 }
 
 #[tauri::command]
 pub async fn refresh_printers(bridge: State<'_, AgentBridge>) -> Result<Value, String> {
-    bridge.call("printers.refresh", json!({})).await
+    traced(&bridge, "refresh_printers", "printers.refresh", json!({})).await
 }
 
 #[tauri::command]
@@ -38,35 +52,46 @@ pub async fn enqueue_job(
     document_name: Option<String>,
     copies: Option<u32>,
 ) -> Result<Value, String> {
-    bridge
-        .call(
-            "jobs.enqueue",
-            json!({
-                "printerId": printer_id,
-                "documentPath": document_path,
-                "documentName": document_name,
-                "copies": copies.unwrap_or(1),
-            }),
-        )
-        .await
+    traced(
+        &bridge,
+        "enqueue_job",
+        "jobs.enqueue",
+        json!({
+            "printerId": printer_id,
+            "documentPath": document_path,
+            "documentName": document_name,
+            "copies": copies.unwrap_or(1),
+        }),
+    )
+    .await
 }
 
 #[tauri::command]
 pub async fn list_jobs(bridge: State<'_, AgentBridge>) -> Result<Value, String> {
-    bridge.call("jobs.list", json!({})).await
+    traced(&bridge, "list_jobs", "jobs.list", json!({})).await
 }
 
 #[tauri::command]
 pub async fn get_job(bridge: State<'_, AgentBridge>, id: String) -> Result<Value, String> {
-    bridge.call("jobs.get", json!({ "id": id })).await
+    traced(&bridge, "get_job", "jobs.get", json!({ "id": id })).await
 }
 
 #[tauri::command]
 pub async fn cancel_job(bridge: State<'_, AgentBridge>, id: String) -> Result<Value, String> {
-    bridge.call("jobs.cancel", json!({ "id": id })).await
+    traced(&bridge, "cancel_job", "jobs.cancel", json!({ "id": id })).await
 }
 
 #[tauri::command]
 pub async fn shutdown_agent(bridge: State<'_, AgentBridge>) -> Result<Value, String> {
-    bridge.call("agent.shutdown", json!({})).await
+    traced(&bridge, "shutdown_agent", "agent.shutdown", json!({})).await
+}
+
+async fn traced(
+    bridge: &AgentBridge,
+    command: &str,
+    method: &str,
+    params: Value,
+) -> Result<Value, String> {
+    log::write("command", format!("{command} invoke method={method}"));
+    bridge.call(method, params).await
 }

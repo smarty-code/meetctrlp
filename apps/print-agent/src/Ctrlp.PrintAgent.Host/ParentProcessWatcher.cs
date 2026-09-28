@@ -6,6 +6,7 @@ internal static class ParentProcessWatcher
 {
     public static async Task WatchAsync(int parentPid, CancellationTokenSource shutdown, Action<string> log)
     {
+        log($"watching parent pid={parentPid}");
         try
         {
             using var parent = Process.GetProcessById(parentPid);

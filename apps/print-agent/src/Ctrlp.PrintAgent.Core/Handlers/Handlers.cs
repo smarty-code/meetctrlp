@@ -48,11 +48,13 @@ internal sealed class HelloHandler : IRpcHandler
             var expected = context.ExpectedToken ?? string.Empty;
             if (!FixedEquals(expected, request.Token))
             {
+                AgentTrace.Write("agent.hello rejected: token mismatch");
                 throw RpcException.Unauthorized("Invalid agent token.");
             }
         }
 
         context.IsAuthenticated = true;
+        AgentTrace.Write($"agent.hello ok client={request.Client ?? "(none)"} pipe={_runtime.Options.PipeName}");
         var response = new HelloResponse(
             ProtocolVersion: ProtocolInfo.Version,
             AgentVersion: _runtime.Options.AgentVersion,
@@ -116,8 +118,13 @@ internal sealed class PrintersListHandler : RpcHandler<object, PrinterListRespon
 
     public override string Method => RpcMethods.PrintersList;
 
-    protected override PrinterListResponse Handle(object? request, RpcContext context) =>
-        new(_runtime.Printers.List());
+    protected override PrinterListResponse Handle(object? request, RpcContext context)
+    {
+        var printers = _runtime.Printers.List();
+        _runtime.RememberPrinterCount(printers.Count);
+        AgentTrace.Write($"printers.list count={printers.Count}");
+        return new(printers);
+    }
 }
 
 internal sealed class PrintersGetHandler : RpcHandler<PrinterGetRequest, PrinterDto>
@@ -135,7 +142,15 @@ internal sealed class PrintersGetHandler : RpcHandler<PrinterGetRequest, Printer
             throw RpcException.InvalidParams("id is required");
         }
 
-        return _runtime.Printers.Get(request.Id) ?? throw RpcException.PrinterNotFound(request.Id);
+        var printer = _runtime.Printers.Get(request.Id);
+        if (printer is null)
+        {
+            AgentTrace.Write($"printers.get miss id={request.Id}");
+            throw RpcException.PrinterNotFound(request.Id);
+        }
+
+        AgentTrace.Write($"printers.get hit id={printer.Id}");
+        return printer;
     }
 }
 
@@ -147,8 +162,13 @@ internal sealed class PrintersRefreshHandler : RpcHandler<object, PrinterListRes
 
     public override string Method => RpcMethods.PrintersRefresh;
 
-    protected override PrinterListResponse Handle(object? request, RpcContext context) =>
-        new(_runtime.Printers.Refresh());
+    protected override PrinterListResponse Handle(object? request, RpcContext context)
+    {
+        var printers = _runtime.Printers.Refresh();
+        _runtime.RememberPrinterCount(printers.Count);
+        AgentTrace.Write($"printers.refresh count={printers.Count}");
+        return new(printers);
+    }
 }
 
 internal sealed class JobsEnqueueHandler : RpcHandler<EnqueueJobRequest, JobDto>
@@ -162,12 +182,16 @@ internal sealed class JobsEnqueueHandler : RpcHandler<EnqueueJobRequest, JobDto>
     protected override JobDto Handle(EnqueueJobRequest? request, RpcContext context)
     {
         request ??= new EnqueueJobRequest(null, null, null);
+        AgentTrace.Write($"jobs.enqueue printerId={request.PrinterId ?? "(default)"} document={request.DocumentName ?? "(none)"} copies={request.Copies}");
         if (!string.IsNullOrWhiteSpace(request.PrinterId) && _runtime.Printers.Get(request.PrinterId) is null)
         {
+            AgentTrace.Write($"jobs.enqueue printer not found id={request.PrinterId}");
             throw RpcException.PrinterNotFound(request.PrinterId);
         }
 
-        return _runtime.Jobs.Enqueue(request);
+        var job = _runtime.Jobs.Enqueue(request);
+        AgentTrace.Write($"jobs.enqueue created id={job.Id} state={job.State}");
+        return job;
     }
 }
 
@@ -179,8 +203,12 @@ internal sealed class JobsListHandler : RpcHandler<object, JobListResponse>
 
     public override string Method => RpcMethods.JobsList;
 
-    protected override JobListResponse Handle(object? request, RpcContext context) =>
-        new(_runtime.Jobs.List());
+    protected override JobListResponse Handle(object? request, RpcContext context)
+    {
+        var jobs = _runtime.Jobs.List();
+        AgentTrace.Write($"jobs.list count={jobs.Count}");
+        return new(jobs);
+    }
 }
 
 internal sealed class JobsGetHandler : RpcHandler<JobIdRequest, JobDto>

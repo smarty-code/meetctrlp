@@ -20,6 +20,7 @@ import {
   pingAgent,
   refreshPrinters,
 } from "./lib/agent"
+import { shopError, shopLog, shopWarn } from "./lib/debug"
 import type { AgentStatus, PrintJob, Printer as PrinterModel } from "./lib/protocol"
 
 type Screen = "dashboard" | "printers" | "jobs" | "settings"
@@ -39,58 +40,92 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  async function refreshAll() {
-    setBusy(true)
+  async function refreshAll(userInitiated = false) {
+    shopLog("ui", "refreshAll begin", { userInitiated, busy })
+    if (userInitiated) {
+      setBusy(true)
+    }
     setError(null)
     try {
       const nextStatus = await getAgentStatus()
+      shopLog("ui", "status", nextStatus)
       setStatus(nextStatus)
       if (nextStatus.state === "disconnected" || nextStatus.state === "starting") {
+        shopWarn("ui", "agent not ready; skipping printer/job fetch", nextStatus.state)
         setPrinters([])
         setJobs([])
         return
       }
-      const [nextPrinters, nextJobs] = await Promise.all([
-        listPrinters(),
-        listJobs(),
-      ])
+
+      const nextPrinters = await listPrinters()
+      const nextJobs = await listJobs()
+      shopLog("ui", "inventory", {
+        printers: nextPrinters.length,
+        jobs: nextJobs.length,
+      })
       setPrinters(nextPrinters)
       setJobs(nextJobs)
     } catch (err) {
+      shopError("ui", "refreshAll failed", err)
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      if (userInitiated) {
+        setBusy(false)
+      }
+      shopLog("ui", "refreshAll end", { userInitiated })
+    }
+  }
+
+  async function pollStatus() {
+    try {
+      const nextStatus = await getAgentStatus()
+      shopLog("ui", "poll status", nextStatus.state, {
+        printers: nextStatus.printerCount,
+        queued: nextStatus.queuedJobs,
+      })
+      setStatus(nextStatus)
+    } catch (err) {
+      shopWarn("ui", "poll status failed", err)
+    }
+  }
+
+  useEffect(() => {
+    shopLog("ui", "mount", { tauri: isTauriRuntime() })
+    void refreshAll(true)
+    const timer = window.setInterval(() => {
+      void pollStatus()
+    }, 5000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  async function handlePing() {
+    shopLog("ui", "ping")
+    setError(null)
+    try {
+      await pingAgent()
+      await refreshAll(true)
+    } catch (err) {
+      shopError("ui", "ping failed", err)
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function handleRefreshPrinters() {
+    shopLog("ui", "rediscover printers")
+    setBusy(true)
+    setError(null)
+    try {
+      setPrinters(await refreshPrinters())
+    } catch (err) {
+      shopError("ui", "rediscover failed", err)
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
     }
   }
 
-  useEffect(() => {
-    void refreshAll()
-    const timer = window.setInterval(() => {
-      void refreshAll()
-    }, 4000)
-    return () => window.clearInterval(timer)
-  }, [])
-
-  async function handlePing() {
-    setError(null)
-    try {
-      await pingAgent()
-      await refreshAll()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    }
-  }
-
-  async function handleRefreshPrinters() {
-    setError(null)
-    try {
-      setPrinters(await refreshPrinters())
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    }
-  }
-
   async function handleTestJob(printer?: PrinterModel) {
+    shopLog("ui", "enqueue test job", printer?.id)
     setError(null)
     try {
       await enqueueJob({
@@ -100,6 +135,7 @@ export default function App() {
       })
       setJobs(await listJobs())
     } catch (err) {
+      shopError("ui", "enqueue failed", err)
       setError(err instanceof Error ? err.message : String(err))
     }
   }
@@ -146,7 +182,7 @@ export default function App() {
               UI talks to the C# Windows agent over JSON-RPC named pipes.
             </p>
           </div>
-          <Button onClick={() => void refreshAll()} disabled={busy}>
+          <Button onClick={() => void refreshAll(true)} disabled={busy}>
             {busy ? "Refreshing" : "Refresh"}
           </Button>
         </div>
@@ -351,6 +387,8 @@ function SettingsPanel({ status }: { status: AgentStatus }) {
         <p>Pipe: {status.pipeName ?? "not connected"}</p>
         <p>Uptime: {status.uptimeMs ? `${Math.round(status.uptimeMs / 1000)}s` : "—"}</p>
         <p>Queued jobs: {status.queuedJobs ?? 0}</p>
+        <p>Agent log: %LOCALAPPDATA%\Ctrlp\PrintAgent\agent.log</p>
+        <p>UI logs: DevTools console (Ctrl+Shift+I). Rust/agent lines are in the desktop:dev terminal.</p>
       </CardContent>
     </Card>
   )

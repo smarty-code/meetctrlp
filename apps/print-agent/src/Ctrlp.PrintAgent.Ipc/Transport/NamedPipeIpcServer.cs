@@ -40,7 +40,7 @@ public sealed class NamedPipeIpcServer
                 return;
             }
 
-            _log?.Invoke("client connected");
+            _log?.Invoke($"client connected pipe='{_pipeName}'");
             var context = new RpcContext
             {
                 ExpectedToken = _token,
@@ -55,7 +55,7 @@ public sealed class NamedPipeIpcServer
             }
             catch (IOException ex)
             {
-                _log?.Invoke($"session closed: {ex.Message}");
+                _log?.Invoke($"session closed pipe='{_pipeName}': {ex}");
             }
             catch (OperationCanceledException)
             {

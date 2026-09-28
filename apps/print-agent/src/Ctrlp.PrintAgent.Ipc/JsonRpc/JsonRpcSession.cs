@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -29,19 +30,24 @@ public sealed class JsonRpcSession
             }
             catch (EndOfStreamException)
             {
+                _log?.Invoke("rpc stream ended");
                 return;
             }
             catch (OperationCanceledException)
             {
+                _log?.Invoke("rpc session cancelled");
                 return;
             }
 
+            _log?.Invoke($"rpc frame recv bytes={payload.Length}");
             var responseBytes = await HandleFrameAsync(payload, cancellationToken).ConfigureAwait(false);
             if (responseBytes is null)
             {
+                _log?.Invoke("rpc frame has no response (notification)");
                 continue;
             }
 
+            _log?.Invoke($"rpc frame send bytes={responseBytes.Length}");
             await LengthPrefixedFrame.WriteAsync(stream, responseBytes, cancellationToken).ConfigureAwait(false);
         }
     }
@@ -77,15 +83,20 @@ public sealed class JsonRpcSession
             var method = root.TryGetProperty("method", out var methodEl) ? methodEl.GetString() : null;
             JsonElement? paramsEl = root.TryGetProperty("params", out var p) ? p.Clone() : null;
             var id = hasId ? idEl.Clone() : (JsonElement?)null;
+            var idText = hasId ? idEl.GetRawText() : "notify";
+            var clock = Stopwatch.StartNew();
 
             if (string.IsNullOrWhiteSpace(method))
             {
+                _log?.Invoke($"rpc invalid id={idText}: method is required");
                 return hasId ? Encode(Error(id, RpcErrorCodes.InvalidRequest, "method is required")) : null;
             }
 
+            _log?.Invoke($"rpc begin method={method} id={idText}");
             try
             {
                 var result = await _dispatcher.DispatchAsync(method, paramsEl, _context, cancellationToken).ConfigureAwait(false);
+                _log?.Invoke($"rpc ok method={method} id={idText} elapsedMs={clock.ElapsedMilliseconds}");
                 if (!hasId)
                 {
                     return null;
@@ -95,11 +106,12 @@ public sealed class JsonRpcSession
             }
             catch (RpcException ex)
             {
+                _log?.Invoke($"rpc error method={method} id={idText} code={ex.Code} message={ex.Message} elapsedMs={clock.ElapsedMilliseconds}");
                 return hasId ? Encode(Error(id, ex.Code, ex.Message, ex.ErrorData)) : null;
             }
             catch (Exception ex)
             {
-                _log?.Invoke($"handler {method} failed: {ex.Message}");
+                _log?.Invoke($"rpc fail method={method} id={idText} elapsedMs={clock.ElapsedMilliseconds}: {ex}");
                 return hasId
                     ? Encode(Error(id, RpcErrorCodes.InternalError, "Internal error"))
                     : null;

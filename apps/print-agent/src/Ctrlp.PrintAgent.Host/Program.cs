@@ -11,6 +11,7 @@ internal static class Program
     {
         var options = AgentCli.Parse(args);
         using var log = AgentLog.Open();
+        AgentTrace.Sink = log.Write;
         using var shutdown = new CancellationTokenSource();
 
         Console.CancelKeyPress += (_, eventArgs) =>
@@ -20,7 +21,7 @@ internal static class Program
         };
 
         IPrinterCatalog printers = OperatingSystem.IsWindows()
-            ? new WinspoolPrinterCatalog()
+            ? new WinspoolPrinterCatalog(log.Write)
             : new StaticPrinterCatalog();
         var runtime = new AgentRuntime(options, printers, new InMemoryJobStore());
         var dispatcher = runtime.CreateDispatcher();
@@ -38,7 +39,8 @@ internal static class Program
 
         runtime.MarkReady();
         WriteReady(options);
-        log.Write($"ready pipe={options.PipeName} protocol={ProtocolInfo.Version}");
+        log.Write(
+            $"ready pid={Environment.ProcessId} pipe={options.PipeName} protocol={ProtocolInfo.Version} log={log.FilePath} parentPid={options.ParentPid?.ToString() ?? "none"} dev={options.DevMode}");
 
         try
         {

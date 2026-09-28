@@ -16,8 +16,9 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
+                agent::log::write("app", "setup: spawning print agent boot task");
                 if let Err(error) = agent::boot(handle.clone()).await {
-                    eprintln!("print agent failed to start: {error}");
+                    agent::log::write("app", format!("print agent failed to start: {error}"));
                     handle.state::<AgentBridge>().fail(error).await;
                 }
             });

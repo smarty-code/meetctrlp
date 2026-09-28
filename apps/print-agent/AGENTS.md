@@ -85,4 +85,4 @@ Do **not**:
 - Queue is not durable.
 - No cloud/auth in this process yet.
 
-When adding real printing, keep it in `Ctrlp.PrintAgent.Windows` behind `IPrinterCatalog` / a future `IPrintJobRunner`.
+Logs: `%LOCALAPPDATA%\Ctrlp\PrintAgent\agent.log` (mirrored to stderr). Each RPC logs method, id, and elapsedMs. Winspool logs EnumPrinters probe size, returned count, and timeouts.

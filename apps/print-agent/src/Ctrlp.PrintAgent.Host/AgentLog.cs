@@ -5,7 +5,13 @@ internal sealed class AgentLog : IDisposable
     private readonly object _gate = new();
     private readonly StreamWriter _writer;
 
-    private AgentLog(StreamWriter writer) => _writer = writer;
+    private AgentLog(StreamWriter writer, string filePath)
+    {
+        _writer = writer;
+        FilePath = filePath;
+    }
+
+    public string FilePath { get; }
 
     public static AgentLog Open()
     {
@@ -14,13 +20,14 @@ internal sealed class AgentLog : IDisposable
             "Ctrlp",
             "PrintAgent");
         Directory.CreateDirectory(dir);
+        var filePath = Path.Combine(dir, "agent.log");
         var stream = new FileStream(
-            Path.Combine(dir, "agent.log"),
+            filePath,
             FileMode.Append,
             FileAccess.Write,
             FileShare.ReadWrite);
         var writer = new StreamWriter(stream) { AutoFlush = true };
-        return new AgentLog(writer);
+        return new AgentLog(writer, filePath);
     }
 
     public void Write(string message)
