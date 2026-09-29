@@ -114,7 +114,7 @@ export function PrintersScreen({
                       onTest(printer)
                     }}
                   >
-                    Queue test job
+                    Queue test page
                   </Button>
                 </div>
               </CardContent>
@@ -256,6 +256,13 @@ function PrinterDrawer({
               label="Windows default"
               value={printer.isWindowsDefault || printer.isDefault ? "Yes" : "No"}
             />
+            <Spec
+              label="Shop default recipe"
+              value={formatPreset(printer.defaultPrintSettings)}
+            />
+            <p className="text-caption text-ash">
+              Routing uses this shop default, then the least-busy compatible enabled printer. Duplex is not offered to customers.
+            </p>
           </section>
         </div>
       </aside>
@@ -289,4 +296,19 @@ function Spec({ label, value }: { label: string; value: string }) {
       {value}
     </p>
   )
+}
+
+function formatPreset(value?: Record<string, unknown> | null) {
+  if (!value) {
+    return "Not saved yet"
+  }
+  return [
+    value.colorMode,
+    value.paperSize,
+    value.copies ? `${value.copies} copies` : null,
+    value.orientation,
+    value.duplex === true ? "duplex off for customers" : "simplex",
+  ]
+    .filter(Boolean)
+    .join(" · ")
 }

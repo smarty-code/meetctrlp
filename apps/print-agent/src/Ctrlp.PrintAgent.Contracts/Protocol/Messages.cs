@@ -112,6 +112,16 @@ public sealed record PrinterListResponse(
 public sealed record PrinterGetRequest(
     [property: JsonPropertyName("id")] string Id);
 
+public sealed record PrinterTestPageRequest(
+    [property: JsonPropertyName("printerId")] string? PrinterId);
+
+public sealed record ExportLogRequest(
+    [property: JsonPropertyName("destinationPath")] string DestinationPath);
+
+public sealed record ExportLogResponse(
+    [property: JsonPropertyName("path")] string Path,
+    [property: JsonPropertyName("bytesCopied")] long BytesCopied);
+
 public sealed record EnqueueJobRequest(
     [property: JsonPropertyName("printerId")] string? PrinterId,
     [property: JsonPropertyName("documentPath")] string? DocumentPath,

@@ -18,6 +18,15 @@ export type StoredShopUser = {
   lastLoginAt: string | null;
 };
 
+export type ShopAddress = {
+  line1: string | null;
+  line2: string | null;
+  city: string | null;
+  state: string | null;
+  postalCode: string | null;
+  country: string | null;
+};
+
 export type StoredShop = {
   id: string;
   name: string;
@@ -25,6 +34,7 @@ export type StoredShop = {
   email: string | null;
   status: string;
   address: string | null;
+  addressParts: ShopAddress;
 };
 
 const ROLES = new Set<ShopUserRole>(["OWNER", "MANAGER", "STAFF"]);
@@ -56,16 +66,22 @@ function textOrNull(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
+function parseAddress(value: unknown): ShopAddress {
+  const address = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  return {
+    line1: textOrNull(address.line1),
+    line2: textOrNull(address.line2),
+    city: textOrNull(address.city),
+    state: textOrNull(address.state),
+    postalCode: textOrNull(address.postalCode),
+    country: textOrNull(address.country),
+  };
+}
+
 function formatAddress(value: unknown) {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const address = value as Record<string, unknown>;
-  const parts = ["line1", "line2", "city", "state", "postalCode", "country"]
-    .map((key) => address[key])
-    .filter((part): part is string => typeof part === "string" && part.trim().length > 0);
-
+  const address = parseAddress(value);
+  const parts = [address.line1, address.line2, address.city, address.state, address.postalCode, address.country]
+    .filter((part): part is string => Boolean(part));
   return parts.length > 0 ? parts.join(", ") : null;
 }
 
@@ -299,6 +315,7 @@ export async function getShop(shopId: string): Promise<StoredShop | undefined> {
     email: textOrNull(data.email),
     status: typeof data.status === "string" ? data.status : "ACTIVE",
     address: formatAddress(data.address),
+    addressParts: parseAddress(data.address),
   };
 }
 

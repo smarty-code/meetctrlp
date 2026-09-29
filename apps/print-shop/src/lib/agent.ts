@@ -67,16 +67,12 @@ export async function refreshPrinters() {
   return result.printers
 }
 
-export function enqueueJob(input: {
-  printerId?: string
-  documentName?: string
-  copies?: number
-}) {
-  return call<PrintJob>("enqueue_job", {
-    printerId: input.printerId,
-    documentName: input.documentName,
-    copies: input.copies ?? 1,
-  })
+export function printTestPage(printerId?: string) {
+  return call<PrintJob>("print_test_page", { printerId })
+}
+
+export function exportAgentLog() {
+  return call<{ path: string; bytesCopied: number; cancelled?: boolean }>("export_agent_log")
 }
 
 export async function listJobs() {

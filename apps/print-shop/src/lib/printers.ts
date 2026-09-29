@@ -47,6 +47,7 @@ export function mergeShopPrinters(local: Printer[], cloud: CloudPrinter[]): Prin
       offered,
       isShopDefault: match?.isDefault === true,
       capabilities: match?.capabilities,
+      defaultPrintSettings: match?.defaultPrintSettings ?? printer.defaultPrintSettings,
     }
   })
 }
@@ -71,6 +72,7 @@ export function mergeLiveStatus(current: Printer[], live: Printer[]): Printer[] 
       offered: previous.offered,
       isShopDefault: previous.isShopDefault,
       capabilities: previous.capabilities,
+      defaultPrintSettings: previous.defaultPrintSettings,
       options: printer.options ?? previous.options,
       isColorCapable: printer.isColorCapable ?? previous.isColorCapable,
       isDuplexCapable: printer.isDuplexCapable ?? previous.isDuplexCapable,

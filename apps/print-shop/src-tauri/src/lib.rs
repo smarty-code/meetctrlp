@@ -4,9 +4,10 @@ mod commands;
 use agent::AgentBridge;
 use tauri::Manager;
 use commands::{
-    agent_ping, cancel_job, clear_refresh_token, enqueue_job, get_agent_status, get_host_identity,
-    get_host_telemetry, get_job, get_printer, get_refresh_token, list_jobs, list_printers,
-    refresh_printers, retry_job, set_agent_cloud_credential, set_refresh_token, shutdown_agent,
+    agent_ping, cancel_job, clear_refresh_token, enqueue_job, export_agent_log, get_agent_status,
+    get_host_identity, get_host_telemetry, get_job, get_printer, get_refresh_token, list_jobs,
+    list_printers, print_test_page, refresh_printers, retry_job, set_agent_cloud_credential,
+    set_refresh_token, shutdown_agent,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -31,6 +32,7 @@ pub fn run() {
             list_printers,
             get_printer,
             refresh_printers,
+            print_test_page,
             enqueue_job,
             list_jobs,
             get_job,
@@ -42,7 +44,8 @@ pub fn run() {
             set_agent_cloud_credential,
             clear_refresh_token,
             get_host_identity,
-            get_host_telemetry
+            get_host_telemetry,
+            export_agent_log
         ])
         .run(tauri::generate_context!())
         .expect("error while running CtrlP Print Shop");

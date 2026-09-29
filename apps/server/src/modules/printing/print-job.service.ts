@@ -156,6 +156,10 @@ function serializePrinterDoc(id: string, data: Record<string, unknown>) {
         }),
     activeJobsCount: Number(data.activeJobsCount ?? data.activeSpoolJobs ?? 0),
     maximumCopies: Number(data.maximumCopies ?? 1),
+    defaultPrintSettings:
+      data.defaultPrintSettings && typeof data.defaultPrintSettings === "object"
+        ? data.defaultPrintSettings
+        : null,
   };
 }
 
@@ -705,7 +709,10 @@ export async function claimPrintJob(
       throw new AuthServiceError(403, "PRINT_JOB_AGENT_MISMATCH");
     }
     if (jobSnap.get("status") !== "QUEUED") {
-      throw new AuthServiceError(409, "PRINT_JOB_STATUS_CONFLICT");
+      throw new AuthServiceError(
+        409,
+        jobSnap.get("leaseId") ? "another device claimed this job" : "PRINT_JOB_STATUS_CONFLICT",
+      );
     }
 
     const now = FieldValue.serverTimestamp();

@@ -218,6 +218,9 @@ export async function createDocumentDownloadUrl(
 ) {
   const order = await getShopOrder(user, orderId);
   const document = findDocument(order, docId);
+  if (document.shreddedAt) {
+    throw new AuthServiceError(409, "DOCUMENT_SHREDDED");
+  }
   if (!document.storageKey || !document.sha256Hash) {
     throw new AuthServiceError(404, "this document has no stored file");
   }
@@ -262,6 +265,9 @@ export async function readDocumentContent(shopId: string, orderId: string, docId
   const document = documents.find((entry) => entry.docId === docId || entry.id === docId);
   if (!document?.storageKey) {
     throw new AuthServiceError(404, "DOCUMENT_NOT_FOUND");
+  }
+  if (document.shreddedAt) {
+    throw new AuthServiceError(409, "DOCUMENT_SHREDDED");
   }
 
   if (document.storageBackend === "s3") {

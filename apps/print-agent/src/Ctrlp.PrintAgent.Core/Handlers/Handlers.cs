@@ -171,6 +171,37 @@ internal sealed class PrintersRefreshHandler : RpcHandler<object, PrinterListRes
     }
 }
 
+internal sealed class PrintersTestPageHandler : RpcHandler<PrinterTestPageRequest, JobDto>
+{
+    private readonly AgentRuntime _runtime;
+
+    public PrintersTestPageHandler(AgentRuntime runtime) => _runtime = runtime;
+
+    public override string Method => RpcMethods.PrintersTestPage;
+
+    protected override JobDto Handle(PrinterTestPageRequest? request, RpcContext context)
+    {
+        var printerId = request?.PrinterId;
+        var printer = string.IsNullOrWhiteSpace(printerId)
+            ? _runtime.Printers.List().FirstOrDefault(candidate => candidate.IsDefault) ?? _runtime.Printers.List().FirstOrDefault()
+            : _runtime.Printers.Get(printerId);
+        if (printer is null)
+        {
+            throw RpcException.PrinterNotFound(printerId ?? "(default)");
+        }
+
+        var path = TestPageDocument.Write(printer.Name);
+        AgentTrace.Write($"printers.testPage printerId={printer.Id} copies=1");
+        return _runtime.Jobs.Enqueue(new(
+            PrinterId: printer.Id,
+            DocumentPath: path,
+            DocumentName: "CtrlP test page.pdf",
+            Copies: 1,
+            PagesTotal: 1,
+            IdempotencyKey: $"test-page-{printer.Id}-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}"));
+    }
+}
+
 internal sealed class JobsEnqueueHandler : RpcHandler<EnqueueJobRequest, JobDto>
 {
     private readonly AgentRuntime _runtime;
@@ -394,5 +425,36 @@ internal sealed class HostTelemetryHandler : RpcHandler<object, HostTelemetryDto
         var telemetry = _runtime.Host.Telemetry();
         AgentTrace.Write($"host.telemetry memoryWorkingSetBytes={telemetry.MemoryWorkingSetBytes}");
         return telemetry;
+    }
+}
+
+internal sealed class HostExportLogHandler : RpcHandler<ExportLogRequest, ExportLogResponse>
+{
+    public override string Method => RpcMethods.HostExportLog;
+
+    protected override ExportLogResponse Handle(ExportLogRequest? request, RpcContext context)
+    {
+        if (request is null || string.IsNullOrWhiteSpace(request.DestinationPath))
+        {
+            throw RpcException.InvalidParams("destinationPath is required");
+        }
+
+        var source = TestPageDocument.LogPath();
+        if (!File.Exists(source))
+        {
+            throw RpcException.Internal("agent log is not available yet");
+        }
+
+        var destination = Path.GetFullPath(request.DestinationPath);
+        var parent = Path.GetDirectoryName(destination);
+        if (!string.IsNullOrWhiteSpace(parent))
+        {
+            Directory.CreateDirectory(parent);
+        }
+        using var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var output = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None);
+        input.CopyTo(output);
+        AgentTrace.Write($"host.exportLog bytes={input.Length}");
+        return new(destination, input.Length);
     }
 }

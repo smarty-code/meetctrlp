@@ -62,5 +62,6 @@ describe("order stream state", () => {
     expect(withJob.orders).toEqual([order])
     expect(withJob.jobsByOrderId[order.id]).toHaveLength(1)
     expect(withJob.jobsByOrderId[order.id][0]?.status).toBe("QUEUED")
+    expect(withOrder.notifications[0]?.kind).toBe("new-order")
   })
 })

@@ -1,10 +1,12 @@
-import type { CloudPrintJob, OrderStreamEvent, ShopOrder } from "./protocol"
+import type { CloudPrintJob, OrderStreamEvent, ShopNotification, ShopOrder } from "./protocol"
+import { pushNotification } from "./dashboard"
 
 export type OrderStore = {
   orders: ShopOrder[]
   jobsByOrderId: Record<string, CloudPrintJob[]>
   streamState: "connected" | "reconnecting" | "offline"
   streamMessage: string | null
+  notifications: ShopNotification[]
 }
 
 export const emptyOrderStore: OrderStore = {
@@ -12,6 +14,7 @@ export const emptyOrderStore: OrderStore = {
   jobsByOrderId: {},
   streamState: "offline",
   streamMessage: null,
+  notifications: [],
 }
 
 function newest(orders: ShopOrder[]) {
@@ -40,7 +43,15 @@ export function reduceOrderEvent(store: OrderStore, event: OrderStreamEvent): Or
     return { ...store, orders: newest(event.orders), streamState: "connected", streamMessage: null }
   }
   if (event.type === "ORDER_CREATED") {
-    return { ...store, orders: upsertOrder(store.orders, event.order) }
+    return {
+      ...store,
+      orders: upsertOrder(store.orders, event.order),
+      notifications: pushNotification(store.notifications, {
+        kind: "new-order",
+        title: "New order",
+        detail: `${event.order.orderNumber} is waiting for acceptance.`,
+      }),
+    }
   }
   if (event.type === "ORDER_STATUS_CHANGED") {
     return { ...store, orders: upsertOrder(store.orders, event.order) }
@@ -55,5 +66,24 @@ export function reduceOrderEvent(store: OrderStore, event: OrderStreamEvent): Or
   return {
     ...store,
     jobsByOrderId: { ...store.jobsByOrderId, [event.job.orderId]: updated },
+    notifications:
+      event.job.status === "FAILED"
+        ? pushNotification(store.notifications, {
+            kind: "print-failed",
+            title: "Print failed",
+            detail: event.job.errorMessage ?? `${event.job.printerName} could not finish the job.`,
+          })
+        : store.notifications,
+  }
+}
+
+export function notifyPrinterOffline(store: OrderStore, printerName: string): OrderStore {
+  return {
+    ...store,
+    notifications: pushNotification(store.notifications, {
+      kind: "printer-offline",
+      title: "Printer offline",
+      detail: `${printerName} needs attention.`,
+    }),
   }
 }

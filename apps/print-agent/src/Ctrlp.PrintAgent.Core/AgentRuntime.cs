@@ -78,6 +78,7 @@ public sealed class AgentRuntime
         dispatcher.Register(new Handlers.PrintersListHandler(this));
         dispatcher.Register(new Handlers.PrintersGetHandler(this));
         dispatcher.Register(new Handlers.PrintersRefreshHandler(this));
+        dispatcher.Register(new Handlers.PrintersTestPageHandler(this));
         dispatcher.Register(new Handlers.JobsEnqueueHandler(this));
         dispatcher.Register(new Handlers.JobsListHandler(this));
         dispatcher.Register(new Handlers.JobsGetHandler(this));
@@ -90,6 +91,7 @@ public sealed class AgentRuntime
         dispatcher.Register(new Handlers.SecretsClearAgentCloudCredentialHandler(this));
         dispatcher.Register(new Handlers.HostIdentityHandler(this));
         dispatcher.Register(new Handlers.HostTelemetryHandler(this));
+        dispatcher.Register(new Handlers.HostExportLogHandler());
         return dispatcher;
     }
 }

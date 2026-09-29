@@ -45,6 +45,42 @@ pub async fn refresh_printers(bridge: State<'_, AgentBridge>) -> Result<Value, S
 }
 
 #[tauri::command]
+pub async fn print_test_page(
+    bridge: State<'_, AgentBridge>,
+    printer_id: Option<String>,
+) -> Result<Value, String> {
+    traced(
+        &bridge,
+        "print_test_page",
+        "printers.testPage",
+        json!({ "printerId": printer_id }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn export_agent_log(bridge: State<'_, AgentBridge>) -> Result<Value, String> {
+    let chosen = tokio::task::spawn_blocking(|| {
+        rfd::FileDialog::new()
+            .set_file_name("ctrlp-agent.log")
+            .add_filter("Log", &["log", "txt"])
+            .save_file()
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    let Some(path) = chosen else {
+        return Ok(json!({ "cancelled": true, "path": "", "bytesCopied": 0 }));
+    };
+    traced(
+        &bridge,
+        "export_agent_log",
+        "host.exportLog",
+        json!({ "destinationPath": path.to_string_lossy() }),
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn enqueue_job(
     bridge: State<'_, AgentBridge>,
     printer_id: Option<String>,

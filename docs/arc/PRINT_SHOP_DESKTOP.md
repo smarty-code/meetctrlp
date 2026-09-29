@@ -1,6 +1,6 @@
 # CtrlP Print Shop Desktop (Tauri UI + C# Agent)
 
-> **Status:** Auth, device heartbeat, printer capabilities/shop config, server-streamed orders, leased cloud-to-agent handoff, and PDF/JPEG/PNG spool submission are in.
+> **Status:** Auth, device heartbeat, printer capabilities/shop config, server-streamed orders, leased cloud-to-agent handoff, PDF/JPEG/PNG spool, cash/pickup, and shop Settings (profile, pricing, hours, capabilities, diagnostics, log export) are in.
 > **Platform:** Windows 10/11 x64 only.  
 > **Source of truth for this stack:** this file, plus `apps/print-shop/AGENTS.md` and `apps/print-agent/AGENTS.md`.  
 > **PRD progress checklist:** [`docs/developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md`](../developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md).
@@ -39,7 +39,7 @@ Windows Print Spooler → printer driver → hardware
 
 | Layer | Location | Role | Implemented |
 | --- | --- | --- | --- |
-| Shop UI | `apps/print-shop` | Login, dashboard shell, Orders/details, Printers drawer, queue, settings | Auth, printer config, streamed orders, queue state |
+| Shop UI | `apps/print-shop` | Login, dashboard KPIs, Orders/details, Printers drawer, unified queue, editable Settings | Auth, printer config, streamed orders, shop config editors, queue/reassign |
 | Tauri commands | `apps/print-shop/src-tauri/src/commands.rs` | Thin RPC proxy | Ping, status, printers, jobs, secrets, host |
 | Rust IPC | `apps/print-shop/src-tauri/src/agent/` | Spawn sidecar, framed JSON-RPC | Hello handshake, request/response, events |
 | C# host | `apps/print-agent/.../Host` | Detached single-instance process, CLI, log file | Yes |
@@ -52,8 +52,8 @@ Windows Print Spooler → printer driver → hardware
 
 **Not in this stack yet** (full leftover list: [progress checklist](../developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md)):
 
-- Rich cloud/local execution view, direct reassign control, and hardware-level print confirmation
-- Pricing/hours editors, richer dashboard metrics, and customer-state synchronization
+- Hardware-level print confirmation beyond spool acceptance
+- Duplex as a customer option, finishing, home delivery, vendor SDKs (PRD deferred)
 - Windows Service host (the current detached agent is per-user, not a service)
 
 ---
@@ -121,6 +121,7 @@ Windows APIs stay in `Ctrlp.PrintAgent.Windows`. React never calls Win32.
 | `printers.list` | `{}` | `{ printers: PrinterDto[] }` |
 | `printers.get` | `{ id }` | `PrinterDto` |
 | `printers.refresh` | `{}` | `{ printers }` |
+| `printers.testPage` | `{ printerId? }` | `JobDto` (one-page PDF through the document executor) |
 | `jobs.enqueue` | `{ printerId?, documentPath?, documentName?, copies?, cloudJobId?, documentSha256?, resolvedSettings?, idempotencyKey?, pagesTotal? }` | `JobDto` |
 | `jobs.list` | `{}` | `{ jobs }` |
 | `jobs.get` | `{ id }` | `JobDto` |
@@ -131,6 +132,7 @@ Windows APIs stay in `Ctrlp.PrintAgent.Windows`. React never calls Win32.
 | `secrets.clearRefreshToken` | `{}` | `{ ok }` |
 | `host.identity` | `{}` | `{ deviceIdentifier, hostname, osVersion, appVersion, agentVersion }` |
 | `host.telemetry` | `{}` | `{ memoryWorkingSetBytes }` |
+| `host.exportLog` | `{ destinationPath }` | `{ path, bytesCopied }` |
 
 `PrinterDto` includes identity, live `status` / `statusReason` / `jobCount`, Windows default, hardware flags (`isColorCapable`, `isDuplexCapable`, `supportedPaperSizes`), copies max, and `options` (color modes, papers, trays, duplex, dpi, current driver defaults, unmatched `raw` names). Printer `id` is still the Windows queue name; Firestore `printerId` is `sha256(systemName).slice(0,32)`.
 
@@ -145,11 +147,11 @@ React calls `@tauri-apps/api/core` `invoke`:
 | --- | --- |
 | `agent_ping` | `agent.ping` |
 | `get_agent_status` | `agent.status` (or local snapshot if disconnected) |
-| `list_printers` / `get_printer` / `refresh_printers` | printers.* |
+| `list_printers` / `get_printer` / `refresh_printers` / `print_test_page` | printers.* |
 | `enqueue_job` / `list_jobs` / `get_job` / `cancel_job` / `retry_job` | jobs.* |
 | `shutdown_agent` | `agent.shutdown` |
 | `get_refresh_token` / `set_refresh_token` / `clear_refresh_token` | secrets.* (Windows Credential Manager) |
-| `get_host_identity` / `get_host_telemetry` | host.identity / host.telemetry |
+| `get_host_identity` / `get_host_telemetry` / `export_agent_log` | host.identity / host.telemetry / host.exportLog |
 
 Notifications from the agent (JSON-RPC without `id`) are forwarded as Tauri event `agent:event`.
 

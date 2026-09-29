@@ -6,7 +6,6 @@ import {
   type OrderAutomation,
   type OrderStreamEvent,
   type ShopOrder,
-  type ShopProfile,
   type ShopStaffMember,
   type ShopUser,
 } from "./protocol"
@@ -86,7 +85,63 @@ export function fetchCurrentUser(token: string) {
 }
 
 export function fetchShopProfile(token: string) {
-  return request<{ shop: ShopProfile }>("/api/v1/shops/profile", { token })
+  return request<{ shop: import("./protocol").ShopProfile }>("/api/v1/shops/profile", { token })
+}
+
+export function updateShopProfile(
+  token: string,
+  input: {
+    name: string
+    phone: string | null
+    email: string | null
+    address: import("./protocol").ShopAddress
+  }
+) {
+  return request<{ shop: import("./protocol").ShopProfile }>("/api/v1/shops/profile", {
+    method: "PATCH",
+    token,
+    body: JSON.stringify(input),
+  })
+}
+
+export function fetchShopConfig(token: string, shopId: string) {
+  return request<import("./protocol").ShopConfig>(`/api/v1/shops/${shopId}/pricing`, { token })
+}
+
+export function updateShopPricing(
+  token: string,
+  shopId: string,
+  input: { bwA4PricePaise: number; colorA4PricePaise: number; colorA3PricePaise: number }
+) {
+  return request<import("./protocol").ShopConfig>(`/api/v1/shops/${shopId}/pricing`, {
+    method: "PUT",
+    token,
+    body: JSON.stringify({ ...input, idempotencyKey: crypto.randomUUID() }),
+  })
+}
+
+export function updateShopHours(
+  token: string,
+  shopId: string,
+  businessHours: import("./protocol").ShopBusinessHour[]
+) {
+  return request<import("./protocol").ShopConfig>(`/api/v1/shops/${shopId}/hours`, {
+    method: "PUT",
+    token,
+    body: JSON.stringify({ businessHours, idempotencyKey: crypto.randomUUID() }),
+  })
+}
+
+export function updateShopCapabilities(
+  token: string,
+  shopId: string,
+  input: { colorPrinting: boolean; a3Printing: boolean }
+) {
+  return request<import("./protocol").ShopConfig>(`/api/v1/shops/${shopId}/capabilities`, {
+    method: "PUT",
+    token,
+    body: JSON.stringify({ ...input, idempotencyKey: crypto.randomUUID() }),
+  })
 }
 
 export function fetchOrderAutomation(token: string, shopId: string) {

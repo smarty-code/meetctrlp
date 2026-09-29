@@ -84,7 +84,9 @@ Do **not**:
 
 - PDF/JPEG/PNG jobs are rendered through PDFium/GDI and submitted through `PrintDocument`; never send raw document bytes to `WritePrinter`. A successful submission is spool acceptance, not a physical-paper guarantee.
 - Restart recovery marks an ambiguous in-flight print as failed for an explicit operator retry; it never blindly duplicates output.
-- The agent stores a device-scoped cloud credential (not a Firebase token), claims only its assigned cloud jobs, stages/verifies them, and reports lifecycle state. Shop-user auth and printer inventory configuration stay in the Tauri UI.
-- PRD leftover (orders, spool, routing): [`CtrlP_Print_Shop_Desktop_MVP_Progress.md`](../../docs/developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md).
+- The agent stores a device-scoped cloud credential (not a Firebase token), claims only its assigned cloud jobs, stages/verifies them, reports lifecycle state, and acknowledges shred after a successful spool.
+- `printers.testPage` writes a one-page PDF and prints through the same GDI executor as orders. `host.exportLog` copies `agent.log` to a caller-supplied path without document bytes, tokens, or signed URLs.
+- Pause/resume of an in-flight Windows GDI job is unsupported; the queue UI retries, reassigns, or cancels instead.
+- PRD leftover tracker: [`CtrlP_Print_Shop_Desktop_MVP_Progress.md`](../../docs/developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md).
 
 Logs: `%LOCALAPPDATA%\Ctrlp\PrintAgent\agent.log` (mirrored to stderr). Each RPC logs method, id, and elapsedMs. Capability reads log per-printer timeouts; winspool is the fallback if `LocalPrintServer` fails.

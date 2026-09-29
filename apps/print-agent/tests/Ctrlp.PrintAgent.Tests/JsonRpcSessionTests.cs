@@ -124,6 +124,73 @@ public class JsonRpcSessionTests
         Assert.Equal(RpcErrorCodes.MethodNotFound, response.GetProperty("error").GetProperty("code").GetInt32());
     }
 
+    [Fact]
+    public async Task EnqueuesARealTestPageJob()
+    {
+        var printers = new StaticPrinterCatalog([
+            new PrinterDto("Office", "Office", true, "online", 0, "USB001", "HP", false),
+        ]);
+        var runtime = new AgentRuntime(
+            new AgentOptions { PipeName = "test", Token = "secret" },
+            printers,
+            new InMemoryJobStore());
+        runtime.MarkReady();
+        var session = new JsonRpcSession(
+            runtime.CreateDispatcher(),
+            new RpcContext { ExpectedToken = "secret", AllowAnonymous = false });
+
+        await Send(session, RpcMethods.Hello, """{"token":"secret"}""", id: 1);
+        var created = await Send(session, RpcMethods.PrintersTestPage, """{"printerId":"Office"}""", id: 2);
+        Assert.Equal("queued", created.GetProperty("result").GetProperty("state").GetString());
+        Assert.Equal("CtrlP test page.pdf", created.GetProperty("result").GetProperty("documentName").GetString());
+    }
+
+    [Fact]
+    public async Task CopiesAgentLogToDestination()
+    {
+        var logDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Ctrlp",
+            "PrintAgent");
+        Directory.CreateDirectory(logDir);
+        var logPath = Path.Combine(logDir, "agent.log");
+        var wroteMarker = false;
+        try
+        {
+            using var stream = new FileStream(logPath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.ReadWrite);
+            using var writer = new StreamWriter(stream);
+            writer.Write("no secrets here");
+            wroteMarker = true;
+        }
+        catch (IOException)
+        {
+            if (!File.Exists(logPath))
+            {
+                throw;
+            }
+        }
+        var destination = Path.Combine(Path.GetTempPath(), $"ctrlp-agent-{Guid.NewGuid():N}.log");
+        var runtime = CreateRuntime();
+        var session = new JsonRpcSession(
+            runtime.CreateDispatcher(),
+            new RpcContext { ExpectedToken = "secret", AllowAnonymous = false });
+
+        await Send(session, RpcMethods.Hello, """{"token":"secret"}""", id: 1);
+        var exported = await Send(
+            session,
+            RpcMethods.HostExportLog,
+            $$"""{"destinationPath":{{System.Text.Json.JsonSerializer.Serialize(destination)}}}""",
+            id: 2);
+        Assert.True(File.Exists(destination));
+        if (wroteMarker)
+        {
+            Assert.Contains("no secrets", File.ReadAllText(destination));
+        }
+        Assert.DoesNotContain("documentPath", File.ReadAllText(destination), StringComparison.OrdinalIgnoreCase);
+        Assert.True(exported.GetProperty("result").GetProperty("bytesCopied").GetInt64() > 0);
+        File.Delete(destination);
+    }
+
     private static AgentRuntime CreateRuntime()
     {
         var runtime = new AgentRuntime(

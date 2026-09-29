@@ -3,6 +3,7 @@ import { Badge } from "@ctrlp/ui/badge"
 import { Button } from "@ctrlp/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ctrlp/ui/card"
 
+import { documentReadiness } from "../lib/dashboard"
 import type { CloudPrintJob, Printer, ShopOrder } from "../lib/protocol"
 
 export function OrderDetailsScreen({
@@ -18,6 +19,7 @@ export function OrderDetailsScreen({
   onComplete,
   onCollectCash,
   onPreview,
+  onReassign,
 }: {
   order: ShopOrder
   jobs: CloudPrintJob[]
@@ -31,6 +33,7 @@ export function OrderDetailsScreen({
   onComplete: () => void
   onCollectCash: () => void
   onPreview: (documentId: string) => Promise<{ valid: boolean; message: string }>
+  onReassign: (job: CloudPrintJob, printerId: string) => void
 }) {
   const [validation, setValidation] = useState<Record<string, string>>({})
   const readyPrinter = printers.find((printer) => printer.enabled !== false && printer.cloudId)
@@ -84,6 +87,10 @@ export function OrderDetailsScreen({
       {order.documents.map((document) => {
         const documentId = document.docId ?? document.id
         const documentJobs = jobs.filter((job) => job.documentId === documentId)
+        const readiness = documentReadiness(printers, {
+          colorMode: document.config?.colorMode ?? document.colorMode,
+          paperSize: document.config?.paperSize ?? document.paperSize,
+        })
         return (
           <Card key={documentId} className="rounded-[12px]">
             <CardHeader>
@@ -94,6 +101,12 @@ export function OrderDetailsScreen({
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
+              <p className={readiness.ready ? "text-caption text-ash" : "text-caption text-destructive"}>
+                {readiness.ready
+                  ? `Ready to print on ${readiness.matches.map((printer) => printer.name).join(", ")}`
+                  : readiness.reasons.join(". ")}
+              </p>
+              {document.shreddedAt ? <p className="text-caption text-ash">Remote copy marked shredded at {new Date(document.shreddedAt).toLocaleString()}.</p> : null}
               {validation[documentId] ? <p className="text-caption text-ash">{validation[documentId]}</p> : null}
               <div className="flex flex-wrap gap-2">
                 <Button
@@ -112,18 +125,36 @@ export function OrderDetailsScreen({
                   <Button
                     size="sm"
                     className="rounded-[12px]"
-                    disabled={busy || !readyPrinter}
+                    disabled={busy || !readyPrinter || !readiness.ready}
                     onClick={() => onDispatch(documentId)}
                   >
-                    {readyPrinter ? "Start printing" : "No compatible printer"}
+                    {readiness.ready ? "Start printing" : "Not ready to print"}
                   </Button>
                 ) : null}
               </div>
               {documentJobs.map((job) => (
-                <p key={job.id} className="text-caption text-ash">
-                  {job.printerName} · {job.status} · {job.pagesPrinted}/{job.pagesTotal}
-                  {job.errorMessage ? ` · ${job.errorMessage}` : ""}
-                </p>
+                <div key={job.id} className="space-y-2 rounded-[12px] border border-graphite p-3">
+                  <p className="text-caption text-ash">
+                    {job.printerName} · {job.status} · {job.pagesPrinted}/{job.pagesTotal}
+                    {job.errorMessage ? ` · ${job.errorMessage}` : ""}
+                  </p>
+                  {job.status === "FAILED" ? (
+                    <div className="flex flex-wrap gap-2">
+                      {readiness.matches.map((printer) => (
+                        <Button
+                          key={printer.id}
+                          size="sm"
+                          variant="outline"
+                          className="rounded-[12px]"
+                          disabled={busy || !printer.cloudId}
+                          onClick={() => printer.cloudId && onReassign(job, printer.cloudId)}
+                        >
+                          Reassign to {printer.name}
+                        </Button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
               ))}
             </CardContent>
           </Card>

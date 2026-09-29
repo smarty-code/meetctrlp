@@ -43,7 +43,7 @@ export type OrderAutomation = {
   cashRequiresOperatorAcceptance: boolean;
 };
 
-type ShopConfig = {
+export type ShopConfig = {
   service: typeof SERVICE;
   pricing: ShopPricing;
   capabilities: ShopCapabilities;
@@ -284,6 +284,23 @@ export async function updateShopHours(
   });
 
   return getShopConfig(user);
+}
+
+export async function incrementShopStats(
+  shopId: string,
+  input: { totalOrdersToday?: number; grossRevenueTodayPaise?: number; cashInDrawerTodayPaise?: number },
+) {
+  const update: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
+  if (input.totalOrdersToday) {
+    update["stats.totalOrdersToday"] = FieldValue.increment(input.totalOrdersToday);
+  }
+  if (input.grossRevenueTodayPaise) {
+    update["stats.grossRevenueTodayPaise"] = FieldValue.increment(input.grossRevenueTodayPaise);
+  }
+  if (input.cashInDrawerTodayPaise) {
+    update["stats.cashInDrawerTodayPaise"] = FieldValue.increment(input.cashInDrawerTodayPaise);
+  }
+  await shopRef(shopId).set(update, { merge: true });
 }
 
 export function quoteDocumentPrint(config: ShopConfig, input: PriceQuoteRequestInput) {

@@ -17,6 +17,7 @@ public static class RpcMethods
     public const string PrintersList = "printers.list";
     public const string PrintersGet = "printers.get";
     public const string PrintersRefresh = "printers.refresh";
+    public const string PrintersTestPage = "printers.testPage";
 
     public const string JobsEnqueue = "jobs.enqueue";
     public const string JobsList = "jobs.list";
@@ -31,6 +32,7 @@ public static class RpcMethods
     public const string SecretsClearAgentCloudCredential = "secrets.clearAgentCloudCredential";
     public const string HostIdentity = "host.identity";
     public const string HostTelemetry = "host.telemetry";
+    public const string HostExportLog = "host.exportLog";
 }
 
 public static class RpcNotifications

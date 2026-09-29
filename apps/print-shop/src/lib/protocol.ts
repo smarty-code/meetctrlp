@@ -9,6 +9,7 @@ export const rpcMethods = {
   printersList: "printers.list",
   printersGet: "printers.get",
   printersRefresh: "printers.refresh",
+  printersTestPage: "printers.testPage",
   jobsEnqueue: "jobs.enqueue",
   jobsList: "jobs.list",
   jobsGet: "jobs.get",
@@ -18,6 +19,7 @@ export const rpcMethods = {
   secretsClearRefreshToken: "secrets.clearRefreshToken",
   hostIdentity: "host.identity",
   hostTelemetry: "host.telemetry",
+  hostExportLog: "host.exportLog",
 } as const
 
 export type PrinterOptions = {
@@ -68,6 +70,7 @@ export type Printer = {
   offered?: PrinterOffered
   isShopDefault?: boolean
   capabilities?: string[]
+  defaultPrintSettings?: Record<string, unknown> | null
 }
 
 export type CloudPrinter = {
@@ -89,6 +92,7 @@ export type CloudPrinter = {
   capabilities: string[]
   activeJobsCount: number
   maximumCopies: number
+  defaultPrintSettings?: Record<string, unknown> | null
 }
 
 export type PrintJob = {
@@ -99,6 +103,14 @@ export type PrintJob = {
   copies: number
   createdAt: number
   error?: string | null
+  cloudJobId?: string | null
+  cloudOrderId?: string | null
+  cloudDocumentId?: string | null
+  pagesTotal?: number
+  pagesPrinted?: number
+  startedAt?: number | null
+  completedAt?: number | null
+  spoolerJobId?: number | null
 }
 
 export type PrintJobStatus =
@@ -150,6 +162,7 @@ export type ShopOrderDocument = {
   paperSize: "A4" | "A3"
   fileSizeBytes?: number
   sha256Hash?: string
+  shreddedAt?: string | null
   config?: {
     colorMode?: "BW" | "COLOR"
     copies?: number
@@ -221,6 +234,15 @@ export type AuthSession = {
   tokens: AuthTokens
 }
 
+export type ShopAddress = {
+  line1?: string | null
+  line2?: string | null
+  city?: string | null
+  state?: string | null
+  postalCode?: string | null
+  country?: string | null
+}
+
 export type ShopProfile = {
   id: string
   name: string
@@ -228,6 +250,43 @@ export type ShopProfile = {
   email: string | null
   status: string
   address: string | null
+  addressParts?: ShopAddress
+}
+
+export type ShopBusinessHour = {
+  dayOfWeek: number
+  opensAt: string
+  closesAt: string
+  isClosed: boolean
+}
+
+export type ShopConfig = {
+  service: string
+  pricing: {
+    currency: "INR"
+    unit: "PER_PAGE"
+    bwA4PricePaise: number
+    colorA4PricePaise: number
+    colorA3PricePaise: number
+    updatedAt: string | null
+  }
+  capabilities: {
+    bwPrinting: true
+    colorPrinting: boolean
+    a4Printing: true
+    a3Printing: boolean
+  }
+  orderAutomation: OrderAutomation
+  businessHours: ShopBusinessHour[]
+  openNow: boolean
+}
+
+export type ShopNotification = {
+  id: string
+  kind: "new-order" | "print-failed" | "printer-offline"
+  title: string
+  detail: string
+  createdAt: string
 }
 
 export type OrderAutomation = {

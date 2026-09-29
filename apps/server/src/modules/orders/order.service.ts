@@ -13,7 +13,7 @@ import type {
 import type { AuthSessionUser } from "@ctrlp/types";
 
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
-import { getShopConfig, quoteDocumentPrint } from "@/src/modules/shops/shop-config.service";
+import { getShopConfig, incrementShopStats, quoteDocumentPrint } from "@/src/modules/shops/shop-config.service";
 
 const FIRST_ORDER_SEQUENCE = 1041;
 
@@ -500,10 +500,17 @@ export async function completeShopOrder(
   if (order.payment.method === "CASH" && order.payment.status !== "PAID") {
     throw new AuthServiceError(409, "CASH_PAYMENT_REQUIRED");
   }
-  return transitionOrder(user, orderId, "complete", input, "READY", "COMPLETED", {
+  const completed = await transitionOrder(user, orderId, "complete", input, "READY", "COMPLETED", {
     "lifecycle.completedAt": FieldValue.serverTimestamp(),
     "lifecycle.completedByUserId": user.id,
   }, { changedByType: "SHOP_USER", reason: null });
+  if (order.status === "READY") {
+    await incrementShopStats(user.shopId, {
+      totalOrdersToday: 1,
+      grossRevenueTodayPaise: order.amounts.totalMinorUnits,
+    });
+  }
+  return completed;
 }
 
 export async function recordCashPayment(
@@ -515,6 +522,7 @@ export async function recordCashPayment(
   const orderRef = ordersCollection(user.shopId).doc(orderId);
   const keyRef = db.doc(`shops/${user.shopId}/idempotencyKeys/${input.idempotencyKey}`);
   const now = FieldValue.serverTimestamp();
+  let applied = false;
 
   await db.runTransaction(async (transaction) => {
     const [keySnap, orderSnap] = await Promise.all([transaction.get(keyRef), transaction.get(orderRef)]);
@@ -552,9 +560,14 @@ export async function recordCashPayment(
       createdAt: now,
       expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
     });
+    applied = true;
   });
 
-  return getShopOrder(user, orderId);
+  const paid = await getShopOrder(user, orderId);
+  if (applied) {
+    await incrementShopStats(user.shopId, { cashInDrawerTodayPaise: paid.amounts.totalMinorUnits });
+  }
+  return paid;
 }
 
 /**

@@ -42,6 +42,26 @@ export const updateShopHoursRequestSchema = z
     { message: "business hours must include each day once", path: ["businessHours"] },
   );
 
+export const shopAddressSchema = z.object({
+  line1: z.string().trim().max(120).optional().nullable(),
+  line2: z.string().trim().max(120).optional().nullable(),
+  city: z.string().trim().max(80).optional().nullable(),
+  state: z.string().trim().max(80).optional().nullable(),
+  postalCode: z.string().trim().max(12).optional().nullable(),
+  country: z.string().trim().max(80).optional().nullable(),
+});
+
+export const updateShopProfileRequestSchema = z.object({
+  name: z.string().trim().min(2).max(80),
+  phone: z
+    .union([z.string().trim().min(8).max(20), z.literal(""), z.null()])
+    .transform((value) => (value ? value : null)),
+  email: z
+    .union([z.string().trim().email().max(120), z.literal(""), z.null()])
+    .transform((value) => (value ? value : null)),
+  address: shopAddressSchema,
+});
+
 export const priceQuoteRequestSchema = z.object({
   billablePages: z.number().int().positive().max(10_000),
   copies: z.number().int().positive().max(999),
@@ -55,4 +75,6 @@ export type UpdateShopCapabilitiesRequestInput = z.infer<
 >;
 export type UpdateOrderAutomationRequestInput = z.infer<typeof updateOrderAutomationRequestSchema>;
 export type UpdateShopHoursRequestInput = z.infer<typeof updateShopHoursRequestSchema>;
+export type UpdateShopProfileRequestInput = z.infer<typeof updateShopProfileRequestSchema>;
+export type ShopAddressInput = z.infer<typeof shopAddressSchema>;
 export type PriceQuoteRequestInput = z.infer<typeof priceQuoteRequestSchema>;

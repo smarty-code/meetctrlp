@@ -43,15 +43,19 @@ export {
 export {
   businessHourSchema,
   priceQuoteRequestSchema,
+  shopAddressSchema,
   updateOrderAutomationRequestSchema,
   updateShopCapabilitiesRequestSchema,
   updateShopHoursRequestSchema,
   updateShopPricingRequestSchema,
+  updateShopProfileRequestSchema,
   type PriceQuoteRequestInput,
+  type ShopAddressInput,
   type UpdateOrderAutomationRequestInput,
   type UpdateShopCapabilitiesRequestInput,
   type UpdateShopHoursRequestInput,
   type UpdateShopPricingRequestInput,
+  type UpdateShopProfileRequestInput,
 } from "./shop-config";
 export {
   deviceHeartbeatRequestSchema,

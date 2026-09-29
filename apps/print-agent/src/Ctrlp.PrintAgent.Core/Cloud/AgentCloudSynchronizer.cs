@@ -134,6 +134,21 @@ public sealed class AgentCloudSynchronizer
         if (!response.IsSuccessStatusCode)
         {
             _log?.Invoke($"cloud job report failed status={(int)response.StatusCode}");
+            return;
+        }
+
+        if (status == "COMPLETED" && !string.IsNullOrWhiteSpace(job.CloudDocumentId))
+        {
+            using var shred = await SendAsync(
+                credential,
+                HttpMethod.Post,
+                $"/api/v1/shops/{Uri.EscapeDataString(credential.ShopId)}/orders/{Uri.EscapeDataString(job.CloudOrderId!)}/documents/{Uri.EscapeDataString(job.CloudDocumentId)}/shred",
+                "{}",
+                cancellationToken).ConfigureAwait(false);
+            if (!shred.IsSuccessStatusCode)
+            {
+                _log?.Invoke($"cloud shred acknowledgement failed status={(int)shred.StatusCode}");
+            }
         }
     }
 

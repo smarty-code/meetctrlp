@@ -14,7 +14,7 @@ import { ClipboardList, FileText, LayoutDashboard, Printer, Settings } from "luc
 import {
   clearStoredRefreshToken,
   cancelJob,
-  enqueueJob,
+  exportAgentLog,
   getAgentStatus,
   getHostIdentity,
   getHostTelemetry,
@@ -24,6 +24,7 @@ import {
   listPrinters,
   listenAgentEvents,
   pingAgent,
+  printTestPage,
   refreshPrinters,
   retryJob,
   storeRefreshToken,
@@ -32,7 +33,7 @@ import {
 } from "./lib/agent"
 import {
   fetchShopProfile,
-  fetchOrderAutomation,
+  fetchShopConfig,
   fetchShopStaff,
   getDocumentDownloadUrl,
   getShopOrder,
@@ -54,13 +55,19 @@ import {
   rejectShopOrder,
   recordDocumentAccess,
   recordCashPayment,
+  retryOrderPrintJob,
   streamShopOrders,
   syncShopPrinters,
   transitionShopOrder,
   updateOrderAutomation,
+  updateShopCapabilities,
+  updateShopHours,
+  updateShopPricing,
+  updateShopProfile,
 } from "./lib/cloud"
+import { dashboardMetrics, rupees } from "./lib/dashboard"
 import { shopError, shopLog, shopWarn } from "./lib/debug"
-import { emptyOrderStore, reduceOrderEvent, type OrderStore } from "./lib/orders"
+import { emptyOrderStore, notifyPrinterOffline, reduceOrderEvent, type OrderStore } from "./lib/orders"
 import {
   cloudPrinterStatus,
   mergeLiveStatus,
@@ -76,6 +83,7 @@ import {
   type OrderAutomation,
   type PrintJob,
   type Printer as PrinterModel,
+  type ShopConfig,
   type ShopProfile,
   type ShopOrder,
   type ShopStaffMember,
@@ -86,6 +94,7 @@ import { OrderDetailsScreen } from "./screens/OrderDetailsScreen"
 import { OrdersScreen } from "./screens/OrdersScreen"
 import { PrintQueueScreen } from "./screens/PrintQueueScreen"
 import { PrintersScreen } from "./screens/PrintersScreen"
+import { SettingsScreen } from "./screens/SettingsScreen"
 
 type Screen = "dashboard" | "orders" | "printers" | "jobs" | "settings"
 
@@ -103,10 +112,11 @@ export default function App() {
   const [user, setUser] = useState<ShopUser | null>(null)
   const [idToken, setIdToken] = useState<string | null>(null)
   const [shop, setShop] = useState<ShopProfile | null>(null)
-  const [orderAutomation, setOrderAutomation] = useState<OrderAutomation | null>(null)
+  const [shopConfig, setShopConfig] = useState<ShopConfig | null>(null)
   const [staff, setStaff] = useState<ShopStaffMember[]>([])
   const [deviceId, setDeviceId] = useState<string | null>(null)
   const [hostName, setHostName] = useState<string | null>(null)
+  const [lastHeartbeatAt, setLastHeartbeatAt] = useState<string | null>(null)
   const [cloud, setCloud] = useState<CloudLinkState>("offline")
   const [cloudMessage, setCloudMessage] = useState<string | null>(null)
   const [screen, setScreen] = useState<Screen>("dashboard")
@@ -132,7 +142,15 @@ export default function App() {
   orderStoreRef.current = orderStore
 
   function applyPrinters(next: PrinterModel[]) {
-    setPrinters(next)
+    setPrinters((previous) => {
+      for (const printer of next) {
+        const before = previous.find((entry) => entry.id === printer.id)
+        if (before && before.status.toUpperCase() !== "OFFLINE" && printer.status.toUpperCase() === "OFFLINE") {
+          setOrderStore((store) => notifyPrinterOffline(store, printer.name))
+        }
+      }
+      return next
+    })
     printersRef.current = next
     setSelectedPrinter((current) =>
       current ? (next.find((printer) => printer.id === current.id) ?? current) : null
@@ -154,7 +172,8 @@ export default function App() {
     ])
     setShop(profile.shop)
     setStaff(staffResult.staff)
-    setOrderAutomation(await fetchOrderAutomation(token, profile.shop.id))
+    const config = await fetchShopConfig(token, profile.shop.id)
+    setShopConfig(config)
   }
 
   async function connectDevice(token: string, shopId: string, nextPrinters: PrinterModel[]) {
@@ -199,6 +218,7 @@ export default function App() {
         (printer) => cloudPrinterStatus(printer.status) !== "OFFLINE"
       ).length,
     })
+    setLastHeartbeatAt(new Date().toISOString())
     setCloud("connected")
     setCloudMessage(null)
   }
@@ -515,7 +535,7 @@ export default function App() {
       setUser(null)
       setIdToken(null)
       setShop(null)
-      setOrderAutomation(null)
+      setShopConfig(null)
       setStaff([])
       setDeviceId(null)
       setCloud("offline")
@@ -720,17 +740,13 @@ export default function App() {
   }
 
   async function handleTestJob(printer?: PrinterModel) {
-    shopLog("ui", "enqueue test job", printer?.id)
+    shopLog("ui", "print test page", printer?.id)
     setError(null)
     try {
-      await enqueueJob({
-        printerId: printer?.id,
-        documentName: "scaffold-test.txt",
-        copies: 1,
-      })
+      await printTestPage(printer?.id)
       setJobs(await listJobs())
     } catch (err) {
-      shopError("ui", "enqueue failed", err)
+      shopError("ui", "test page failed", err)
       setError(err instanceof Error ? err.message : String(err))
     }
   }
@@ -748,12 +764,40 @@ export default function App() {
     }
   }
 
-  async function handleRetryJob(id: string) {
+  async function handleRetryQueue(entry: import("./lib/dashboard").QueueEntry, printerId?: string) {
     setBusy(true)
     setError(null)
     try {
-      await retryJob(id)
-      setJobs(await listJobs())
+      if (entry.local) {
+        await retryJob(entry.local.id)
+        setJobs(await listJobs())
+      }
+      const current = sessionRef.current
+      if (entry.cloud && current.idToken && current.shopId) {
+        await retryOrderPrintJob(current.idToken, current.shopId, entry.cloud.orderId, entry.cloud.id, printerId)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleReassignQueue(entry: import("./lib/dashboard").QueueEntry, printerId: string) {
+    await handleRetryQueue(entry, printerId)
+  }
+
+  async function handleReassignOrderJob(job: import("./lib/protocol").CloudPrintJob, printerId: string) {
+    const current = sessionRef.current
+    if (!current.idToken || !current.shopId) return
+    setBusy(true)
+    setError(null)
+    try {
+      const retried = await retryOrderPrintJob(current.idToken, current.shopId, job.orderId, job.id, printerId)
+      setOrderStore((store) => reduceOrderEvent(store, { type: "PRINT_JOB_CHANGED", job: retried }))
+      if (selectedOrder) {
+        await refreshSelectedOrder(selectedOrder)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -790,11 +834,80 @@ export default function App() {
     setBusy(true)
     setError(null)
     try {
-      setOrderAutomation(await updateOrderAutomation(current.idToken, current.shopId, next))
+      const saved = await updateOrderAutomation(current.idToken, current.shopId, next)
+      setShopConfig((config) => (config ? { ...config, orderAutomation: saved } : config))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function handleSaveProfile(input: Parameters<typeof updateShopProfile>[1]) {
+    const current = sessionRef.current
+    if (!current.idToken) return
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await updateShopProfile(current.idToken, input)
+      setShop(result.shop)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleSavePricing(input: { bwA4PricePaise: number; colorA4PricePaise: number; colorA3PricePaise: number }) {
+    const current = sessionRef.current
+    if (!current.idToken || !current.shopId) return
+    setBusy(true)
+    setError(null)
+    try {
+      setShopConfig(await updateShopPricing(current.idToken, current.shopId, input))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleSaveHours(hours: NonNullable<ShopConfig["businessHours"]>) {
+    const current = sessionRef.current
+    if (!current.idToken || !current.shopId) return
+    setBusy(true)
+    setError(null)
+    try {
+      setShopConfig(await updateShopHours(current.idToken, current.shopId, hours))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleSaveCapabilities(input: { colorPrinting: boolean; a3Printing: boolean }) {
+    const current = sessionRef.current
+    if (!current.idToken || !current.shopId) return
+    setBusy(true)
+    setError(null)
+    try {
+      setShopConfig(await updateShopCapabilities(current.idToken, current.shopId, input))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleExportLog() {
+    try {
+      const result = await exportAgentLog()
+      if (result.cancelled) return null
+      return result.path
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      return null
     }
   }
 
@@ -892,6 +1005,7 @@ export default function App() {
             printers={printers}
             jobs={jobs}
             orders={orderStore.orders}
+            notifications={orderStore.notifications}
             onPing={() => void handlePing()}
             tauri={isTauriRuntime()}
           />
@@ -922,6 +1036,7 @@ export default function App() {
             onComplete={() => void handleOrderTransition(selectedOrder, "complete")}
             onCollectCash={() => void handleCashPayment(selectedOrder)}
             onPreview={(documentId) => handlePreviewDocument(selectedOrder, documentId)}
+            onReassign={(job, printerId) => void handleReassignOrderJob(job, printerId)}
           />
         ) : null}
         {screen === "printers" ? (
@@ -941,21 +1056,35 @@ export default function App() {
         {screen === "jobs" ? (
           <PrintQueueScreen
             jobs={jobs}
+            cloudJobs={Object.values(orderStore.jobsByOrderId).flat()}
+            printers={printers}
             busy={busy}
             onCancel={(id) => void handleCancelJob(id)}
-            onRetry={(id) => void handleRetryJob(id)}
+            onRetry={(entry, printerId) => void handleRetryQueue(entry, printerId)}
+            onReassign={(entry, printerId) => void handleReassignQueue(entry, printerId)}
           />
         ) : null}
         {screen === "settings" ? (
-          <SettingsPanel
+          <SettingsScreen
             status={status}
             user={user}
             shop={shop}
+            config={shopConfig}
+            printers={printers}
             hostName={hostName}
             deviceId={deviceId}
-            automation={orderAutomation}
+            lastHeartbeatAt={lastHeartbeatAt}
+            cloudState={cloud}
+            streamState={orderStore.streamState}
+            queuedJobs={jobs.filter((job) => job.state === "queued" || job.state === "created" || job.state === "printing").length}
             busy={busy}
+            onSaveProfile={(input) => handleSaveProfile(input)}
+            onSavePricing={(input) => handleSavePricing(input)}
+            onSaveHours={(hours) => handleSaveHours(hours)}
+            onSaveCapabilities={(input) => handleSaveCapabilities(input)}
             onUpdateAutomation={(automation) => void handleOrderAutomation(automation)}
+            onExportLog={() => handleExportLog()}
+            onSignOut={() => void handleSignOut()}
           />
         ) : null}
       </main>
@@ -1012,6 +1141,7 @@ function Dashboard({
   printers,
   jobs,
   orders,
+  notifications,
   onPing,
   tauri,
 }: {
@@ -1021,46 +1151,64 @@ function Dashboard({
   printers: PrinterModel[]
   jobs: PrintJob[]
   orders: ShopOrder[]
+  notifications: import("./lib/protocol").ShopNotification[]
   onPing: () => void
   tauri: boolean
 }) {
+  const metrics = dashboardMetrics(orders, printers, jobs)
+  const defaultPrinter = printers.find((printer) => printer.isShopDefault) ?? printers.find((printer) => printer.enabled !== false)
   return (
     <div className="grid gap-4 md:grid-cols-3">
       <Card>
         <CardHeader>
-          <CardTitle>Shop</CardTitle>
-          <CardDescription>{shop?.status ?? "Unknown status"}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          <p className="text-heading-sm font-bold text-midnight">{shop?.name ?? "—"}</p>
-          <p className="text-caption text-ash">{shop?.email ?? shop?.phone ?? "No contact yet"}</p>
-          <p className="text-caption text-ash">{shop?.address ?? "Address is managed on the web dashboard."}</p>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>Order flow</CardTitle>
-          <CardDescription>Live shop queue from the server</CardDescription>
+          <CardTitle>Today</CardTitle>
+          <CardDescription>Live counts from the order stream</CardDescription>
         </CardHeader>
         <CardContent className="space-y-1 text-body">
-          <p>{orders.filter((order) => order.status === "SUBMITTED").length} new</p>
-          <p>{orders.filter((order) => order.status === "SHOP_ACCEPTED" || order.status === "PRINTING").length} active</p>
-          <p>{orders.filter((order) => order.status === "READY").length} ready for pickup</p>
-          <p>{orders.filter((order) => order.status === "COMPLETED").length} completed</p>
+          <p>{metrics.newCount} new</p>
+          <p>{metrics.activeCount} active · {metrics.printingCount} printing</p>
+          <p>{metrics.readyCount} ready</p>
+          <p>{metrics.completedTodayCount} completed today</p>
         </CardContent>
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle>Staff</CardTitle>
-          <CardDescription>Active operators on this shop</CardDescription>
+          <CardTitle>Revenue</CardTitle>
+          <CardDescription>Paid online, cash pending, cash in drawer</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-1 text-body">
+          <p>Paid online today {rupees(metrics.paidOnlineTodayPaise)}</p>
+          <p>Cash pending {rupees(metrics.cashPendingPaise)}</p>
+          <p>Cash in drawer today {rupees(metrics.cashInDrawerTodayPaise)}</p>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Attention</CardTitle>
+          <CardDescription>Failed jobs and printer problems</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-1 text-body">
+          {metrics.attention.length === 0 ? (
+            <p className="text-caption text-ash">Nothing needs attention.</p>
+          ) : (
+            metrics.attention.map((item) => (
+              <p key={item} className="text-caption text-destructive">{item}</p>
+            ))
+          )}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Recent orders</CardTitle>
+          <CardDescription>{shop?.name ?? "This shop"}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-2">
-          {staff.length === 0 ? (
-            <p className="text-caption text-ash">No staff loaded.</p>
+          {metrics.recentOrders.length === 0 ? (
+            <p className="text-caption text-ash">No orders in the live stream yet.</p>
           ) : (
-            staff.map((member) => (
-              <p key={member.id} className="text-body">
-                {member.name} · {member.role}
+            metrics.recentOrders.map((order) => (
+              <p key={order.id} className="text-body">
+                {order.orderNumber} · {order.status} · {rupees(order.amounts.totalMinorUnits)}
               </p>
             ))
           )}
@@ -1068,130 +1216,41 @@ function Dashboard({
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle>Agent</CardTitle>
-          <CardDescription>
-            {tauri ? "Tauri runtime connected" : "Browser preview only"}
-          </CardDescription>
+          <CardTitle>Notifications</CardTitle>
+          <CardDescription>New orders, print failures, printer offline</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-2">
+          {notifications.length === 0 ? (
+            <p className="text-caption text-ash">No alerts yet.</p>
+          ) : (
+            notifications.slice(0, 8).map((item) => (
+              <p key={item.id} className="text-caption">
+                <span className="font-bold text-charcoal">{item.title}: </span>
+                {item.detail}
+              </p>
+            ))
+          )}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Staff & agent</CardTitle>
+          <CardDescription>{tauri ? "Tauri runtime connected" : "Browser preview only"}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {staff.map((member) => (
+            <p key={member.id} className="text-body">{member.name} · {member.role}</p>
+          ))}
+          {staff.length === 0 ? <p className="text-caption text-ash">No staff loaded.</p> : null}
           <Badge>{status.state}</Badge>
           <p className="text-caption text-ash">
-            Protocol {status.protocolVersion ?? "—"} · Agent{" "}
-            {status.agentVersion ?? "—"}
-          </p>
-          <p className="text-caption text-ash">
-            {printers.length} printers · {jobs.length} local jobs
+            Route via {defaultPrinter?.name ?? "no enabled printer"} · {printers.length} printers · {jobs.length} local jobs
           </p>
           <Button variant="outline" onClick={onPing}>
             Ping agent
           </Button>
         </CardContent>
       </Card>
-    </div>
-  )
-}
-
-function SettingsPanel({
-  status,
-  user,
-  shop,
-  hostName,
-  deviceId,
-  automation,
-  busy,
-  onUpdateAutomation,
-}: {
-  status: AgentStatus
-  user: ShopUser
-  shop: ShopProfile | null
-  hostName: string | null
-  deviceId: string | null
-  automation: OrderAutomation | null
-  busy: boolean
-  onUpdateAutomation: (automation: OrderAutomation) => void
-}) {
-  return (
-    <div className="grid gap-4 md:grid-cols-2">
-      <Card>
-        <CardHeader>
-          <CardTitle>Shop identity</CardTitle>
-          <CardDescription>Read-only on desktop. Edit the profile on the web dashboard.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-2 text-body">
-          <p>Shop: {shop?.name ?? "—"}</p>
-          <p>Status: {shop?.status ?? "—"}</p>
-          <p>Operator: {user.name} ({user.role})</p>
-          <p>Email: {user.email ?? "—"}</p>
-          <p>Phone: {user.phone ?? "—"}</p>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>Order automation</CardTitle>
-          <CardDescription>Paid online orders can be admitted and routed without an operator. Cash orders always remain operator-controlled.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-2 text-body">
-          {automation ? (
-            <>
-              <AutomationToggle
-                label="Auto-accept paid online orders"
-                enabled={automation.autoAcceptPaidOnline}
-                disabled={busy}
-                onToggle={() => onUpdateAutomation({ ...automation, autoAcceptPaidOnline: !automation.autoAcceptPaidOnline })}
-              />
-              <AutomationToggle
-                label="Auto-dispatch accepted orders"
-                enabled={automation.autoDispatchAcceptedOrders}
-                disabled={busy}
-                onToggle={() => onUpdateAutomation({ ...automation, autoDispatchAcceptedOrders: !automation.autoDispatchAcceptedOrders })}
-              />
-              <AutomationToggle
-                label="Require cash operator acceptance"
-                enabled={automation.cashRequiresOperatorAcceptance}
-                disabled
-                onToggle={() => undefined}
-              />
-            </>
-          ) : <p className="text-caption text-ash">Loading automation policy…</p>}
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>This PC</CardTitle>
-          <CardDescription>
-            JSON-RPC 2.0, 4-byte little-endian frames, Windows named pipe.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-2 text-body">
-          <p>Hostname: {hostName ?? "—"}</p>
-          <p>Device id: {deviceId ?? "not registered"}</p>
-          <p>Pipe: {status.pipeName ?? "not connected"}</p>
-          <p>App: CtrlP {appVersion}</p>
-          <p>Uptime: {status.uptimeMs ? `${Math.round(status.uptimeMs / 1000)}s` : "—"}</p>
-          <p>Agent log: %LOCALAPPDATA%\Ctrlp\PrintAgent\agent.log</p>
-        </CardContent>
-      </Card>
-    </div>
-  )
-}
-
-function AutomationToggle({
-  label,
-  enabled,
-  disabled,
-  onToggle,
-}: {
-  label: string
-  enabled: boolean
-  disabled: boolean
-  onToggle: () => void
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <span>{label}</span>
-      <Button size="sm" variant={enabled ? "default" : "outline"} disabled={disabled} onClick={onToggle}>
-        {enabled ? "On" : "Off"}
-      </Button>
     </div>
   )
 }

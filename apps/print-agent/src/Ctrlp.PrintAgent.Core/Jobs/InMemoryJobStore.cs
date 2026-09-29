@@ -19,7 +19,13 @@ public sealed class InMemoryJobStore : IJobStore
                 : request.DocumentName,
             Copies: copies,
             CreatedAt: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            Error: null);
+            Error: null,
+            CloudJobId: request.CloudJobId,
+            PagesTotal: request.PagesTotal,
+            DocumentPath: request.DocumentPath,
+            CloudOrderId: request.CloudOrderId,
+            CloudDocumentId: request.CloudDocumentId,
+            LeaseId: request.LeaseId);
 
         _jobs[job.Id] = job;
         return job;
