@@ -13,7 +13,7 @@ import type {
 import type { AuthSessionUser } from "@ctrlp/types";
 
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
-import { getShopConfig, incrementShopStats, quoteDocumentPrint } from "@/src/modules/shops/shop-config.service";
+import { getShopConfig, getShopConfigByShopId, incrementShopStats, quoteDocumentPrint } from "@/src/modules/shops/shop-config.service";
 
 const FIRST_ORDER_SEQUENCE = 1041;
 
@@ -59,6 +59,20 @@ export type OrderDto = {
     paperSize: "A4" | "A3";
     unitPricePaise: number;
     totalPaise: number;
+    mimeType?: "application/pdf" | "image/jpeg" | "image/png";
+    fileSizeBytes?: number;
+    sha256Hash?: string;
+    storageKey?: string;
+    storageBackend?: "s3" | "local";
+    shreddedAt?: string | null;
+    config?: {
+      colorMode: "BW" | "COLOR";
+      copies: number;
+      paperSize: "A4" | "A3";
+      pageSelection: string;
+      billablePages?: number;
+      inputTray: null;
+    };
   }>;
   items: Array<{
     description: string;
@@ -370,6 +384,177 @@ export async function createShopOrder(user: AuthSessionUser, input: CheckoutOrde
   });
 
   return getShopOrder(user, orderId);
+}
+
+export async function getShopOrderById(shopId: string, orderId: string) {
+  const snapshot = await ordersCollection(shopId).doc(orderId).get();
+
+  if (!snapshot.exists) {
+    throw new AuthServiceError(404, "ORDER_NOT_FOUND");
+  }
+
+  return toOrderDto(snapshot, await readHistory(shopId, orderId));
+}
+
+export type PrintUserCheckoutDocument = {
+  id: string;
+  originalFilename: string;
+  mimeType: "application/pdf" | "image/jpeg" | "image/png";
+  fileSizeBytes: number;
+  pageCount: number;
+  sha256Hash: string;
+  storageKey: string;
+  copies: number;
+  colorMode: "BW" | "COLOR";
+  paperSize: "A4" | "A3";
+  pageSelection: string;
+  billablePages: number;
+};
+
+export async function createPrintUserOrder(input: {
+  shopId: string;
+  printUserId: string;
+  paymentMethod: "CASH" | "ONLINE";
+  idempotencyKey: string;
+  documents: PrintUserCheckoutDocument[];
+}) {
+  const config = await getShopConfigByShopId(input.shopId);
+  const documents = input.documents.map((document) => {
+    const quote = quoteDocumentPrint(config, {
+      billablePages: document.billablePages,
+      copies: document.copies,
+      colorMode: document.colorMode,
+      paperSize: document.paperSize,
+    });
+    const description = `${document.paperSize} ${document.colorMode === "BW" ? "B&W" : "Color"} (${document.billablePages} pages × ${document.copies} ${document.copies === 1 ? "copy" : "copies"})`;
+
+    return {
+      document: {
+        id: document.id,
+        originalFilename: document.originalFilename,
+        pageCount: document.pageCount,
+        copies: document.copies,
+        colorMode: document.colorMode,
+        paperSize: document.paperSize,
+        unitPricePaise: quote.unitPricePaise,
+        totalPaise: quote.totalPaise,
+        mimeType: document.mimeType,
+        fileSizeBytes: document.fileSizeBytes,
+        sha256Hash: document.sha256Hash,
+        storageKey: document.storageKey,
+        storageBackend: "s3" as const,
+        shreddedAt: null,
+        status: "READY",
+        config: {
+          colorMode: document.colorMode,
+          copies: document.copies,
+          paperSize: document.paperSize,
+          pageSelection: document.pageSelection,
+          billablePages: document.billablePages,
+          inputTray: null,
+        },
+      },
+      item: {
+        description,
+        quantity: document.billablePages * document.copies,
+        unitPricePaise: quote.unitPricePaise,
+        totalPricePaise: quote.totalPaise,
+      },
+    };
+  });
+  const subtotalMinorUnits = documents.reduce((sum, line) => sum + line.item.totalPricePaise, 0);
+  const db = getFirebaseFirestore();
+  const shopRef = db.doc(`shops/${input.shopId}`);
+  const keyRef = db.doc(`shops/${input.shopId}/idempotencyKeys/${input.idempotencyKey}`);
+  const orderId = randomUUID();
+  const historyId = randomUUID();
+  const orderRef = ordersCollection(input.shopId).doc(orderId);
+  const historyRef = orderRef.collection("statusHistory").doc(historyId);
+  const now = FieldValue.serverTimestamp();
+  let reusedOrderId: string | null = null;
+
+  await db.runTransaction(async (transaction) => {
+    const keySnap = await transaction.get(keyRef);
+    if (keySnap.exists) {
+      if (keySnap.get("action") === "print-user-submit" && typeof keySnap.get("orderId") === "string") {
+        reusedOrderId = keySnap.get("orderId") as string;
+        return;
+      }
+      throw new AuthServiceError(409, "IDEMPOTENCY_KEY_REUSED");
+    }
+
+    const shop = await transaction.get(shopRef);
+
+    if (!shop.exists) {
+      throw new AuthServiceError(404, "shop not found");
+    }
+
+    const currentSequence = shop.get("orderSequence");
+    const sequence =
+      typeof currentSequence === "number" && Number.isInteger(currentSequence)
+        ? currentSequence + 1
+        : FIRST_ORDER_SEQUENCE + 1;
+    const orderNumber = `ORD-${sequence}`;
+    const pickupCode = String(sequence % 10_000).padStart(4, "0");
+
+    transaction.update(shopRef, {
+      orderSequence: sequence,
+      updatedAt: now,
+    });
+    transaction.set(orderRef, {
+      id: orderId,
+      orderNumber,
+      shopId: input.shopId,
+      printUserId: input.printUserId,
+      customerPhone: null,
+      status: "SUBMITTED",
+      pickupCode,
+      amounts: {
+        subtotalMinorUnits,
+        taxMinorUnits: 0,
+        totalMinorUnits: subtotalMinorUnits,
+      },
+      payment: {
+        method: input.paymentMethod,
+        status: "PENDING",
+        amountPaise: subtotalMinorUnits,
+      },
+      documents: documents.map((line) => line.document),
+      items: documents.map((line) => line.item),
+      rejection: {
+        rejectedAt: null,
+        reason: null,
+        category: null,
+      },
+      lifecycle: {
+        submittedAt: now,
+        acceptedAt: null,
+        acceptedByUserId: null,
+        readyAt: null,
+        completedAt: null,
+        completedByUserId: null,
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+    transaction.set(historyRef, {
+      historyId,
+      fromStatus: null,
+      toStatus: "SUBMITTED",
+      changedByType: "PRINT_USER",
+      changedByUserId: input.printUserId,
+      reason: null,
+      changedAt: now,
+    });
+    transaction.set(keyRef, {
+      orderId,
+      action: "print-user-submit",
+      createdAt: now,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    });
+  });
+
+  return getShopOrderById(input.shopId, reusedOrderId ?? orderId);
 }
 
 async function transitionOrder(

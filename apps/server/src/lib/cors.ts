@@ -4,14 +4,27 @@ const DEFAULT_ORIGINS = [
   "https://tauri.localhost",
   "http://tauri.localhost",
   "tauri://localhost",
+  "http://localhost:3002",
+  "http://127.0.0.1:3002",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
 ];
 
-function allowedOrigins() {
-  const extra = process.env.DESKTOP_ORIGIN?.split(",")
-    .map((origin) => origin.trim())
-    .filter(Boolean);
+function extraOrigins(value: string | undefined) {
+  return (
+    value
+      ?.split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean) ?? []
+  );
+}
 
-  return new Set([...DEFAULT_ORIGINS, ...(extra ?? [])]);
+function allowedOrigins() {
+  return new Set([
+    ...DEFAULT_ORIGINS,
+    ...extraOrigins(process.env.DESKTOP_ORIGIN),
+    ...extraOrigins(process.env.PRINT_USER_ORIGIN),
+  ]);
 }
 
 export function isAllowedDesktopOrigin(origin: string | null) {

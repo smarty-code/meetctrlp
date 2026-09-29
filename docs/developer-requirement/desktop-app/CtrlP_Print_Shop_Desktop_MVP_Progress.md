@@ -7,6 +7,18 @@
 
 When a leftover item ships, **move it into Built** and **delete it from Left to build**. When the leftover section is empty, the PRD loop for this stack is done.
 
+**Last reviewed:** 2025-09-29 (code vs [`Print Shop Partner Desktop MVP.md`](./Print%20Shop%20Partner%20Desktop%20MVP.md)).
+
+### Snapshot
+
+| Area | Status |
+| --- | --- |
+| PRD Screens 1–6 (shop desktop) | **Shipped** with documented limits (queue pause/resume, duplex customer offer deferred per PRD out-of-scope) |
+| FR-01–FR-46 | **45 Done**, **1 Partial** (FR-21 per-page driver progress) |
+| P0 scope list (PRD § In Scope) | **Covered** on this stack except items explicitly deferred in the PRD or noted under polish below |
+| PRD §5 Tracking (PostHog) / Sentry | **Not started** in `apps/print-shop` |
+| Customer-facing checkout (`apps/printUserWebapp`) | **Separate product**; FR-46 is satisfied when server/Firestore order fields update (not re-validated here) |
+
 ---
 
 ## How to maintain this file
@@ -87,6 +99,21 @@ Current stack: Windows Tauri 2 UI (`apps/print-shop`) + .NET 8 sidecar (`apps/pr
 
 Delete each bullet when it ships.
 
+**MVP must-haves for this stack:** none remaining. The PRD Screen 1–6 and P0 FR table are implemented here unless marked partial or deferred below.
+
+### PRD polish and adjacent work (optional; not blocking “desktop MVP done”)
+
+These are called out in the PRD or runbooks but are not required to close the shop-desktop loop:
+
+- **FR-21 (remainder):** per-page progress from the Windows spooler when the driver exposes it (today: lifecycle + job-level state only).
+- **Screen 4:** pause/resume — intentionally omitted (unsafe to pause in-flight GDI jobs; cancel/retry/reassign remain).
+- **Screen 5:** editable **default print preset** — server supports `PATCH` preset on `shops/{shopId}/printers/{printerId}`; UI shows read-only `defaultPrintSettings` only. No operator “connect/disconnect printer” control (connection is live spooler state, not a separate MVP action).
+- **Screen 3:** PRD lists **file size** and **customer type** on order details; UI shows filename, pages, copies, color, paper, page selection, payment — not file bytes or a dedicated customer-type label (phone is searchable on Orders).
+- **Screen 6 → Notifications:** in-app attention list on Dashboard (FR-43); no **notification preferences** editor.
+- **PRD §5 analytics:** PostHog events (`desktop_app_started`, `order_accepted`, etc.) and desktop Sentry — not wired in `apps/print-shop`.
+- **Privacy runbook:** after shred acknowledgement, **remote object deletion** from storage may still be a server/ops follow-up (downloads are blocked once shredded).
+- **Field readiness:** signed NSIS installer exists via `pnpm desktop:build`; pilot signing, multi-printer matrix, and production object storage are deployment/QA, not app feature gaps.
+
 ### Explicitly out of this MVP (do not put in Left to build)
 
 Duplex as a customer option, pages-per-sheet, orientation/scaling/collation/binding/stapling, home delivery, vendor USB/IPP SDKs, Firebase client SDK in the desktop app, Windows Service host (the current detached agent is per-user).
@@ -152,16 +179,21 @@ Duplex as a customer option, pages-per-sheet, orientation/scaling/collation/bind
 | --- | --- | --- |
 | 1 Dashboard | KPIs, attention, recent orders, notifications | — |
 | 2 Orders | Streamed filters, search, date/payment filters, accept/reject, history | — |
-| 3 Order details | Preview/hash, readiness, dispatch, reassign, cash, pickup, shred | — |
+| 3 Order details | Preview/hash, readiness, dispatch, reassign, cash, pickup, shred | File size + customer type labels (optional polish) |
 | 4 Print queue | Unified local/cloud list, drawer, retry/reassign/cancel | Pause/resume unsupported |
-| 5 Printers | Discovery, caps, default, enable, offer color/A3, test page, preset display | Duplex customer offer deferred |
-| 6 Settings | Profile, pricing, hours, capabilities, diagnostics, log export | — |
+| 5 Printers | Discovery, caps, default, enable, offer color/A3, test page, preset display | Preset **editor** UI; duplex customer offer deferred |
+| 6 Settings | Profile, pricing, hours, capabilities, automation, diagnostics, log export | Notification **preferences** (in-app feed only) |
 
 ---
 
 ## Suggested next slices (not a commitment)
 
-The PRD Screen 1–6 should-haves for this stack are shipped. Remaining work is out of MVP unless the PRD changes: duplex as a customer option, finishing options, home delivery, vendor SDKs, and a Windows Service host.
+1. **Preset editor** on Printers (wire existing server `updatePrinterPreset` from `apps/print-shop`).
+2. **PostHog + Sentry** for PRD §5 (no PII/filenames in events).
+3. **Order details polish** (file size, customer type) if product wants parity with PRD bullet list.
+4. **E2E pilot** using [`Order_to_Print_Execution_Runbook.md`](./Order_to_Print_Execution_Runbook.md) on Print to PDF + one physical printer.
+
+Deferred product lines (not shop-desktop MVP): duplex customer option, finishing, home delivery, vendor SDKs, Windows Service agent host.
 
 ## Verification recorded for the current built slices
 

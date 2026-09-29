@@ -3,6 +3,7 @@ import type { UpdateShopProfileRequestInput } from "@ctrlp/schemas";
 import type { AuthSessionUser } from "@ctrlp/types";
 
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
+import { shopCustomerUrl } from "@/src/modules/print-user/print-user.helpers";
 import { getShop, listActiveStaff } from "@/src/modules/shops/firestore-shop-store";
 
 export async function getShopProfile(user: AuthSessionUser) {
@@ -16,6 +17,8 @@ export async function getShopProfile(user: AuthSessionUser) {
     shop: {
       id: shop.id,
       name: shop.name,
+      slug: shop.slug,
+      customerUrl: shop.slug ? shopCustomerUrl(shop.slug) : null,
       phone: shop.phone,
       email: shop.email,
       status: shop.status,

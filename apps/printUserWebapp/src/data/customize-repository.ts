@@ -53,7 +53,7 @@ export const customizeCopy = {
 } as const
 
 export const customizeConfig = {
-  acceptedFileTypes: ".pdf,.jpg,.jpeg,.png,.doc,.docx,.ppt,.pptx",
+  acceptedFileTypes: ".pdf,.jpg,.jpeg,.png",
   maxCopies: 20,
   pricePerPage: { bw: 3, color: 10 } as const,
   defaultPageCount: 3,

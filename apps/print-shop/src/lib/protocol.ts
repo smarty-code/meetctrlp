@@ -246,6 +246,8 @@ export type ShopAddress = {
 export type ShopProfile = {
   id: string
   name: string
+  slug?: string | null
+  customerUrl?: string | null
   phone: string | null
   email: string | null
   status: string

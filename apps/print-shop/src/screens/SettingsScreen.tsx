@@ -164,6 +164,38 @@ export function SettingsScreen({
         </CardContent>
       </Card>
 
+      {shop?.customerUrl ? (
+        <Card className="rounded-[12px]">
+          <CardHeader>
+            <CardTitle>Customer QR</CardTitle>
+            <CardDescription>
+              Guests scan this code to open your shop print page. Share the link or print the QR at the counter.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 md:grid-cols-[220px_1fr] md:items-center">
+            <img
+              alt="Customer print page QR code"
+              className="size-[220px] rounded-[12px] border border-graphite bg-paper"
+              src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(shop.customerUrl)}`}
+            />
+            <div className="space-y-3">
+              <p className="break-all text-body font-bold text-midnight">{shop.customerUrl}</p>
+              <p className="text-caption text-ash">Shop slug: {shop.slug}</p>
+              <Button
+                className="rounded-[12px]"
+                variant="outline"
+                type="button"
+                onClick={() => {
+                  void navigator.clipboard.writeText(shop.customerUrl ?? "")
+                }}
+              >
+                Copy customer link
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card className="rounded-[12px]">
         <CardHeader>
           <CardTitle>Pricing</CardTitle>

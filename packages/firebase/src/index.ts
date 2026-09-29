@@ -28,5 +28,6 @@ export {
   createPresignedUploadUrl,
   deleteObject,
   getS3StorageClient,
+  readObject,
   uploadObject,
 } from "./storage";

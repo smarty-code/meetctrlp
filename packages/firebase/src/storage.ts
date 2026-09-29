@@ -68,6 +68,22 @@ export async function createPresignedDownloadUrl(
   return getSignedUrl(client, command, { expiresIn });
 }
 
+export async function readObject(key: string): Promise<Uint8Array> {
+  const { client, config } = getClientAndConfig();
+  const response = await client.send(
+    new GetObjectCommand({
+      Bucket: config.bucketName,
+      Key: requireObjectKey(key),
+    }),
+  );
+
+  if (!response.Body) {
+    throw new Error("Object body is empty.");
+  }
+
+  return response.Body.transformToByteArray();
+}
+
 export async function uploadObject(
   key: string,
   body: Uint8Array | string,

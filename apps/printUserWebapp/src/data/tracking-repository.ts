@@ -5,7 +5,9 @@ import {
   TimelineStepItem,
   TimelineStepState,
 } from "../types/tracking";
-import { getSubmittedOrder } from "./payment-repository";
+import { fetchGuestOrder, type GuestOrderDto } from "../lib/cloud";
+import { mapPublicShopToContext, paiseToRupees } from "../lib/print-user-map";
+import { readStoredPublicShop } from "../components/shop-session-provider";
 import {
   TRACKING_COPY,
   TRACKING_STORAGE_KEYS,
@@ -511,81 +513,100 @@ export function saveCachedOrderTracking(data: OrderTrackingData): void {
   }
 }
 
-/**
- * Loads order tracking data, honoring session cache, submitted order, or fallback
- */
+function mapServerStatus(status: string): OrderLifecycleStatus {
+  if (status === "SHOP_ACCEPTED") return "ACCEPTED";
+  if (status === "PRINT_FAILED") return "FAILED";
+  if (
+    status === "SUBMITTED" ||
+    status === "PRINTING" ||
+    status === "READY" ||
+    status === "COMPLETED" ||
+    status === "REJECTED" ||
+    status === "CANCELLED" ||
+    status === "FAILED"
+  ) {
+    return status;
+  }
+  return "SUBMITTED";
+}
+
+export function mapGuestOrderToTracking(order: GuestOrderDto): OrderTrackingData {
+  const shopRecord = readStoredPublicShop();
+  const shop = shopRecord
+    ? mapPublicShopToContext(shopRecord)
+    : {
+        id: order.shopId,
+        name: "Print shop",
+        address: "Pickup at the shop counter",
+        status: "OPEN" as const,
+        estimatedMinutes: 10,
+        startingPriceA4: 3,
+      };
+  const status = mapServerStatus(order.status);
+  const submittedAt = order.lifecycle.submittedAt ?? order.createdAt ?? new Date().toISOString();
+  const updatedAt = order.updatedAt ?? submittedAt;
+  const items = order.documents.map((document) => ({
+    id: document.id,
+    name: document.originalFilename,
+    pages: document.config?.billablePages ?? document.pageCount,
+    copies: document.copies,
+    colorMode: document.colorMode === "COLOR" ? ("color" as const) : ("bw" as const),
+    paperSize: document.paperSize,
+    linePrice: paiseToRupees(document.totalPaise),
+    type: document.mimeType,
+  }));
+
+  return {
+    orderId: order.id,
+    displayReference: order.orderNumber || order.pickupCode || order.id,
+    status,
+    paymentMethod: order.payment.method,
+    paymentState:
+      order.payment.method === "CASH" && order.payment.status !== "PAID"
+        ? "CASH_PENDING"
+        : order.payment.status === "PAID"
+          ? "SUCCESS"
+          : "PENDING",
+    totalAmount: paiseToRupees(order.amounts.totalMinorUnits),
+    currency: "INR",
+    shop: {
+      id: shop.id,
+      name: shop.name,
+      address: shop.address,
+      phone: shop.phone,
+      estimatedMinutes: shop.estimatedMinutes,
+      mapUrl: shop.mapUrl,
+      counterInstructions: `Pickup code ${order.pickupCode}`,
+    },
+    documentSummary: {
+      totalDocuments: items.length,
+      totalPages: items.reduce((sum, item) => sum + item.pages * item.copies, 0),
+      totalCopies: items.reduce((sum, item) => sum + item.copies, 0),
+      items,
+    },
+    submittedAt,
+    updatedAt,
+    timeline: buildTimelineSteps(status, submittedAt, updatedAt),
+    collectionInstructions: `Show pickup code ${order.pickupCode} at the counter.`,
+    customerSafeFailureReason: order.rejection.reason ?? undefined,
+  };
+}
+
 export async function fetchOrderTracking(
   orderIdParam?: string | null,
 ): Promise<OrderTrackingData> {
-  // Simulated small network roundtrip
-  await new Promise((resolve) => setTimeout(resolve, 350));
-
-  const submitted = getSubmittedOrder();
-  const cached = getCachedOrderTracking();
-
-  // If cached data exists, verify that its items array is not a stale hardcoded fallback
-  if (cached && (!orderIdParam || cached.orderId === orderIdParam)) {
-    const realItems = getRealDocumentsFromSession(submitted);
-    const hasDummyDoc = cached.documentSummary.items.some(
-      (it) => it.id === "doc-1" && it.name === "Project_Proposal_Final.pdf",
-    );
-    const hasMismatchedCount =
-      realItems.length > 0 &&
-      cached.documentSummary.items.length !== realItems.length;
-
-    if (realItems.length > 0 && (hasDummyDoc || hasMismatchedCount)) {
-      const totalDocs = realItems.length;
-      const totalCopies = realItems.reduce((sum, d) => sum + d.copies, 0);
-      const totalPages = realItems.reduce(
-        (sum, d) => sum + d.pages * d.copies,
-        0,
-      );
-      const updatedTotal = realItems.reduce(
-        (sum, it) =>
-          sum +
-          (it.linePrice ??
-            it.copies * it.pages * (it.colorMode === "color" ? 10 : 3)),
-        0,
-      );
-
-      const refreshed: OrderTrackingData = {
-        ...cached,
-        totalAmount: updatedTotal || cached.totalAmount,
-        documentSummary: {
-          totalDocuments: totalDocs,
-          totalPages,
-          totalCopies,
-          items: realItems,
-        },
-      };
-      saveCachedOrderTracking(refreshed);
-      return refreshed;
-    }
-
-    return cached;
+  if (!orderIdParam) {
+    throw new Error("missing order id");
   }
-
-  if (submitted && (!orderIdParam || submitted.orderId === orderIdParam)) {
-    const created = createFromSubmittedOrder(submitted);
-    saveCachedOrderTracking(created);
-    return created;
-  }
-
-  const demo = createDemoOrder(orderIdParam || undefined);
-  saveCachedOrderTracking(demo);
-  return demo;
+  const order = await fetchGuestOrder(orderIdParam);
+  const mapped = mapGuestOrderToTracking(order);
+  saveCachedOrderTracking(mapped);
+  return mapped;
 }
 
-/**
- * Polls backend for order status. Protects against backward state regression.
- */
 export async function pollLatestOrderStatus(
   current: OrderTrackingData,
 ): Promise<OrderTrackingData> {
-  // Simulate network request
-  await new Promise((resolve) => setTimeout(resolve, 400));
-
-  // If already at terminal state, keep it
   if (
     current.status === "COMPLETED" ||
     current.status === "REJECTED" ||
@@ -594,8 +615,7 @@ export async function pollLatestOrderStatus(
   ) {
     return current;
   }
-
-  return current;
+  return fetchOrderTracking(current.orderId);
 }
 
 /**

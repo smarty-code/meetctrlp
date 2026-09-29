@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation"
 
-export default function PaymentPage() {
-  redirect("/review")
+export default function PaymentRedirect() {
+  redirect("/")
 }
-

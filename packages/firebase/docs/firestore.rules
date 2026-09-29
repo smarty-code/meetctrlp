@@ -74,9 +74,10 @@ service cloud.firestore {
       }
     }
 
-    // Anonymous Print Users (Guest Sessions)
+    // Anonymous Print Users (Guest Sessions). Clients never read or write
+    // these documents; the Admin SDK on apps/server is the only writer.
     match /printUsers/{userId} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
 
     // Document Access & Shredding Compliance Logs (Write-only for audit integrity)

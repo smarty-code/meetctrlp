@@ -8,15 +8,13 @@ import {
   pollLatestOrderStatus,
   transitionOrderStatus,
 } from "../data/tracking-repository";
-import {
-  TRACKING_COPY,
-  TRACKING_ROUTES,
-  TRACKING_TIMINGS,
-} from "../data/tracking-constants";
+import { TRACKING_COPY, TRACKING_TIMINGS } from "../data/tracking-constants";
+import { useShopSession } from "../components/shop-session-provider";
 
 export function useOrderTracking() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { routes } = useShopSession();
   const orderIdParam = searchParams.get("orderId");
 
   const [order, setOrder] = useState<OrderTrackingData | null>(null);
@@ -160,8 +158,8 @@ export function useOrderTracking() {
   );
 
   const startNewOrder = useCallback(() => {
-    router.push(TRACKING_ROUTES.HOME);
-  }, [router]);
+    router.push(routes.home);
+  }, [router, routes.home]);
 
   return {
     order,

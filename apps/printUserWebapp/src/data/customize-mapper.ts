@@ -13,12 +13,12 @@ import {
 type DocumentInput = Pick<
   ConfigurableDocument,
   "id" | "name" | "size" | "type"
-> & { previewUrl?: string }
+> & { previewUrl?: string; pageCount?: number }
 
 export function mapFilesToConfigurationDocuments(
   files: DocumentInput[]
 ): ConfigurableDocument[] {
-  return files.map((file, index) => {
+  return files.map((file) => {
     const cached = getCachedFile(file.id)
     const previewUrl =
       file.previewUrl || cached?.url || getCachedFileUrl(file.id)
@@ -29,11 +29,7 @@ export function mapFilesToConfigurationDocuments(
       ...file,
       file: realFile,
       previewUrl: previewUrl || undefined,
-      pageCount: isImage
-        ? 1
-        : index === 0
-          ? customizeConfig.defaultPageCount
-          : customizeConfig.additionalPageCount,
+      pageCount: file.pageCount || (isImage ? 1 : customizeConfig.defaultPageCount),
       status: "ready",
       configuration: cloneConfiguration(defaultPrintConfiguration),
     }

@@ -9,11 +9,13 @@ import { mockShop } from "./mock-shop"
 import {
   customizeConfig,
   defaultPrintConfiguration,
-  mockConfigurationDocuments,
 } from "./customize-repository"
 import { STORAGE_KEYS } from "./review-constants"
 import { restoreCachedFile } from "../lib/file-store"
 import { mapStoredFilesToDocuments } from "./customize-mapper"
+import { fetchGuestSession, quoteGuestSession } from "../lib/cloud"
+import { guestDocumentsToConfigurable, mapPublicShopToContext, quoteToPricing } from "../lib/print-user-map"
+import { readStoredPublicShop } from "../components/shop-session-provider"
 
 function getEffectivePages(doc: ConfigurableDocument): number {
   if (
@@ -133,77 +135,61 @@ function getOrCreateGuestSessionId(): string {
  * Loads the active order draft from session storage, restoring any cached file handles.
  */
 export async function loadOrderDraft(): Promise<OrderDraft> {
-  const shop = mockShop
+  const storedShop = readStoredPublicShop()
+  const shop = storedShop ? mapPublicShopToContext(storedShop) : mockShop
   const sessionId = getOrCreateGuestSessionId()
   let documents: ConfigurableDocument[] = []
 
-  if (typeof window !== "undefined") {
-    try {
-      // 1. First priority: check for full configured documents list
-      const storedConfigured = window.sessionStorage.getItem(
-        STORAGE_KEYS.CONFIGURED_DOCUMENTS
-      )
-      if (storedConfigured) {
-        documents = JSON.parse(storedConfigured)
-      } else {
-        // 2. Second priority: check for draft
-        const storedDraft = window.sessionStorage.getItem(STORAGE_KEYS.ORDER_DRAFT)
-        if (storedDraft) {
-          const parsed = JSON.parse(storedDraft)
-          documents = parsed.documents || []
+  try {
+    const { session } = await fetchGuestSession()
+    const fileLookup = new Map<string, { file?: File; previewUrl?: string }>()
+    if (typeof window !== "undefined") {
+      for (const document of session.documents) {
+        const cached = await restoreCachedFile(document.id)
+        if (cached) fileLookup.set(document.id, cached)
+      }
+    }
+    documents = guestDocumentsToConfigurable(session.documents, fileLookup)
+  } catch {
+    if (typeof window !== "undefined") {
+      try {
+        const storedConfigured = window.sessionStorage.getItem(STORAGE_KEYS.CONFIGURED_DOCUMENTS)
+        if (storedConfigured) {
+          documents = JSON.parse(storedConfigured)
         } else {
-          // 3. Third priority: check for uploaded files
-          const storedUploaded = window.sessionStorage.getItem(
-            STORAGE_KEYS.UPLOADED_FILES
-          )
+          const storedUploaded = window.sessionStorage.getItem(STORAGE_KEYS.UPLOADED_FILES)
           if (storedUploaded) {
-            documents = mapStoredFilesToDocuments(
-              JSON.parse(storedUploaded),
-              "doc"
-            )
+            documents = mapStoredFilesToDocuments(JSON.parse(storedUploaded), "doc")
           }
         }
+      } catch (error) {
+        console.warn("Failed reading order draft from storage:", error)
       }
-    } catch (e) {
-      console.warn("Failed reading order draft from storage:", e)
     }
   }
 
-  // Fallback to mock documents if nothing is stored (e.g. direct URL visit in dev)
-  if (!documents || documents.length === 0) {
-    documents = mockConfigurationDocuments
-  }
-
-  // Restore cached File and Object URLs from IndexedDB for previewing
   const restoredDocs = await Promise.all(
     documents.map(async (doc) => {
-      // Ensure defaults for configuration if partially missing
-      const config = {
-        ...defaultPrintConfiguration,
-        ...doc.configuration,
-      }
+      const config = { ...defaultPrintConfiguration, ...doc.configuration }
       if (doc.id) {
         const cached = await restoreCachedFile(doc.id)
         if (cached) {
-          return {
-            ...doc,
-            file: cached.file,
-            previewUrl: cached.url,
-            configuration: config,
-          }
+          return { ...doc, file: cached.file, previewUrl: cached.url, configuration: config }
         }
       }
-      return {
-        ...doc,
-        configuration: config,
-      }
-    })
+      return { ...doc, configuration: config }
+    }),
   )
 
-  const pricing = calculateOrderPricing(restoredDocs, shop)
+  let pricing = calculateOrderPricing(restoredDocs, shop)
+  try {
+    pricing = quoteToPricing(await quoteGuestSession())
+  } catch {
+    // Keep the local estimate until the quote endpoint is reachable.
+  }
 
-  const draft: OrderDraft = {
-    orderId: `ORD-${Date.now().toString(36).toUpperCase()}`,
+  return {
+    orderId: `draft-${sessionId}`,
     shop,
     documents: restoredDocs,
     pricing,
@@ -215,8 +201,6 @@ export async function loadOrderDraft(): Promise<OrderDraft> {
       isPriceAuthoritative: true,
     },
   }
-
-  return draft
 }
 
 /**
@@ -248,16 +232,16 @@ export async function refreshPriceAuthoritatively(
   hasChanged: boolean
   previousTotal: number
 }> {
-  // Simulates brief network validation roundtrip
-  await new Promise((resolve) => setTimeout(resolve, 350))
-
   const previousTotal = draft.pricing.total
-  const freshPricing = calculateOrderPricing(draft.documents, draft.shop)
-  const hasChanged = freshPricing.total !== previousTotal
-
+  let freshPricing = calculateOrderPricing(draft.documents, draft.shop)
+  try {
+    freshPricing = quoteToPricing(await quoteGuestSession())
+  } catch {
+    // Keep the local estimate if the quote request fails.
+  }
   return {
     pricing: freshPricing,
-    hasChanged,
+    hasChanged: freshPricing.total !== previousTotal,
     previousTotal,
   }
 }

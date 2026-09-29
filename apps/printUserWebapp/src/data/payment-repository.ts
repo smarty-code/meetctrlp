@@ -5,12 +5,9 @@ import {
   PaymentTransaction,
   SubmittedOrder,
 } from "../types/payment"
-import {
-  PAYMENT_COPY,
-  PAYMENT_STORAGE_KEYS,
-  PAYMENT_TIMINGS,
-} from "./payment-constants"
-import { calculateOrderPricing } from "./order-repository"
+import { PAYMENT_COPY, PAYMENT_STORAGE_KEYS } from "./payment-constants"
+import { quoteGuestSession, mockConfirmPayment, submitGuestOrder } from "../lib/cloud"
+import { quoteToPricing } from "../lib/print-user-map"
 
 /**
  * Returns available payment methods dynamically based on shop context and platform rules.
@@ -24,7 +21,7 @@ export function getAvailablePaymentMethods(
       title: PAYMENT_COPY.onlineMethodTitle,
       description: PAYMENT_COPY.onlineMethodDescription,
       iconName: "upi",
-      enabled: true,
+      enabled: shop.acceptsOnline !== false,
       badgeText: PAYMENT_COPY.onlineMethodBadge,
     },
     {
@@ -32,7 +29,7 @@ export function getAvailablePaymentMethods(
       title: PAYMENT_COPY.cashMethodTitle,
       description: PAYMENT_COPY.cashMethodDescription,
       iconName: "cash",
-      enabled: shop.status === "OPEN" || shop.status === "BUSY",
+      enabled: shop.acceptsCash !== false && (shop.status === "OPEN" || shop.status === "BUSY"),
       disabledReason:
         shop.status !== "OPEN" && shop.status !== "BUSY"
           ? "Cash payments unavailable while shop is offline"
@@ -54,20 +51,17 @@ export async function initiateOnlinePaymentTransaction(
   transaction: PaymentTransaction
   priceChanged: boolean
   authoritativeTotal: number
+  submittedOrderId?: string
 }> {
-  // Authoritative server-side price check simulation
-  await new Promise((resolve) =>
-    setTimeout(resolve, PAYMENT_TIMINGS.PRICE_CHECK_MS)
-  )
-
-  const freshPricing = calculateOrderPricing(order.documents, order.shop)
-  if (freshPricing.total !== order.pricing.total) {
+  const quote = await quoteGuestSession()
+  const authoritativeTotal = quote.totalPaise / 100
+  if (Math.abs(authoritativeTotal - order.pricing.total) > 0.009) {
     return {
       transaction: {
         transactionId: `TXN-ERR-${Date.now().toString(36).toUpperCase()}`,
         orderId: order.orderId,
-        amount: freshPricing.total,
-        currency: freshPricing.currency,
+        amount: authoritativeTotal,
+        currency: quote.currency,
         method: "ONLINE",
         state: "FAILED",
         initiatedAt: new Date().toISOString(),
@@ -75,57 +69,78 @@ export async function initiateOnlinePaymentTransaction(
         errorMessage: PAYMENT_COPY.priceChangedDescription,
       },
       priceChanged: true,
-      authoritativeTotal: freshPricing.total,
+      authoritativeTotal,
     }
   }
 
-  // Simulate payment gateway checkout session creation
-  await new Promise((resolve) => setTimeout(resolve, PAYMENT_TIMINGS.INITIATE_MS))
+  const result = await submitGuestOrder({
+    paymentMethod: "ONLINE",
+    idempotencyKey,
+    expectedTotalPaise: quote.totalPaise,
+  })
+
+  if (result.priceChanged || !result.order) {
+    const nextTotal = quoteToPricing(result.quote).total
+    return {
+      transaction: {
+        transactionId: `TXN-ERR-${Date.now().toString(36).toUpperCase()}`,
+        orderId: order.orderId,
+        amount: nextTotal,
+        currency: result.quote.currency,
+        method: "ONLINE",
+        state: "FAILED",
+        initiatedAt: new Date().toISOString(),
+        idempotencyKey,
+        errorMessage: PAYMENT_COPY.priceChangedDescription,
+      },
+      priceChanged: true,
+      authoritativeTotal: nextTotal,
+    }
+  }
 
   const transaction: PaymentTransaction = {
-    transactionId: `TXN-${Date.now().toString(36).toUpperCase()}`,
-    orderId: order.orderId,
-    amount: freshPricing.total,
-    currency: freshPricing.currency,
+    transactionId: `TXN-${result.order.id.slice(0, 8).toUpperCase()}`,
+    orderId: result.order.id,
+    amount: authoritativeTotal,
+    currency: quote.currency,
     method: "ONLINE",
     state: "VERIFICATION_PENDING",
     initiatedAt: new Date().toISOString(),
-    providerReference: `PROV-${Math.random().toString(36).substring(2, 9).toUpperCase()}`,
+    providerReference: result.order.id,
     idempotencyKey,
   }
-
   saveActiveTransaction(transaction)
-
   return {
     transaction,
     priceChanged: false,
-    authoritativeTotal: freshPricing.total,
+    authoritativeTotal,
+    submittedOrderId: result.order.id,
   }
 }
 
-/**
- * Server-side payment verification simulation
- */
 export async function verifyPaymentTransaction(
   transaction: PaymentTransaction
 ): Promise<{
   success: boolean
   verifiedTransaction: PaymentTransaction
 }> {
-  // Simulated gateway verification roundtrip
-  await new Promise((resolve) => setTimeout(resolve, PAYMENT_TIMINGS.VERIFY_MS))
-
-  const updated: PaymentTransaction = {
-    ...transaction,
-    state: "SUCCESS",
-    completedAt: new Date().toISOString(),
-  }
-
-  saveActiveTransaction(updated)
-
-  return {
-    success: true,
-    verifiedTransaction: updated,
+  try {
+    await mockConfirmPayment(transaction.orderId, crypto.randomUUID())
+    const updated: PaymentTransaction = {
+      ...transaction,
+      state: "SUCCESS",
+      completedAt: new Date().toISOString(),
+    }
+    saveActiveTransaction(updated)
+    return { success: true, verifiedTransaction: updated }
+  } catch {
+    const updated: PaymentTransaction = {
+      ...transaction,
+      state: "FAILED",
+      errorMessage: PAYMENT_COPY.paymentFailedDescription,
+    }
+    saveActiveTransaction(updated)
+    return { success: false, verifiedTransaction: updated }
   }
 }
 
@@ -136,14 +151,20 @@ export async function submitCashPaymentOrder(
   order: OrderDraft,
   idempotencyKey: string
 ): Promise<SubmittedOrder> {
-  // Brief backend registration simulation
-  await new Promise((resolve) => setTimeout(resolve, PAYMENT_TIMINGS.INITIATE_MS))
+  const result = await submitGuestOrder({
+    paymentMethod: "CASH",
+    idempotencyKey,
+    expectedTotalPaise: Math.round(order.pricing.total * 100),
+  })
+  if (result.priceChanged || !result.order) {
+    throw new Error(PAYMENT_COPY.priceChangedDescription)
+  }
 
   const submitted: SubmittedOrder = {
-    orderId: order.orderId,
+    orderId: result.order.id,
     shop: order.shop,
-    totalAmount: order.pricing.total,
-    currency: order.pricing.currency,
+    totalAmount: result.quote.totalPaise / 100,
+    currency: result.quote.currency,
     totalDocuments: order.documents.length,
     totalCopies: order.pricing.totalCopies,
     documents: order.documents,
@@ -157,19 +178,15 @@ export async function submitCashPaymentOrder(
 
   saveSubmittedOrder(submitted)
   clearActiveTransaction()
-
   return submitted
 }
 
-/**
- * Submits an order following successful online payment verification
- */
 export async function submitOnlinePaidOrder(
   order: OrderDraft,
   transaction: PaymentTransaction
 ): Promise<SubmittedOrder> {
   const submitted: SubmittedOrder = {
-    orderId: order.orderId,
+    orderId: transaction.orderId,
     shop: order.shop,
     totalAmount: transaction.amount,
     currency: transaction.currency,
@@ -186,7 +203,6 @@ export async function submitOnlinePaidOrder(
 
   saveSubmittedOrder(submitted)
   clearActiveTransaction()
-
   return submitted
 }
 

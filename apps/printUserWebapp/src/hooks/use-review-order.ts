@@ -25,10 +25,11 @@ import {
   clearActiveTransaction,
 } from "../data/payment-repository"
 import { PAYMENT_COPY } from "../data/payment-constants"
-import { REVIEW_ROUTES } from "../data/review-constants"
+import { useShopSession } from "../components/shop-session-provider"
 
 export function useReviewOrder() {
   const router = useRouter()
+  const { routes } = useShopSession()
   const [draft, setDraft] = useState<OrderDraft | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -150,17 +151,17 @@ export function useReviewOrder() {
     if (draft) {
       saveOrderDraft(draft)
     }
-    router.push(REVIEW_ROUTES.CUSTOMIZE)
-  }, [draft, router])
+    router.push(routes.customize)
+  }, [draft, router, routes.customize])
 
   const handleEditDocument = useCallback(
     (documentId: string) => {
       if (draft) {
         saveOrderDraft(draft)
       }
-      router.push(`${REVIEW_ROUTES.CUSTOMIZE}?selectedId=${encodeURIComponent(documentId)}`)
+      router.push(`${routes.customize}?selectedId=${encodeURIComponent(documentId)}`)
     },
-    [draft, router]
+    [draft, router, routes.customize]
   )
 
   const handleUpdateCopies = useCallback(
@@ -299,8 +300,8 @@ export function useReviewOrder() {
           setTimeout(() => {
             if (isMountedRef.current) {
               router.push(
-                `${REVIEW_ROUTES.ORDER_STATUS}?orderId=${encodeURIComponent(
-                  draft.orderId
+                `${routes.orderStatus}?orderId=${encodeURIComponent(
+                  verifyResult.verifiedTransaction.orderId
                 )}`
               )
             }
@@ -312,7 +313,7 @@ export function useReviewOrder() {
       } else if (selectedMethod === "CASH") {
         setPaymentState("CASH_PENDING")
 
-        await submitCashPaymentOrder(draft, idempotencyKey)
+        const submitted = await submitCashPaymentOrder(draft, idempotencyKey)
 
         if (!isMountedRef.current) return
 
@@ -321,8 +322,8 @@ export function useReviewOrder() {
         setTimeout(() => {
           if (isMountedRef.current) {
             router.push(
-              `${REVIEW_ROUTES.ORDER_STATUS}?orderId=${encodeURIComponent(
-                draft.orderId
+              `${routes.orderStatus}?orderId=${encodeURIComponent(
+                submitted.orderId
               )}`
             )
           }
@@ -339,7 +340,7 @@ export function useReviewOrder() {
         setIsSubmitting(false)
       }
     }
-  }, [draft, isValidating, selectedMethod, router])
+  }, [draft, isValidating, selectedMethod, router, routes.orderStatus])
 
   const canSubmit = useMemo(() => {
     if (

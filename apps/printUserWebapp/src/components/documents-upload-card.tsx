@@ -80,7 +80,7 @@ export const DocumentsUploadCard: React.FC<DocumentsUploadCardProps> = ({
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.ppt,.pptx"
+          accept=".pdf,.jpg,.jpeg,.png"
           className="hidden"
           onChange={handleInputChange}
           disabled={!isAvailable}

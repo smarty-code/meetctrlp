@@ -3,6 +3,7 @@ export type ShopStatus = "OPEN" | "BUSY" | "TEMPORARILY_UNAVAILABLE" | "CLOSED"
 export interface ShopContext {
   id: string
   name: string
+  slug?: string
   address: string
   status: ShopStatus
   statusMessage?: string
@@ -13,6 +14,17 @@ export interface ShopContext {
   phone?: string
   mapUrl?: string
   services?: string[]
+  capabilities?: {
+    colorPrinting: boolean
+    a3Printing: boolean
+  }
+  pricing?: {
+    bwA4PricePaise: number
+    colorA4PricePaise: number
+    colorA3PricePaise: number
+  }
+  acceptsCash?: boolean
+  acceptsOnline?: boolean
 }
 
 export interface UploadedFileItem {

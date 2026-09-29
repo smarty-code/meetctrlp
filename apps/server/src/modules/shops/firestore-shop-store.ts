@@ -30,6 +30,7 @@ export type ShopAddress = {
 export type StoredShop = {
   id: string;
   name: string;
+  slug: string | null;
   phone: string | null;
   email: string | null;
   status: string;
@@ -295,6 +296,27 @@ export async function touchLastLogin(user: StoredShopUser) {
   };
 }
 
+function parseStoredShop(
+  snapshot: { id: string; data: () => Record<string, unknown> | undefined },
+): StoredShop | undefined {
+  const data = snapshot.data();
+
+  if (!data || typeof data.name !== "string") {
+    return undefined;
+  }
+
+  return {
+    id: typeof data.id === "string" ? data.id : snapshot.id,
+    name: data.name,
+    slug: textOrNull(data.slug),
+    phone: textOrNull(data.phone),
+    email: textOrNull(data.email),
+    status: typeof data.status === "string" ? data.status : "ACTIVE",
+    address: formatAddress(data.address),
+    addressParts: parseAddress(data.address),
+  };
+}
+
 export async function getShop(shopId: string): Promise<StoredShop | undefined> {
   const snapshot = await getFirebaseFirestore().doc(`shops/${shopId}`).get();
 
@@ -302,21 +324,21 @@ export async function getShop(shopId: string): Promise<StoredShop | undefined> {
     return undefined;
   }
 
-  const data = snapshot.data() as Record<string, unknown>;
+  return parseStoredShop(snapshot);
+}
 
-  if (typeof data.name !== "string") {
+export async function getShopBySlug(slug: string): Promise<StoredShop | undefined> {
+  const snapshot = await getFirebaseFirestore()
+    .collection("shops")
+    .where("slug", "==", slug)
+    .limit(1)
+    .get();
+
+  if (snapshot.empty) {
     return undefined;
   }
 
-  return {
-    id: typeof data.id === "string" ? data.id : snapshot.id,
-    name: data.name,
-    phone: textOrNull(data.phone),
-    email: textOrNull(data.email),
-    status: typeof data.status === "string" ? data.status : "ACTIVE",
-    address: formatAddress(data.address),
-    addressParts: parseAddress(data.address),
-  };
+  return parseStoredShop(snapshot.docs[0]);
 }
 
 export async function listActiveStaff(shopId: string) {

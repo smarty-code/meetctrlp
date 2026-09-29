@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "seed:print-order": "node ./scripts/seed-print-order.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test ./src/modules/print-user/print-user.helpers.test.ts"
   },
   "dependencies": {
     "@ctrlp/firebase": "workspace:*",

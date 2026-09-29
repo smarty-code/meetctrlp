@@ -188,8 +188,12 @@ async function requireShopData(shopId: string) {
   return snapshot.data() as Record<string, unknown>;
 }
 
+export async function getShopConfigByShopId(shopId: string) {
+  return readConfig(await requireShopData(shopId));
+}
+
 export async function getShopConfig(user: AuthSessionUser) {
-  return readConfig(await requireShopData(user.shopId));
+  return getShopConfigByShopId(user.shopId);
 }
 
 export async function updateShopPricing(

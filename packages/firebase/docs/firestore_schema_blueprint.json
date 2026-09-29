@@ -316,6 +316,52 @@
         }
       }
     },
+    "printUsers": {
+      "path": "/printUsers/{printUserId}",
+      "description": "Anonymous guest print-user sessions keyed by shop and client IP. Written only by the Admin SDK.",
+      "schema": {
+        "type": "object",
+        "required": ["id", "shopId", "shopSlug", "ipAddress", "documents", "createdAt", "lastSeenAt", "expiresAt"],
+        "properties": {
+          "id": { "type": "string", "description": "Opaque guest session id" },
+          "shopId": { "type": "string" },
+          "shopSlug": { "type": "string" },
+          "ipAddress": { "type": "string", "description": "Client IP used to resume the session" },
+          "documents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "originalFilename", "storageKey", "mimeType", "fileSizeBytes", "status"],
+              "properties": {
+                "id": { "type": "string" },
+                "originalFilename": { "type": "string" },
+                "storageKey": { "type": "string" },
+                "mimeType": { "type": "string", "enum": ["application/pdf", "image/jpeg", "image/png"] },
+                "fileSizeBytes": { "type": "integer" },
+                "pageCount": { "type": "integer", "minimum": 1 },
+                "sha256Hash": { "type": "string" },
+                "status": { "type": "string", "enum": ["UPLOADING", "READY", "FAILED"] },
+                "config": {
+                  "type": "object",
+                  "properties": {
+                    "colorMode": { "type": "string", "enum": ["BW", "COLOR"] },
+                    "copies": { "type": "integer", "minimum": 1 },
+                    "paperSize": { "type": "string", "enum": ["A4", "A3"] },
+                    "pageSelection": { "type": ["string", "null"] },
+                    "billablePages": { "type": "integer" },
+                    "orientation": { "type": "string", "enum": ["PORTRAIT", "LANDSCAPE"] }
+                  }
+                }
+              }
+            }
+          },
+          "activeOrderId": { "type": ["string", "null"] },
+          "createdAt": { "type": "string", "format": "timestamp" },
+          "lastSeenAt": { "type": "string", "format": "timestamp" },
+          "expiresAt": { "type": "string", "format": "timestamp" }
+        }
+      }
+    },
     "accessLogs": {
       "path": "/accessLogs/{logId}",
       "description": "Zero-retention privacy audit log for file preview, spooling, and cryptographic shredding.",
