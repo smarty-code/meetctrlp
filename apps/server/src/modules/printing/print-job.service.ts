@@ -2,6 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { FieldValue, getFirebaseFirestore } from "@ctrlp/firebase/firestore";
 import type {
+  ClaimAgentPrintJobsRequestInput,
+  ClaimPrintJobRequestInput,
   DispatchPrintJobRequestInput,
   PrinterOffered,
   PrinterTelemetryRequestInput,
@@ -31,6 +33,7 @@ export type PrintJobDto = {
   documentId: string;
   printerId: string;
   printerName: string;
+  printerSystemName: string;
   agentId: string | null;
   status: PrintJobStatus;
   pagesTotal: number;
@@ -45,6 +48,8 @@ export type PrintJobDto = {
   updatedAt: string | null;
   startedAt: string | null;
   completedAt: string | null;
+  leaseId: string | null;
+  claimedAt: string | null;
 };
 
 type PrintSettings = {
@@ -231,6 +236,7 @@ function toPrintJobDto(snapshot: { id: string; data: () => Record<string, unknow
     documentId: String(data.documentId ?? ""),
     printerId: String(data.printerId ?? ""),
     printerName: String(data.printerName ?? ""),
+    printerSystemName: String(data.printerSystemName ?? data.printerName ?? ""),
     agentId: typeof data.agentId === "string" ? data.agentId : null,
     status: (typeof data.status === "string" ? data.status : "QUEUED") as PrintJobStatus,
     pagesTotal: Number(data.pagesTotal ?? 1),
@@ -245,6 +251,8 @@ function toPrintJobDto(snapshot: { id: string; data: () => Record<string, unknow
     updatedAt: timestampToIso(data.updatedAt),
     startedAt: timestampToIso(data.startedAt),
     completedAt: timestampToIso(data.completedAt),
+    leaseId: typeof data.leaseId === "string" ? data.leaseId : null,
+    claimedAt: timestampToIso(data.claimedAt),
   };
 }
 
@@ -477,10 +485,16 @@ export async function dispatchPrintJob(user: AuthSessionUser, orderId: string, i
   const document = order.documents.find((entry) => {
     const record = entry as { id?: string; docId?: string };
     return record.docId === input.documentId || record.id === input.documentId;
-  }) as { pageCount?: number; config?: Record<string, unknown> } | undefined;
+  }) as { pageCount?: number; storageKey?: string; config?: Record<string, unknown> } | undefined;
 
   if (!document) {
     throw new AuthServiceError(404, "DOCUMENT_NOT_FOUND");
+  }
+  if (order.status !== "SHOP_ACCEPTED") {
+    throw new AuthServiceError(409, "ORDER_NOT_ACCEPTED");
+  }
+  if (!document.storageKey) {
+    throw new AuthServiceError(409, "DOCUMENT_NOT_READY");
   }
 
   const db = getFirebaseFirestore();
@@ -505,6 +519,16 @@ export async function dispatchPrintJob(user: AuthSessionUser, orderId: string, i
     const printerSnap = await transaction.get(printerRef);
     if (!printerSnap.exists) {
       throw new AuthServiceError(404, "printer is not registered");
+    }
+    if (printerSnap.get("enabled") === false) {
+      throw new AuthServiceError(409, "PRINTER_DISABLED");
+    }
+    if (printerSnap.get("status") !== "ONLINE" && printerSnap.get("status") !== "PRINTING") {
+      throw new AuthServiceError(409, "PRINTER_UNAVAILABLE");
+    }
+    const agentId = printerSnap.get("agentId");
+    if (typeof agentId !== "string" || !agentId) {
+      throw new AuthServiceError(409, "PRINTER_AGENT_UNAVAILABLE");
     }
 
     const fallback = defaultSettings(printerSnap.get("isColorCapable") === true);
@@ -532,7 +556,15 @@ export async function dispatchPrintJob(user: AuthSessionUser, orderId: string, i
       throw new AuthServiceError(400, error instanceof Error ? error.message : "invalid page selection");
     }
 
-    colorWarning = resolved.colorMode === "COLOR" && printerSnap.get("isColorCapable") !== true;
+    const offered = asRecord(printerSnap.get("offered"));
+    const capabilities = Array.isArray(printerSnap.get("capabilities"))
+      ? printerSnap.get("capabilities") as unknown[]
+      : [];
+    if (!capabilities.includes(resolved.paperSize) || (resolved.colorMode === "COLOR" &&
+      (printerSnap.get("isColorCapable") !== true || offered.color !== true || !capabilities.includes("COLOR")))) {
+      throw new AuthServiceError(409, "PRINTER_INCOMPATIBLE");
+    }
+    colorWarning = false;
     const pages = parsePageSelection(resolved.pageSelection, document.pageCount ?? 1);
     const jobRef = db.doc(`shops/${user.shopId}/orders/${orderId}/printJobs/${jobId}`);
 
@@ -543,7 +575,8 @@ export async function dispatchPrintJob(user: AuthSessionUser, orderId: string, i
       documentId: input.documentId,
       printerId: input.printerId,
       printerName: printerSnap.get("name") ?? "",
-      agentId: typeof printerSnap.get("agentId") === "string" ? printerSnap.get("agentId") : null,
+      agentId,
+      printerSystemName: String(printerSnap.get("systemName") ?? printerSnap.get("name") ?? ""),
       requestedOverrides,
       resolvedSettings: {
         ...resolved,
@@ -559,6 +592,8 @@ export async function dispatchPrintJob(user: AuthSessionUser, orderId: string, i
       errorMessage: null,
       startedAt: null,
       completedAt: null,
+      leaseId: null,
+      claimedAt: null,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
@@ -592,6 +627,108 @@ export async function listOrderPrintJobs(user: AuthSessionUser, orderId: string)
       .map((document) => toPrintJobDto(document))
       .sort((left, right) => (right.createdAt ?? "").localeCompare(left.createdAt ?? "")),
   };
+}
+
+export async function listAgentPrintJobs(user: AuthSessionUser, input: ClaimAgentPrintJobsRequestInput) {
+  const db = getFirebaseFirestore();
+  const jobs = await listQueuedJobsByCollectionGroup(user.shopId, input).catch(() =>
+    listQueuedJobsFromActiveOrders(user.shopId, input),
+  );
+  return {
+    jobs: jobs.sort((left, right) => (left.createdAt ?? "").localeCompare(right.createdAt ?? "")),
+  };
+}
+
+async function listQueuedJobsByCollectionGroup(shopId: string, input: ClaimAgentPrintJobsRequestInput) {
+  const snapshot = await getFirebaseFirestore()
+    .collectionGroup("printJobs")
+    .where("shopId", "==", shopId)
+    .where("agentId", "==", input.agentId)
+    .where("status", "==", "QUEUED")
+    .limit(input.limit)
+    .get();
+  return snapshot.docs.map((document) => toPrintJobDto(document));
+}
+
+async function listQueuedJobsFromActiveOrders(shopId: string, input: ClaimAgentPrintJobsRequestInput) {
+  const orders = await getFirebaseFirestore()
+    .collection(`shops/${shopId}/orders`)
+    .where("status", "in", ["SHOP_ACCEPTED", "PRINTING"])
+    .limit(40)
+    .get();
+  const jobs: PrintJobDto[] = [];
+  for (const order of orders.docs) {
+    const snapshot = await order.ref.collection("printJobs").get();
+    for (const document of snapshot.docs) {
+      if (document.get("agentId") === input.agentId && document.get("status") === "QUEUED") {
+        jobs.push(toPrintJobDto(document));
+      }
+      if (jobs.length >= input.limit) {
+        return jobs;
+      }
+    }
+  }
+  return jobs;
+}
+
+export async function claimPrintJob(
+  user: AuthSessionUser,
+  orderId: string,
+  jobId: string,
+  input: ClaimPrintJobRequestInput,
+) {
+  const db = getFirebaseFirestore();
+  const orderRef = db.doc(`shops/${user.shopId}/orders/${orderId}`);
+  const jobRef = orderRef.collection("printJobs").doc(jobId);
+  const idempotencyRef = db.doc(`shops/${user.shopId}/idempotencyKeys/${input.idempotencyKey}`);
+  const leaseId = randomUUID();
+
+  await db.runTransaction(async (transaction) => {
+    const [keySnap, orderSnap, jobSnap] = await Promise.all([
+      transaction.get(idempotencyRef),
+      transaction.get(orderRef),
+      transaction.get(jobRef),
+    ]);
+    if (keySnap.exists) {
+      if (keySnap.get("orderId") === orderId && keySnap.get("jobId") === jobId) {
+        return;
+      }
+      throw new AuthServiceError(409, "IDEMPOTENCY_KEY_REUSED");
+    }
+    if (!orderSnap.exists) {
+      throw new AuthServiceError(404, "ORDER_NOT_FOUND");
+    }
+    if (!jobSnap.exists) {
+      throw new AuthServiceError(404, "PRINT_JOB_NOT_FOUND");
+    }
+    if (jobSnap.get("agentId") !== input.agentId) {
+      throw new AuthServiceError(403, "PRINT_JOB_AGENT_MISMATCH");
+    }
+    if (jobSnap.get("status") !== "QUEUED") {
+      throw new AuthServiceError(409, "PRINT_JOB_STATUS_CONFLICT");
+    }
+
+    const now = FieldValue.serverTimestamp();
+    transaction.update(jobRef, {
+      status: "DISPATCHING",
+      leaseId,
+      claimedAt: now,
+      updatedAt: now,
+    });
+    transaction.set(idempotencyRef, {
+      orderId,
+      jobId,
+      action: "claim-print-job",
+      requestPath: `orders/${orderId}/printJobs/${jobId}/claim`,
+      createdAt: now,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    });
+    if (orderSnap.get("status") === "SHOP_ACCEPTED") {
+      transaction.update(orderRef, { status: "PRINTING", updatedAt: now });
+    }
+  });
+
+  return toPrintJobDto(await jobRef.get());
 }
 
 export async function updatePrintJob(
@@ -653,9 +790,21 @@ export async function updatePrintJob(
     }
 
     if (input.status === "COMPLETED") {
-      const allCompleted = siblingJobs.docs.every((document) =>
-        document.id === jobId ? true : document.get("status") === "COMPLETED",
+      const expectedDocumentIds = new Set(
+        Array.isArray(orderSnap.get("documents"))
+          ? (orderSnap.get("documents") as Array<Record<string, unknown>>)
+              .map((document) => document.docId ?? document.id)
+              .filter((id): id is string => typeof id === "string" && id.length > 0)
+          : [],
       );
+      const completedDocumentIds = new Set(
+        siblingJobs.docs
+          .filter((document) => document.id === jobId || document.get("status") === "COMPLETED")
+          .map((document) => document.get("documentId"))
+          .filter((id): id is string => typeof id === "string"),
+      );
+      const allCompleted = expectedDocumentIds.size > 0 &&
+        [...expectedDocumentIds].every((documentId) => completedDocumentIds.has(documentId));
       if (allCompleted && orderStatus === "PRINTING") {
         transaction.update(orderRef, {
           status: "READY",

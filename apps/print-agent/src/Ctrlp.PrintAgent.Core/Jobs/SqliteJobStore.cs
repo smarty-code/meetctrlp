@@ -32,6 +32,9 @@ public sealed class SqliteJobStore : IJobRepository
             CREATE TABLE IF NOT EXISTS jobs (
               id TEXT PRIMARY KEY,
               cloud_job_id TEXT NULL,
+              cloud_order_id TEXT NULL,
+              cloud_document_id TEXT NULL,
+              lease_id TEXT NULL,
               idempotency_key TEXT NULL UNIQUE,
               printer_id TEXT NULL,
               document_name TEXT NULL,
@@ -53,6 +56,9 @@ public sealed class SqliteJobStore : IJobRepository
             CREATE INDEX IF NOT EXISTS idx_jobs_work ON jobs (state, created_at);
             CREATE INDEX IF NOT EXISTS idx_jobs_cloud ON jobs (cloud_job_id);
             """);
+        EnsureColumn(connection, "cloud_order_id", "TEXT NULL");
+        EnsureColumn(connection, "cloud_document_id", "TEXT NULL");
+        EnsureColumn(connection, "lease_id", "TEXT NULL");
         // A prior agent process cannot still be printing after a crash. Surface those
         // records for deliberate operator retry instead of silently duplicating output.
         Execute(connection, """
@@ -96,15 +102,18 @@ public sealed class SqliteJobStore : IJobRepository
             transaction,
             """
             INSERT INTO jobs (
-              id, cloud_job_id, idempotency_key, printer_id, document_name, document_path,
+              id, cloud_job_id, cloud_order_id, cloud_document_id, lease_id, idempotency_key, printer_id, document_name, document_path,
               document_sha256, resolved_settings, copies, pages_total, state, created_at, updated_at
             ) VALUES (
-              $id, $cloudJobId, $idempotencyKey, $printerId, $documentName, $documentPath,
+              $id, $cloudJobId, $cloudOrderId, $cloudDocumentId, $leaseId, $idempotencyKey, $printerId, $documentName, $documentPath,
               $documentSha256, $resolvedSettings, $copies, $pagesTotal, 'queued', $now, $now
             )
             """,
             ("$id", id),
             ("$cloudJobId", request.CloudJobId),
+            ("$cloudOrderId", request.CloudOrderId),
+            ("$cloudDocumentId", request.CloudDocumentId),
+            ("$leaseId", request.LeaseId),
             ("$idempotencyKey", request.IdempotencyKey),
             ("$printerId", request.PrinterId),
             ("$documentName", request.DocumentName),
@@ -217,6 +226,21 @@ public sealed class SqliteJobStore : IJobRepository
         command.ExecuteNonQuery();
     }
 
+    private static void EnsureColumn(SqliteConnection connection, string column, string definition)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA table_info(jobs)";
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            if (string.Equals(reader.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+        Execute(connection, $"ALTER TABLE jobs ADD COLUMN {column} {definition}");
+    }
+
     private static void Execute(SqliteConnection connection, SqliteTransaction transaction, string sql, params (string Name, object? Value)[] values)
     {
         using var command = connection.CreateCommand();
@@ -266,7 +290,11 @@ public sealed class SqliteJobStore : IJobRepository
         reader.GetInt64(reader.GetOrdinal("updated_at")),
         NullableLong(reader, "started_at"),
         NullableLong(reader, "completed_at"),
-        Text(reader, "document_path"));
+        Text(reader, "document_path"),
+        Text(reader, "cloud_order_id"),
+        Text(reader, "cloud_document_id"),
+        Text(reader, "lease_id"),
+        Text(reader, "resolved_settings"));
 
     private static string? Text(SqliteDataReader reader, string column)
     {

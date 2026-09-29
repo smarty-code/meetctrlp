@@ -230,6 +230,12 @@ export type ShopProfile = {
   address: string | null
 }
 
+export type OrderAutomation = {
+  autoAcceptPaidOnline: boolean
+  autoDispatchAcceptedOrders: boolean
+  cashRequiresOperatorAcceptance: boolean
+}
+
 export type ShopStaffMember = {
   id: string
   name: string

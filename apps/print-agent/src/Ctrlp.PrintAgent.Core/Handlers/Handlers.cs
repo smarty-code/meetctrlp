@@ -321,6 +321,49 @@ internal sealed class SecretsClearHandler : RpcHandler<object, OkResponse>
     }
 }
 
+internal sealed class SecretsSetAgentCloudCredentialHandler : RpcHandler<AgentCloudCredentialRequest, OkResponse>
+{
+    private readonly AgentRuntime _runtime;
+
+    public SecretsSetAgentCloudCredentialHandler(AgentRuntime runtime) => _runtime = runtime;
+
+    public override string Method => RpcMethods.SecretsSetAgentCloudCredential;
+
+    protected override OkResponse Handle(AgentCloudCredentialRequest? request, RpcContext context)
+    {
+        if (request is null || !Uri.TryCreate(request.ServerBaseUrl, UriKind.Absolute, out _) ||
+            string.IsNullOrWhiteSpace(request.ShopId) || string.IsNullOrWhiteSpace(request.AgentId) ||
+            string.IsNullOrWhiteSpace(request.Credential))
+        {
+            throw RpcException.InvalidParams("valid agent cloud credentials are required");
+        }
+
+        _runtime.Secrets.SetAgentCloudCredential(new(
+            request.ServerBaseUrl.TrimEnd('/'),
+            request.ShopId,
+            request.AgentId,
+            request.Credential));
+        AgentTrace.Write($"secrets.setAgentCloudCredential agentId={request.AgentId}");
+        return new(true);
+    }
+}
+
+internal sealed class SecretsClearAgentCloudCredentialHandler : RpcHandler<object, OkResponse>
+{
+    private readonly AgentRuntime _runtime;
+
+    public SecretsClearAgentCloudCredentialHandler(AgentRuntime runtime) => _runtime = runtime;
+
+    public override string Method => RpcMethods.SecretsClearAgentCloudCredential;
+
+    protected override OkResponse Handle(object? request, RpcContext context)
+    {
+        _runtime.Secrets.ClearAgentCloudCredential();
+        AgentTrace.Write("secrets.clearAgentCloudCredential");
+        return new(true);
+    }
+}
+
 internal sealed class HostIdentityHandler : RpcHandler<object, HostIdentityDto>
 {
     private readonly AgentRuntime _runtime;

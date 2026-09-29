@@ -15,6 +15,12 @@ export const updateShopCapabilitiesRequestSchema = z.object({
   a3Printing: z.boolean(),
 });
 
+export const updateOrderAutomationRequestSchema = z.object({
+  autoAcceptPaidOnline: z.boolean(),
+  autoDispatchAcceptedOrders: z.boolean(),
+  cashRequiresOperatorAcceptance: z.literal(true),
+});
+
 export const businessHourSchema = z
   .object({
     dayOfWeek: z.number().int().min(0).max(6),
@@ -47,5 +53,6 @@ export type UpdateShopPricingRequestInput = z.infer<typeof updateShopPricingRequ
 export type UpdateShopCapabilitiesRequestInput = z.infer<
   typeof updateShopCapabilitiesRequestSchema
 >;
+export type UpdateOrderAutomationRequestInput = z.infer<typeof updateOrderAutomationRequestSchema>;
 export type UpdateShopHoursRequestInput = z.infer<typeof updateShopHoursRequestSchema>;
 export type PriceQuoteRequestInput = z.infer<typeof priceQuoteRequestSchema>;

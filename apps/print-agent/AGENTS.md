@@ -82,9 +82,9 @@ Do **not**:
 
 ## Current limits
 
-- The queue is durable, but a production PDF renderer / PrintTicket execution adapter is still required before staged work may be physically spooled.
+- PDF/JPEG/PNG jobs are rendered through PDFium/GDI and submitted through `PrintDocument`; never send raw document bytes to `WritePrinter`. A successful submission is spool acceptance, not a physical-paper guarantee.
 - Restart recovery marks an ambiguous in-flight print as failed for an explicit operator retry; it never blindly duplicates output.
-- Cloud HTTP (auth, printer inventory) stays in the Tauri UI; this process only stores the refresh token and machine identity.
+- The agent stores a device-scoped cloud credential (not a Firebase token), claims only its assigned cloud jobs, stages/verifies them, and reports lifecycle state. Shop-user auth and printer inventory configuration stay in the Tauri UI.
 - PRD leftover (orders, spool, routing): [`CtrlP_Print_Shop_Desktop_MVP_Progress.md`](../../docs/developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md).
 
 Logs: `%LOCALAPPDATA%\Ctrlp\PrintAgent\agent.log` (mirrored to stderr). Each RPC logs method, id, and elapsedMs. Capability reads log per-printer timeouts; winspool is the fallback if `LocalPrintServer` fails.

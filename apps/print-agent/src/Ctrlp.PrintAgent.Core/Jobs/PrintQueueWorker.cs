@@ -30,6 +30,7 @@ public sealed class PrintQueueWorker
             {
                 var jobId = job.Id;
                 Publish(RpcNotifications.JobStarted, job);
+                AgentTrace.Write($"queue worker claimed job={jobId}");
                 try
                 {
                     var result = await _executor.ExecuteAsync(job, cancellationToken).ConfigureAwait(false);
@@ -39,6 +40,10 @@ public sealed class PrintQueueWorker
                     if (job is not null)
                     {
                         Publish(result.Succeeded ? RpcNotifications.JobCompleted : RpcNotifications.JobFailed, job);
+                        if (result.Succeeded && !string.IsNullOrWhiteSpace(job.DocumentPath))
+                        {
+                            TryDeleteStagedDocument(job.DocumentPath);
+                        }
                     }
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -63,4 +68,22 @@ public sealed class PrintQueueWorker
     }
 
     private void Publish(string type, JobDto job) => _publish?.Invoke(new JobEventDto(type, job));
+
+    private static void TryDeleteStagedDocument(string path)
+    {
+        try
+        {
+            File.Delete(path);
+            var directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory) &&
+                !Directory.EnumerateFileSystemEntries(directory).Any())
+            {
+                Directory.Delete(directory);
+            }
+        }
+        catch (IOException)
+        {
+            // Retrying a completed cloud job is not required; leave cleanup for startup maintenance.
+        }
+    }
 }

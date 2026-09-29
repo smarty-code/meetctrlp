@@ -318,7 +318,7 @@ public sealed class WindowsPrintCatalog : IPrinterCatalog
             return ("ERROR", "Door open");
         }
 
-        if (queue.IsInError || queue.NeedUserIntervention)
+        if (queue.IsInError || (queue.NeedUserIntervention && !IsFileTargetPort(queue)))
         {
             return ("ERROR", "Printer error");
         }
@@ -334,6 +334,23 @@ public sealed class WindowsPrintCatalog : IPrinterCatalog
         }
 
         return ("ONLINE", null);
+    }
+
+    internal static bool IsFileTargetPort(PrintQueue queue) =>
+        IsFileTargetPrinter(Safe(() => queue.QueuePort?.Name), Safe(() => queue.QueueDriver?.Name), queue.Name);
+
+    internal static bool IsFileTargetPrinter(string? portName, string? driverName, string? printerName)
+    {
+        var port = portName ?? string.Empty;
+        var driver = driverName ?? string.Empty;
+        var name = printerName ?? string.Empty;
+        return port.Equals("PORTPROMPT:", StringComparison.OrdinalIgnoreCase)
+            || port.Equals("FILE:", StringComparison.OrdinalIgnoreCase)
+            || port.StartsWith("FILE", StringComparison.OrdinalIgnoreCase)
+            || driver.Contains("Print To PDF", StringComparison.OrdinalIgnoreCase)
+            || driver.Contains("XPS Document Writer", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Print to PDF", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("XPS Document Writer", StringComparison.OrdinalIgnoreCase);
     }
 
     private static IReadOnlyList<string> MapColors(PrintCapabilities? caps)

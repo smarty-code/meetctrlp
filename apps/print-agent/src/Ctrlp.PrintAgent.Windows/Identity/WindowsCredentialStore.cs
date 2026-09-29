@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 using System.Text;
+using System.Text.Json;
 using Ctrlp.PrintAgent.Contracts;
 
 namespace Ctrlp.PrintAgent.Windows;
@@ -8,6 +9,7 @@ namespace Ctrlp.PrintAgent.Windows;
 public sealed class WindowsCredentialStore : ISecretStore
 {
     public const string RefreshTokenTarget = "Ctrlp.PrintShop/refreshToken";
+    public const string AgentCloudTarget = "Ctrlp.PrintShop/agentCloud";
     private const uint CredentialTypeGeneric = 1;
     private const uint PersistLocalMachine = 2;
 
@@ -67,6 +69,66 @@ public sealed class WindowsCredentialStore : ISecretStore
     public void ClearRefreshToken()
     {
         CredDelete(RefreshTokenTarget, CredentialTypeGeneric, 0);
+    }
+
+    public AgentCloudCredential? GetAgentCloudCredential()
+    {
+        var value = ReadTextCredential(AgentCloudTarget);
+        return string.IsNullOrWhiteSpace(value)
+            ? null
+            : JsonSerializer.Deserialize<AgentCloudCredential>(value);
+    }
+
+    public void SetAgentCloudCredential(AgentCloudCredential credential) =>
+        WriteTextCredential(AgentCloudTarget, JsonSerializer.Serialize(credential), "Ctrlp.PrintShop agent cloud credential");
+
+    public void ClearAgentCloudCredential() => CredDelete(AgentCloudTarget, CredentialTypeGeneric, 0);
+
+    private static string? ReadTextCredential(string target)
+    {
+        if (!CredRead(target, CredentialTypeGeneric, 0, out var pointer))
+        {
+            return null;
+        }
+        try
+        {
+            var credential = Marshal.PtrToStructure<NativeCredential>(pointer);
+            return credential.CredentialBlob == IntPtr.Zero || credential.CredentialBlobSize == 0
+                ? null
+                : Marshal.PtrToStringUni(credential.CredentialBlob, (int)credential.CredentialBlobSize / 2)?.TrimEnd('\0');
+        }
+        finally
+        {
+            CredFree(pointer);
+        }
+    }
+
+    private static void WriteTextCredential(string target, string value, string comment)
+    {
+        var bytes = Encoding.Unicode.GetBytes(value);
+        var blob = Marshal.AllocHGlobal(bytes.Length);
+        try
+        {
+            Marshal.Copy(bytes, 0, blob, bytes.Length);
+            var credential = new NativeCredential
+            {
+                Type = CredentialTypeGeneric,
+                TargetName = target,
+                Comment = comment,
+                CredentialBlobSize = (uint)bytes.Length,
+                CredentialBlob = blob,
+                Persist = PersistLocalMachine,
+                UserName = "Ctrlp.PrintShop",
+            };
+            if (!CredWrite(ref credential, 0))
+            {
+                throw new InvalidOperationException($"CredWrite failed ({Marshal.GetLastWin32Error()}).");
+            }
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(blob);
+        }
     }
 
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]

@@ -62,6 +62,15 @@
               }
             }
           },
+          "orderAutomation": {
+            "type": "object",
+            "description": "Versioned shop policy; cash acceptance remains operator-controlled.",
+            "properties": {
+              "autoAcceptPaidOnline": { "type": "boolean", "default": true },
+              "autoDispatchAcceptedOrders": { "type": "boolean", "default": true },
+              "cashRequiresOperatorAcceptance": { "type": "boolean", "const": true, "default": true }
+            }
+          },
           "stats": {
             "type": "object",
             "properties": {
@@ -111,6 +120,7 @@
               "osVersion": { "type": "string" },
               "appVersion": { "type": "string" },
               "agentVersion": { "type": "string" },
+              "agentCredentialHash": { "type": "string", "description": "SHA-256 only; the raw device credential is returned once at registration." },
               "status": { "type": "string", "enum": ["ONLINE", "OFFLINE", "DISABLED"] },
               "heartbeatIntervalSeconds": { "type": "integer", "default": 30 },
               "registeredByUserId": { "type": "string" },
@@ -279,7 +289,11 @@
                   "orderId": { "type": "string" },
                   "documentId": { "type": "string" },
                   "printerId": { "type": "string" },
+                  "printerSystemName": { "type": "string", "description": "Mapped Windows queue name used by the agent." },
                   "agentId": { "type": "string" },
+                  "shopId": { "type": "string" },
+                  "leaseId": { "type": ["string", "null"] },
+                  "claimedAt": { "type": ["string", "null"], "format": "timestamp" },
                   "spoolerJobId": { "type": ["integer", "null"] },
                   "status": { "type": "string", "enum": ["QUEUED", "DISPATCHING", "PRINTING", "COMPLETED", "FAILED", "CANCELLED"] },
                   "priority": { "type": "integer", "default": 0 },

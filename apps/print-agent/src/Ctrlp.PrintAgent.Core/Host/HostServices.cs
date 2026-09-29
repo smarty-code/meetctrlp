@@ -6,6 +6,7 @@ public sealed class MemorySecretStore : ISecretStore
 {
     private readonly object _gate = new();
     private string? _refreshToken;
+    private AgentCloudCredential? _agentCloudCredential;
 
     public string? GetRefreshToken()
     {
@@ -28,6 +29,30 @@ public sealed class MemorySecretStore : ISecretStore
         lock (_gate)
         {
             _refreshToken = null;
+        }
+    }
+
+    public AgentCloudCredential? GetAgentCloudCredential()
+    {
+        lock (_gate)
+        {
+            return _agentCloudCredential;
+        }
+    }
+
+    public void SetAgentCloudCredential(AgentCloudCredential credential)
+    {
+        lock (_gate)
+        {
+            _agentCloudCredential = credential;
+        }
+    }
+
+    public void ClearAgentCloudCredential()
+    {
+        lock (_gate)
+        {
+            _agentCloudCredential = null;
         }
     }
 }

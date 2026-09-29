@@ -181,6 +181,16 @@ export const retryPrintJobRequestSchema = z.object({
   printerId: z.string().trim().min(8).max(64).optional(),
 });
 
+export const claimAgentPrintJobsRequestSchema = z.object({
+  agentId: z.string().trim().min(8).max(64),
+  limit: z.number().int().min(1).max(20).default(10),
+});
+
+export const claimPrintJobRequestSchema = z.object({
+  agentId: z.string().trim().min(8).max(64),
+  idempotencyKey: z.string().trim().min(8).max(128),
+});
+
 export type SyncPrintersRequestInput = z.infer<typeof syncPrintersRequestSchema>;
 export type PrinterTelemetryRequestInput = z.infer<typeof printerTelemetryRequestSchema>;
 export type RoutePrintJobRequestInput = z.infer<typeof routePrintJobRequestSchema>;
@@ -189,3 +199,5 @@ export type UpdatePrinterConfigRequestInput = z.infer<typeof updatePrinterConfig
 export type DispatchPrintJobRequestInput = z.infer<typeof dispatchPrintJobRequestSchema>;
 export type UpdatePrintJobRequestInput = z.infer<typeof updatePrintJobRequestSchema>;
 export type RetryPrintJobRequestInput = z.infer<typeof retryPrintJobRequestSchema>;
+export type ClaimAgentPrintJobsRequestInput = z.infer<typeof claimAgentPrintJobsRequestSchema>;
+export type ClaimPrintJobRequestInput = z.infer<typeof claimPrintJobRequestSchema>;

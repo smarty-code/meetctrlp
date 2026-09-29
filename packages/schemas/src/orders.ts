@@ -12,6 +12,7 @@ const orderStatusSchema = z.enum([
 
 export const checkoutDocumentSchema = z.object({
   originalFilename: z.string().trim().min(1).max(200),
+  mimeType: z.enum(["application/pdf", "image/jpeg", "image/png"]).optional(),
   pageCount: z.number().int().positive().max(10_000),
   copies: z.number().int().positive().max(999),
   colorMode: z.enum(["BW", "COLOR"]),
@@ -24,6 +25,18 @@ export const checkoutOrderRequestSchema = z.object({
   paymentMethod: z.enum(["CASH", "ONLINE"]),
   documents: z.array(checkoutDocumentSchema).min(1).max(20),
 });
+
+export const recordCashPaymentRequestSchema = z.object({
+  idempotencyKey: z.string().trim().min(8).max(128),
+  cashTenderedPaise: z.number().int().nonnegative().max(10_000_000),
+});
+
+export const confirmOnlinePaymentRequestSchema = z.object({
+  paymentReference: z.string().min(1).max(200),
+  idempotencyKey: z.string().uuid(),
+});
+
+export type ConfirmOnlinePaymentRequestInput = z.infer<typeof confirmOnlinePaymentRequestSchema>;
 
 export const orderTransitionRequestSchema = z.object({
   idempotencyKey: z.string().trim().min(8).max(128),
@@ -44,3 +57,4 @@ export const rejectOrderRequestSchema = orderTransitionRequestSchema.extend({
 export type CheckoutOrderRequestInput = z.infer<typeof checkoutOrderRequestSchema>;
 export type OrderTransitionRequestInput = z.infer<typeof orderTransitionRequestSchema>;
 export type RejectOrderRequestInput = z.infer<typeof rejectOrderRequestSchema>;
+export type RecordCashPaymentRequestInput = z.infer<typeof recordCashPaymentRequestSchema>;

@@ -16,6 +16,7 @@ export function OrderDetailsScreen({
   onDispatch,
   onReady,
   onComplete,
+  onCollectCash,
   onPreview,
 }: {
   order: ShopOrder
@@ -28,6 +29,7 @@ export function OrderDetailsScreen({
   onDispatch: (documentId: string) => void
   onReady: () => void
   onComplete: () => void
+  onCollectCash: () => void
   onPreview: (documentId: string) => Promise<{ valid: boolean; message: string }>
 }) {
   const [validation, setValidation] = useState<Record<string, string>>({})
@@ -65,9 +67,16 @@ export function OrderDetailsScreen({
             </Button>
           ) : null}
           {order.status === "READY" ? (
-            <Button className="rounded-[12px]" disabled={busy} onClick={onComplete}>
-              Complete handover
-            </Button>
+            <>
+              {order.payment.method === "CASH" && order.payment.status !== "PAID" ? (
+                <Button className="rounded-[12px]" disabled={busy} onClick={onCollectCash}>
+                  Record cash received
+                </Button>
+              ) : null}
+              <Button className="rounded-[12px]" disabled={busy || (order.payment.method === "CASH" && order.payment.status !== "PAID")} onClick={onComplete}>
+                Complete handover
+              </Button>
+            </>
           ) : null}
         </CardContent>
       </Card>
@@ -99,7 +108,7 @@ export function OrderDetailsScreen({
                 >
                   Validate & preview
                 </Button>
-                {order.status === "SHOP_ACCEPTED" ? (
+                {order.status === "SHOP_ACCEPTED" && documentJobs.length === 0 ? (
                   <Button
                     size="sm"
                     className="rounded-[12px]"

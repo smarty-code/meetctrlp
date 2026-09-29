@@ -47,6 +47,7 @@ graphify-out/
 tmp/
 temp/
 uploads/
+login.json
 
 # .NET / Tauri desktop
 .vs/

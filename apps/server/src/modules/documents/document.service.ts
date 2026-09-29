@@ -18,6 +18,7 @@ export type StoredOrderDocument = {
   storageKey: string;
   storageBackend: "s3" | "local";
   originalFilename: string;
+  mimeType: "application/pdf" | "image/jpeg" | "image/png";
   fileSizeBytes: number;
   pageCount: number;
   copies: number;
@@ -31,7 +32,20 @@ export type StoredOrderDocument = {
 
 type AccessType = "DOWNLOADED" | "PREVIEWED" | "SPOOLED_TO_PRINTER" | "SHREDDED";
 
-function inspectPdf(bytes: Buffer) {
+function inspectDocument(bytes: Buffer, mimeType: "application/pdf" | "image/jpeg" | "image/png") {
+  if (mimeType === "image/jpeg") {
+    if (bytes.length < 3 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) {
+      throw new AuthServiceError(400, "file is not a readable JPEG");
+    }
+    return { pageCount: 1, fileSizeBytes: bytes.length, sha256Hash: createHash("sha256").update(bytes).digest("hex") };
+  }
+  if (mimeType === "image/png") {
+    const png = "89504e470d0a1a0a";
+    if (bytes.length < 8 || bytes.subarray(0, 8).toString("hex") !== png) {
+      throw new AuthServiceError(400, "file is not a readable PNG");
+    }
+    return { pageCount: 1, fileSizeBytes: bytes.length, sha256Hash: createHash("sha256").update(bytes).digest("hex") };
+  }
   if (bytes.length < 5 || bytes.subarray(0, 5).toString("utf8") !== "%PDF-") {
     throw new AuthServiceError(400, "file is not a readable PDF");
   }
@@ -52,9 +66,9 @@ function localPath(storageKey: string) {
   return path.join(process.cwd(), "data", "print-jobs", storageKey);
 }
 
-async function storePdf(storageKey: string, bytes: Buffer) {
+async function storeDocument(storageKey: string, bytes: Buffer, mimeType: string) {
   try {
-    await uploadObject(storageKey, bytes, "application/pdf");
+    await uploadObject(storageKey, bytes, mimeType);
     return "s3" as const;
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
@@ -131,7 +145,15 @@ function findDocument(order: OrderDto, docId: string) {
 
 export async function createPdfOrder(
   user: AuthSessionUser,
-  files: Array<{ filename: string; bytes: Buffer; colorMode: "BW" | "COLOR"; paperSize: "A4" | "A3"; copies: number }>,
+  files: Array<{
+    filename: string;
+    bytes: Buffer;
+    mimeType: "application/pdf" | "image/jpeg" | "image/png";
+    colorMode: "BW" | "COLOR";
+    paperSize: "A4" | "A3";
+    copies: number;
+  }>,
+  paymentMethod: "CASH" | "ONLINE" = "CASH",
 ) {
   if (files.length < 1) {
     throw new AuthServiceError(400, "at least one PDF is required");
@@ -139,10 +161,10 @@ export async function createPdfOrder(
 
   const inspected = files.map((file) => ({
     ...file,
-    ...inspectPdf(file.bytes),
+    ...inspectDocument(file.bytes, file.mimeType),
   }));
   const order = await createShopOrder(user, {
-    paymentMethod: "CASH",
+    paymentMethod,
     customerPhone: "+919800011122",
     documents: inspected.map((file) => ({
       originalFilename: file.filename,
@@ -158,9 +180,10 @@ export async function createPdfOrder(
     return {
       ...document,
       docId,
-      storageKey: `uploads/${user.shopId}/${order.id}/${docId}.pdf`,
+      storageKey: `uploads/${user.shopId}/${order.id}/${docId}${file.mimeType === "application/pdf" ? ".pdf" : file.mimeType === "image/png" ? ".png" : ".jpg"}`,
       storageBackend: "local" as const,
       originalFilename: file.filename,
+      mimeType: file.mimeType,
       fileSizeBytes: file.fileSizeBytes,
       pageCount: file.pageCount,
       sha256Hash: file.sha256Hash,
@@ -171,7 +194,7 @@ export async function createPdfOrder(
 
   const stored = [];
   for (const document of documents) {
-    const storageBackend = await storePdf(document.storageKey, document.bytes);
+    const storageBackend = await storeDocument(document.storageKey, document.bytes, document.mimeType);
     const { bytes: _bytes, ...metadata } = document;
     stored.push({ ...metadata, storageBackend });
   }
@@ -204,6 +227,7 @@ export async function createDocumentDownloadUrl(
       url: await createPresignedDownloadUrl(document.storageKey, DOWNLOAD_TTL_SECONDS),
       storageKey: document.storageKey,
       sha256Hash: document.sha256Hash,
+      mimeType: document.mimeType,
       pageCount: document.pageCount,
       expiresIn: DOWNLOAD_TTL_SECONDS,
     };
@@ -222,6 +246,7 @@ export async function createDocumentDownloadUrl(
     url: url.toString(),
     storageKey: document.storageKey,
     sha256Hash: document.sha256Hash,
+    mimeType: document.mimeType,
     pageCount: document.pageCount,
     expiresIn: DOWNLOAD_TTL_SECONDS,
   };

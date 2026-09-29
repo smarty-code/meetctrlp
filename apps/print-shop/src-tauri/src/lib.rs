@@ -6,7 +6,7 @@ use tauri::Manager;
 use commands::{
     agent_ping, cancel_job, clear_refresh_token, enqueue_job, get_agent_status, get_host_identity,
     get_host_telemetry, get_job, get_printer, get_refresh_token, list_jobs, list_printers,
-    refresh_printers, retry_job, set_refresh_token, shutdown_agent,
+    refresh_printers, retry_job, set_agent_cloud_credential, set_refresh_token, shutdown_agent,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -39,6 +39,7 @@ pub fn run() {
             shutdown_agent,
             get_refresh_token,
             set_refresh_token,
+            set_agent_cloud_credential,
             clear_refresh_token,
             get_host_identity,
             get_host_telemetry

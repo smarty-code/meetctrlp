@@ -5,7 +5,9 @@ import path from "node:path";
 import { FieldValue, getFirebaseFirestore, type Timestamp } from "@ctrlp/firebase/firestore";
 import type {
   CheckoutOrderRequestInput,
+  ConfirmOnlinePaymentRequestInput,
   OrderTransitionRequestInput,
+  RecordCashPaymentRequestInput,
   RejectOrderRequestInput,
 } from "@ctrlp/schemas";
 import type { AuthSessionUser } from "@ctrlp/types";
@@ -42,6 +44,11 @@ export type OrderDto = {
   payment: {
     method: "CASH" | "ONLINE";
     status: "PENDING" | "PAID";
+    amountPaise?: number;
+    cashTenderedPaise?: number | null;
+    changeReturnedPaise?: number | null;
+    collectedByUserId?: string | null;
+    collectedAt?: string | null;
   };
   documents: Array<{
     id: string;
@@ -409,11 +416,9 @@ async function transitionOrder(
       );
     }
 
-    const paymentMethod = orderSnap.get("payment.method");
     transaction.update(orderRef, {
       status: next,
       ...extra,
-      ...(action === "complete" && paymentMethod === "CASH" ? { "payment.status": "PAID" } : {}),
       updatedAt: now,
     });
     transaction.set(historyRef, {
@@ -486,15 +491,129 @@ export function markShopOrderReady(
   }, { changedByType: "SHOP_USER", reason: null });
 }
 
-export function completeShopOrder(
+export async function completeShopOrder(
   user: AuthSessionUser,
   orderId: string,
   input: OrderTransitionRequestInput,
 ) {
+  const order = await getShopOrder(user, orderId);
+  if (order.payment.method === "CASH" && order.payment.status !== "PAID") {
+    throw new AuthServiceError(409, "CASH_PAYMENT_REQUIRED");
+  }
   return transitionOrder(user, orderId, "complete", input, "READY", "COMPLETED", {
     "lifecycle.completedAt": FieldValue.serverTimestamp(),
     "lifecycle.completedByUserId": user.id,
   }, { changedByType: "SHOP_USER", reason: null });
+}
+
+export async function recordCashPayment(
+  user: AuthSessionUser,
+  orderId: string,
+  input: RecordCashPaymentRequestInput,
+) {
+  const db = getFirebaseFirestore();
+  const orderRef = ordersCollection(user.shopId).doc(orderId);
+  const keyRef = db.doc(`shops/${user.shopId}/idempotencyKeys/${input.idempotencyKey}`);
+  const now = FieldValue.serverTimestamp();
+
+  await db.runTransaction(async (transaction) => {
+    const [keySnap, orderSnap] = await Promise.all([transaction.get(keyRef), transaction.get(orderRef)]);
+    if (keySnap.exists) {
+      if (keySnap.get("orderId") === orderId && keySnap.get("action") === "collect-cash") {
+        return;
+      }
+      throw new AuthServiceError(409, "IDEMPOTENCY_KEY_REUSED");
+    }
+    if (!orderSnap.exists) {
+      throw new AuthServiceError(404, "ORDER_NOT_FOUND");
+    }
+    if (orderSnap.get("status") !== "READY") {
+      throw new AuthServiceError(409, "ORDER_NOT_READY_FOR_COLLECTION");
+    }
+    if (orderSnap.get("payment.method") !== "CASH") {
+      throw new AuthServiceError(409, "ORDER_NOT_CASH");
+    }
+    const total = Number(orderSnap.get("amounts.totalMinorUnits") ?? 0);
+    if (input.cashTenderedPaise < total) {
+      throw new AuthServiceError(400, "CASH_TENDERED_TOO_LOW");
+    }
+    transaction.update(orderRef, {
+      "payment.status": "PAID",
+      "payment.amountPaise": total,
+      "payment.cashTenderedPaise": input.cashTenderedPaise,
+      "payment.changeReturnedPaise": input.cashTenderedPaise - total,
+      "payment.collectedByUserId": user.id,
+      "payment.collectedAt": now,
+      updatedAt: now,
+    });
+    transaction.set(keyRef, {
+      orderId,
+      action: "collect-cash",
+      createdAt: now,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    });
+  });
+
+  return getShopOrder(user, orderId);
+}
+
+/**
+ * Payment-provider callback entry point. It is deliberately separate from shop
+ * operator APIs: a verified payment event is the only path that auto-admits an
+ * online order.
+ */
+export async function confirmOnlinePayment(
+  shopId: string,
+  orderId: string,
+  input: ConfirmOnlinePaymentRequestInput,
+) {
+  const db = getFirebaseFirestore();
+  const orderRef = ordersCollection(shopId).doc(orderId);
+  const keyRef = db.doc(`shops/${shopId}/idempotencyKeys/${input.idempotencyKey}`);
+  const config = await getShopConfig({ id: "payment-provider", shopId } as AuthSessionUser);
+  const now = FieldValue.serverTimestamp();
+  let autoAccepted = false;
+
+  await db.runTransaction(async (transaction) => {
+    const [keySnap, orderSnap] = await Promise.all([transaction.get(keyRef), transaction.get(orderRef)]);
+    if (keySnap.exists) {
+      if (keySnap.get("orderId") === orderId && keySnap.get("action") === "online-payment") return;
+      throw new AuthServiceError(409, "IDEMPOTENCY_KEY_REUSED");
+    }
+    if (!orderSnap.exists) throw new AuthServiceError(404, "ORDER_NOT_FOUND");
+    if (orderSnap.get("payment.method") !== "ONLINE") throw new AuthServiceError(409, "ORDER_NOT_ONLINE");
+
+    const currentStatus = String(orderSnap.get("status") ?? "");
+    autoAccepted = currentStatus === "SUBMITTED" && config.orderAutomation.autoAcceptPaidOnline;
+    transaction.update(orderRef, {
+      "payment.status": "PAID",
+      "payment.reference": input.paymentReference,
+      "payment.confirmedAt": now,
+      ...(autoAccepted
+        ? { status: "SHOP_ACCEPTED", "lifecycle.acceptedAt": now, "lifecycle.acceptedByUserId": "payment-provider" }
+        : {}),
+      updatedAt: now,
+    });
+    transaction.set(keyRef, {
+      orderId,
+      action: "online-payment",
+      createdAt: now,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    });
+    if (autoAccepted) {
+      transaction.set(orderRef.collection("statusHistory").doc(randomUUID()), {
+        fromStatus: "SUBMITTED",
+        toStatus: "SHOP_ACCEPTED",
+        changedByType: "PRINT_USER",
+        changedByUserId: "payment-provider",
+        reason: "Verified online payment",
+        changedAt: now,
+      });
+    }
+  });
+
+  const principal = { id: "payment-provider", shopId } as AuthSessionUser;
+  return { order: await getShopOrder(principal, orderId), autoAccepted };
 }
 
 export function cancelShopOrder(

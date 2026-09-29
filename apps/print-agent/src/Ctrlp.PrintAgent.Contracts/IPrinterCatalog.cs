@@ -39,7 +39,16 @@ public interface ISecretStore
     string? GetRefreshToken();
     void SetRefreshToken(string refreshToken);
     void ClearRefreshToken();
+    AgentCloudCredential? GetAgentCloudCredential();
+    void SetAgentCloudCredential(AgentCloudCredential credential);
+    void ClearAgentCloudCredential();
 }
+
+public sealed record AgentCloudCredential(
+    string ServerBaseUrl,
+    string ShopId,
+    string AgentId,
+    string Credential);
 
 public interface IHostIdentity
 {

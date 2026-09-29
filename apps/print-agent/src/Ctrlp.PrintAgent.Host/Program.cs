@@ -53,10 +53,19 @@ internal static class Program
             options.Token,
             options.DevMode,
             log.Write);
+        var cloud = new AgentCloudSynchronizer(
+            jobs,
+            secrets,
+            Path.Combine(dataRoot, "jobs"),
+            log: log.Write);
         var queueWorker = new PrintQueueWorker(
             jobs,
-            new UnavailablePrintExecutor(),
-            notification => _ = server.PublishAsync(notification.Type, notification));
+            OperatingSystem.IsWindows() ? new WindowsDocumentPrintExecutor(printers) : new UnavailablePrintExecutor(),
+            notification =>
+            {
+                _ = server.PublishAsync(notification.Type, notification);
+                _ = cloud.ReportAsync(notification.Job);
+            });
 
         if (options.ParentPid is int parentPid)
         {
@@ -74,9 +83,10 @@ internal static class Program
                 shutdown.Token,
                 runtime.ShutdownToken);
             var worker = queueWorker.RunAsync(lifecycle.Token);
+            var cloudSync = cloud.RunAsync(lifecycle.Token);
             await server.RunAsync(lifecycle.Token).ConfigureAwait(false);
             lifecycle.Cancel();
-            await worker.ConfigureAwait(false);
+            await Task.WhenAll(worker, cloudSync).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {

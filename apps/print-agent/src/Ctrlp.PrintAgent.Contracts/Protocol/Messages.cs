@@ -121,7 +121,10 @@ public sealed record EnqueueJobRequest(
     [property: JsonPropertyName("documentSha256")] string? DocumentSha256 = null,
     [property: JsonPropertyName("resolvedSettings")] string? ResolvedSettings = null,
     [property: JsonPropertyName("idempotencyKey")] string? IdempotencyKey = null,
-    [property: JsonPropertyName("pagesTotal")] int PagesTotal = 0);
+    [property: JsonPropertyName("pagesTotal")] int PagesTotal = 0,
+    [property: JsonPropertyName("cloudOrderId")] string? CloudOrderId = null,
+    [property: JsonPropertyName("cloudDocumentId")] string? CloudDocumentId = null,
+    [property: JsonPropertyName("leaseId")] string? LeaseId = null);
 
 public sealed record JobDto(
     [property: JsonPropertyName("id")] string Id,
@@ -139,7 +142,11 @@ public sealed record JobDto(
     [property: JsonPropertyName("updatedAt")] long? UpdatedAt = null,
     [property: JsonPropertyName("startedAt")] long? StartedAt = null,
     [property: JsonPropertyName("completedAt")] long? CompletedAt = null,
-    [property: JsonIgnore] string? DocumentPath = null);
+    [property: JsonIgnore] string? DocumentPath = null,
+    [property: JsonPropertyName("cloudOrderId")] string? CloudOrderId = null,
+    [property: JsonPropertyName("cloudDocumentId")] string? CloudDocumentId = null,
+    [property: JsonPropertyName("leaseId")] string? LeaseId = null,
+    [property: JsonIgnore] string? ResolvedSettings = null);
 
 public sealed record JobEventDto(
     [property: JsonPropertyName("type")] string Type,
@@ -164,6 +171,12 @@ public sealed record RefreshTokenResponse(
 
 public sealed record OkResponse(
     [property: JsonPropertyName("ok")] bool Ok);
+
+public sealed record AgentCloudCredentialRequest(
+    [property: JsonPropertyName("serverBaseUrl")] string ServerBaseUrl,
+    [property: JsonPropertyName("shopId")] string ShopId,
+    [property: JsonPropertyName("agentId")] string AgentId,
+    [property: JsonPropertyName("credential")] string Credential);
 
 public sealed record HostIdentityDto(
     [property: JsonPropertyName("deviceIdentifier")] string DeviceIdentifier,

@@ -1,6 +1,7 @@
 import { FieldValue, getFirebaseFirestore } from "@ctrlp/firebase/firestore";
 import type {
   PriceQuoteRequestInput,
+  UpdateOrderAutomationRequestInput,
   UpdateShopCapabilitiesRequestInput,
   UpdateShopHoursRequestInput,
   UpdateShopPricingRequestInput,
@@ -36,10 +37,17 @@ export type ShopCapabilities = {
   a3Printing: boolean;
 };
 
+export type OrderAutomation = {
+  autoAcceptPaidOnline: boolean;
+  autoDispatchAcceptedOrders: boolean;
+  cashRequiresOperatorAcceptance: boolean;
+};
+
 type ShopConfig = {
   service: typeof SERVICE;
   pricing: ShopPricing;
   capabilities: ShopCapabilities;
+  orderAutomation: OrderAutomation;
   businessHours: BusinessHour[];
   openNow: boolean;
 };
@@ -108,6 +116,10 @@ function readConfig(data: Record<string, unknown>): ShopConfig {
       ? (data.capabilities as Record<string, unknown>)
       : {};
   const businessHours = parseHours(data.businessHours);
+  const automation =
+    data.orderAutomation && typeof data.orderAutomation === "object"
+      ? (data.orderAutomation as Record<string, unknown>)
+      : {};
 
   return {
     service: SERVICE,
@@ -124,6 +136,11 @@ function readConfig(data: Record<string, unknown>): ShopConfig {
       colorPrinting: capabilities.colorPrinting === true,
       a4Printing: true,
       a3Printing: capabilities.a3Printing === true,
+    },
+    orderAutomation: {
+      autoAcceptPaidOnline: automation.autoAcceptPaidOnline !== false,
+      autoDispatchAcceptedOrders: automation.autoDispatchAcceptedOrders !== false,
+      cashRequiresOperatorAcceptance: automation.cashRequiresOperatorAcceptance !== false,
     },
     businessHours,
     openNow: isShopOpen(businessHours, new Date()),
@@ -225,6 +242,22 @@ export async function updateShopCapabilities(
     });
   });
 
+  return getShopConfig(user);
+}
+
+export async function updateOrderAutomation(
+  user: AuthSessionUser,
+  input: UpdateOrderAutomationRequestInput,
+) {
+  const reference = shopRef(user.shopId);
+  await getFirebaseFirestore().runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(reference);
+    if (!snapshot.exists) throw new AuthServiceError(404, "shop not found");
+    transaction.update(reference, {
+      orderAutomation: input,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  });
   return getShopConfig(user);
 }
 

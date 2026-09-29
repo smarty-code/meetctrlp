@@ -27,6 +27,8 @@ public static class RpcMethods
     public const string SecretsGetRefreshToken = "secrets.getRefreshToken";
     public const string SecretsSetRefreshToken = "secrets.setRefreshToken";
     public const string SecretsClearRefreshToken = "secrets.clearRefreshToken";
+    public const string SecretsSetAgentCloudCredential = "secrets.setAgentCloudCredential";
+    public const string SecretsClearAgentCloudCredential = "secrets.clearAgentCloudCredential";
     public const string HostIdentity = "host.identity";
     public const string HostTelemetry = "host.telemetry";
 }

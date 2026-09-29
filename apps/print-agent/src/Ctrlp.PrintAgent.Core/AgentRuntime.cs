@@ -86,6 +86,8 @@ public sealed class AgentRuntime
         dispatcher.Register(new Handlers.SecretsGetHandler(this));
         dispatcher.Register(new Handlers.SecretsSetHandler(this));
         dispatcher.Register(new Handlers.SecretsClearHandler(this));
+        dispatcher.Register(new Handlers.SecretsSetAgentCloudCredentialHandler(this));
+        dispatcher.Register(new Handlers.SecretsClearAgentCloudCredentialHandler(this));
         dispatcher.Register(new Handlers.HostIdentityHandler(this));
         dispatcher.Register(new Handlers.HostTelemetryHandler(this));
         return dispatcher;

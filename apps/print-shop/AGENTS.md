@@ -13,7 +13,7 @@ UI design: repo root `AGENTS.md` and `docs/design-system/` (`DESIGN copy.md`, `t
 
 - React shell: login, dashboard summary, Orders/order details, Printers (capabilities + shop default / enable / offer color-A3), durable local queue view, settings.
 - Thin Rust: spawn the C# sidecar, JSON-RPC over a named pipe, Tauri commands.
-- HTTP to `apps/server` for auth, device, printer inventory, orders, documents, and server-mediated SSE (no Firebase SDK).
+- HTTP to `apps/server` for auth, device, printer inventory, orders, documents, order-automation settings, and server-mediated SSE (no Firebase SDK).
 - Not a browser app. `pnpm shop:dev` (Vite) cannot reach the agent.
 
 PRD leftover list: [`docs/developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md`](../../docs/developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md).

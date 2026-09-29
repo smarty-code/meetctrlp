@@ -27,10 +27,12 @@ import {
   refreshPrinters,
   retryJob,
   storeRefreshToken,
+  storeAgentCloudCredential,
   waitForAgent,
 } from "./lib/agent"
 import {
   fetchShopProfile,
+  fetchOrderAutomation,
   fetchShopStaff,
   getDocumentDownloadUrl,
   getShopOrder,
@@ -44,14 +46,18 @@ import {
   refreshSession,
   registerDevice,
   registerOwner,
+  routeOrderPrintJob,
   sendDeviceHeartbeat,
   sendPrinterTelemetry,
+  serverBaseUrl,
   dispatchOrderPrintJob,
   rejectShopOrder,
   recordDocumentAccess,
+  recordCashPayment,
   streamShopOrders,
   syncShopPrinters,
   transitionShopOrder,
+  updateOrderAutomation,
 } from "./lib/cloud"
 import { shopError, shopLog, shopWarn } from "./lib/debug"
 import { emptyOrderStore, reduceOrderEvent, type OrderStore } from "./lib/orders"
@@ -67,6 +73,7 @@ import {
   type AgentStatus,
   type AuthSession,
   type CloudLinkState,
+  type OrderAutomation,
   type PrintJob,
   type Printer as PrinterModel,
   type ShopProfile,
@@ -96,6 +103,7 @@ export default function App() {
   const [user, setUser] = useState<ShopUser | null>(null)
   const [idToken, setIdToken] = useState<string | null>(null)
   const [shop, setShop] = useState<ShopProfile | null>(null)
+  const [orderAutomation, setOrderAutomation] = useState<OrderAutomation | null>(null)
   const [staff, setStaff] = useState<ShopStaffMember[]>([])
   const [deviceId, setDeviceId] = useState<string | null>(null)
   const [hostName, setHostName] = useState<string | null>(null)
@@ -146,6 +154,7 @@ export default function App() {
     ])
     setShop(profile.shop)
     setStaff(staffResult.staff)
+    setOrderAutomation(await fetchOrderAutomation(token, profile.shop.id))
   }
 
   async function connectDevice(token: string, shopId: string, nextPrinters: PrinterModel[]) {
@@ -159,6 +168,14 @@ export default function App() {
       const identity = await getHostIdentity()
       setHostName(identity.hostname)
       const registered = await registerDevice(token, identity)
+      if (registered.agentCredential) {
+        await storeAgentCloudCredential({
+          serverBaseUrl,
+          shopId,
+          agentId: registered.deviceId,
+          credential: registered.agentCredential,
+        })
+      }
       setDeviceId(registered.deviceId)
       setCloud("connected")
       setCloudMessage(null)
@@ -498,6 +515,7 @@ export default function App() {
       setUser(null)
       setIdToken(null)
       setShop(null)
+      setOrderAutomation(null)
       setStaff([])
       setDeviceId(null)
       setCloud("offline")
@@ -649,16 +667,20 @@ export default function App() {
 
   async function handleDispatchOrderDocument(order: ShopOrder, documentId: string) {
     const current = sessionRef.current
-    const printer = printersRef.current.find((entry) => entry.enabled !== false && entry.cloudId)
-    if (!current.idToken || !current.shopId || !printer?.cloudId) {
+    const document = order.documents.find((entry) => (entry.docId ?? entry.id) === documentId)
+    if (!current.idToken || !current.shopId || !document) {
       setError("Rediscover and enable a compatible shop printer before printing.")
       return
     }
     setBusy(true)
     setError(null)
     try {
+      const route = await routeOrderPrintJob(current.idToken, current.shopId, {
+        colorMode: document.config?.colorMode ?? document.colorMode,
+        paperSize: document.config?.paperSize ?? document.paperSize,
+      })
       await dispatchOrderPrintJob(current.idToken, current.shopId, order.id, {
-        printerId: printer.cloudId,
+        printerId: route.printerId,
         documentId,
       })
       await refreshSelectedOrder(order)
@@ -688,7 +710,7 @@ export default function App() {
       }
       await recordDocumentAccess(current.idToken, current.shopId, order.id, documentId, "DOWNLOADED")
       await recordDocumentAccess(current.idToken, current.shopId, order.id, documentId, "PREVIEWED")
-      const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }))
+      const url = URL.createObjectURL(new Blob([bytes], { type: download.mimeType ?? "application/pdf" }))
       window.open(url, "_blank", "noopener,noreferrer")
       window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
       return { valid: true, message: `Validated ${download.pageCount} pages and opened a temporary preview.` }
@@ -732,6 +754,43 @@ export default function App() {
     try {
       await retryJob(id)
       setJobs(await listJobs())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleCashPayment(order: ShopOrder) {
+    const current = sessionRef.current
+    if (!current.idToken || !current.shopId) {
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      const paid = await recordCashPayment(
+        current.idToken,
+        current.shopId,
+        order.id,
+        order.amounts.totalMinorUnits
+      )
+      setSelectedOrder(paid)
+      setOrderStore((store) => reduceOrderEvent(store, { type: "ORDER_STATUS_CHANGED", order: paid }))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleOrderAutomation(next: OrderAutomation) {
+    const current = sessionRef.current
+    if (!current.idToken || !current.shopId) return
+    setBusy(true)
+    setError(null)
+    try {
+      setOrderAutomation(await updateOrderAutomation(current.idToken, current.shopId, next))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -832,6 +891,7 @@ export default function App() {
             staff={staff}
             printers={printers}
             jobs={jobs}
+            orders={orderStore.orders}
             onPing={() => void handlePing()}
             tauri={isTauriRuntime()}
           />
@@ -860,6 +920,7 @@ export default function App() {
             onDispatch={(documentId) => void handleDispatchOrderDocument(selectedOrder, documentId)}
             onReady={() => void handleOrderTransition(selectedOrder, "ready")}
             onComplete={() => void handleOrderTransition(selectedOrder, "complete")}
+            onCollectCash={() => void handleCashPayment(selectedOrder)}
             onPreview={(documentId) => handlePreviewDocument(selectedOrder, documentId)}
           />
         ) : null}
@@ -892,6 +953,9 @@ export default function App() {
             shop={shop}
             hostName={hostName}
             deviceId={deviceId}
+            automation={orderAutomation}
+            busy={busy}
+            onUpdateAutomation={(automation) => void handleOrderAutomation(automation)}
           />
         ) : null}
       </main>
@@ -947,6 +1011,7 @@ function Dashboard({
   staff,
   printers,
   jobs,
+  orders,
   onPing,
   tauri,
 }: {
@@ -955,6 +1020,7 @@ function Dashboard({
   staff: ShopStaffMember[]
   printers: PrinterModel[]
   jobs: PrintJob[]
+  orders: ShopOrder[]
   onPing: () => void
   tauri: boolean
 }) {
@@ -969,6 +1035,18 @@ function Dashboard({
           <p className="text-heading-sm font-bold text-midnight">{shop?.name ?? "—"}</p>
           <p className="text-caption text-ash">{shop?.email ?? shop?.phone ?? "No contact yet"}</p>
           <p className="text-caption text-ash">{shop?.address ?? "Address is managed on the web dashboard."}</p>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Order flow</CardTitle>
+          <CardDescription>Live shop queue from the server</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-1 text-body">
+          <p>{orders.filter((order) => order.status === "SUBMITTED").length} new</p>
+          <p>{orders.filter((order) => order.status === "SHOP_ACCEPTED" || order.status === "PRINTING").length} active</p>
+          <p>{orders.filter((order) => order.status === "READY").length} ready for pickup</p>
+          <p>{orders.filter((order) => order.status === "COMPLETED").length} completed</p>
         </CardContent>
       </Card>
       <Card>
@@ -1019,12 +1097,18 @@ function SettingsPanel({
   shop,
   hostName,
   deviceId,
+  automation,
+  busy,
+  onUpdateAutomation,
 }: {
   status: AgentStatus
   user: ShopUser
   shop: ShopProfile | null
   hostName: string | null
   deviceId: string | null
+  automation: OrderAutomation | null
+  busy: boolean
+  onUpdateAutomation: (automation: OrderAutomation) => void
 }) {
   return (
     <div className="grid gap-4 md:grid-cols-2">
@@ -1043,6 +1127,36 @@ function SettingsPanel({
       </Card>
       <Card>
         <CardHeader>
+          <CardTitle>Order automation</CardTitle>
+          <CardDescription>Paid online orders can be admitted and routed without an operator. Cash orders always remain operator-controlled.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2 text-body">
+          {automation ? (
+            <>
+              <AutomationToggle
+                label="Auto-accept paid online orders"
+                enabled={automation.autoAcceptPaidOnline}
+                disabled={busy}
+                onToggle={() => onUpdateAutomation({ ...automation, autoAcceptPaidOnline: !automation.autoAcceptPaidOnline })}
+              />
+              <AutomationToggle
+                label="Auto-dispatch accepted orders"
+                enabled={automation.autoDispatchAcceptedOrders}
+                disabled={busy}
+                onToggle={() => onUpdateAutomation({ ...automation, autoDispatchAcceptedOrders: !automation.autoDispatchAcceptedOrders })}
+              />
+              <AutomationToggle
+                label="Require cash operator acceptance"
+                enabled={automation.cashRequiresOperatorAcceptance}
+                disabled
+                onToggle={() => undefined}
+              />
+            </>
+          ) : <p className="text-caption text-ash">Loading automation policy…</p>}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
           <CardTitle>This PC</CardTitle>
           <CardDescription>
             JSON-RPC 2.0, 4-byte little-endian frames, Windows named pipe.
@@ -1057,6 +1171,27 @@ function SettingsPanel({
           <p>Agent log: %LOCALAPPDATA%\Ctrlp\PrintAgent\agent.log</p>
         </CardContent>
       </Card>
+    </div>
+  )
+}
+
+function AutomationToggle({
+  label,
+  enabled,
+  disabled,
+  onToggle,
+}: {
+  label: string
+  enabled: boolean
+  disabled: boolean
+  onToggle: () => void
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span>{label}</span>
+      <Button size="sm" variant={enabled ? "default" : "outline"} disabled={disabled} onClick={onToggle}>
+        {enabled ? "On" : "Off"}
+      </Button>
     </div>
   )
 }

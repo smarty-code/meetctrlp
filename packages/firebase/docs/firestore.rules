@@ -34,6 +34,12 @@ service cloud.firestore {
         allow read, write: if isShopStaff(shopId);
       }
 
+      // Server-owned command de-duplication. Clients use REST; they never write
+      // these entries directly.
+      match /idempotencyKeys/{key} {
+        allow read, write: if false;
+      }
+
       // Discovered Printers Subcollection
       match /printers/{printerId} {
         allow read: if true; // Customers can view capabilities (color/mono/paper)
@@ -75,14 +81,8 @@ service cloud.firestore {
 
     // Document Access & Shredding Compliance Logs (Write-only for audit integrity)
     match /accessLogs/{logId} {
-      allow read: if isAuthenticated();
-      allow create: if true;
+      allow read, create: if false;
       allow update, delete: if false; // Immutable audit log
-    }
-
-    // Distributed Idempotency Keys
-    match /idempotencyKeys/{key} {
-      allow read, write: if true;
     }
   }
 }

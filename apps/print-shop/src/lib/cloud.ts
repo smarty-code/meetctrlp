@@ -3,6 +3,7 @@ import {
   looksLikeEmail,
   type AuthSession,
   type CloudPrintJob,
+  type OrderAutomation,
   type OrderStreamEvent,
   type ShopOrder,
   type ShopProfile,
@@ -88,6 +89,18 @@ export function fetchShopProfile(token: string) {
   return request<{ shop: ShopProfile }>("/api/v1/shops/profile", { token })
 }
 
+export function fetchOrderAutomation(token: string, shopId: string) {
+  return request<OrderAutomation>(`/api/v1/shops/${shopId}/automation`, { token })
+}
+
+export function updateOrderAutomation(token: string, shopId: string, automation: OrderAutomation) {
+  return request<OrderAutomation>(`/api/v1/shops/${shopId}/automation`, {
+    method: "PUT",
+    token,
+    body: JSON.stringify(automation),
+  })
+}
+
 export function fetchShopStaff(token: string) {
   return request<{ staff: ShopStaffMember[] }>("/api/v1/shops/staff", { token })
 }
@@ -104,6 +117,7 @@ export function registerDevice(
 ) {
   return request<{
     deviceId: string
+    agentCredential?: string
     heartbeatIntervalSeconds: number
     status: "ONLINE"
   }>("/api/v1/devices/register", {
@@ -245,6 +259,19 @@ export function rejectShopOrder(
   })
 }
 
+export function recordCashPayment(
+  token: string,
+  shopId: string,
+  orderId: string,
+  cashTenderedPaise: number
+) {
+  return request<ShopOrder>(`/api/v1/shops/${shopId}/orders/${orderId}/cash`, {
+    method: "POST",
+    token,
+    body: JSON.stringify({ idempotencyKey: crypto.randomUUID(), cashTenderedPaise }),
+  })
+}
+
 export function listOrderPrintJobs(token: string, shopId: string, orderId: string) {
   return request<{ jobs: CloudPrintJob[] }>(`/api/v1/shops/${shopId}/orders/${orderId}/jobs`, { token })
 }
@@ -271,6 +298,21 @@ export function dispatchOrderPrintJob(
       method: "POST",
       token,
       body: JSON.stringify({ ...input, idempotencyKey: crypto.randomUUID() }),
+    }
+  )
+}
+
+export function routeOrderPrintJob(
+  token: string,
+  shopId: string,
+  input: { colorMode: "BW" | "COLOR"; paperSize: "A4" | "A3" }
+) {
+  return request<{ printerId: string; name: string; activeSpoolJobs: number; status: string }>(
+    `/api/v1/shops/${shopId}/routing`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(input),
     }
   )
 }
@@ -304,7 +346,7 @@ export function retryOrderPrintJob(token: string, shopId: string, orderId: strin
 }
 
 export async function getDocumentDownloadUrl(token: string, shopId: string, orderId: string, docId: string) {
-  return request<{ url: string; sha256Hash: string; pageCount: number; expiresIn: number }>(
+  return request<{ url: string; sha256Hash: string; mimeType?: string; pageCount: number; expiresIn: number }>(
     `/api/v1/shops/${shopId}/orders/${orderId}/documents/${docId}/download-url`,
     { token }
   )

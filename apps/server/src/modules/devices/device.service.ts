@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 import { FieldValue, getFirebaseFirestore, type Timestamp } from "@ctrlp/firebase/firestore";
 import type {
@@ -22,6 +22,25 @@ function agentIdFor(shopId: string, deviceIdentifier: string) {
 
 function agentRef(shopId: string, agentId: string) {
   return getFirebaseFirestore().doc(`shops/${shopId}/agents/${agentId}`);
+}
+
+function hashAgentCredential(value: string) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+export async function requireAgentCredential(request: Request, shopId: string, agentId: string) {
+  const credential = request.headers.get("x-ctrlp-agent-key");
+  if (!credential) {
+    throw new AuthServiceError(401, "AGENT_CREDENTIAL_REQUIRED");
+  }
+  const snapshot = await agentRef(shopId, agentId).get();
+  const expected = snapshot.get("apiKeyHash");
+  const actual = hashAgentCredential(credential);
+  if (typeof expected !== "string" || expected.length !== actual.length ||
+    !timingSafeEqual(Buffer.from(expected), Buffer.from(actual))) {
+    throw new AuthServiceError(403, "AGENT_CREDENTIAL_INVALID");
+  }
+  return snapshot;
 }
 
 function timestampMillis(value: unknown) {
@@ -65,6 +84,11 @@ export async function registerShopDevice(
   const agentId = agentIdFor(user.shopId, input.deviceIdentifier);
   const reference = agentRef(user.shopId, agentId);
   const existing = await reference.get();
+  const existingHash = existing.get("apiKeyHash");
+  const issuedCredential =
+    typeof existingHash === "string" && existingHash.length > 0
+      ? null
+      : randomBytes(32).toString("base64url");
   const now = FieldValue.serverTimestamp();
 
   await reference.set(
@@ -80,7 +104,7 @@ export async function registerShopDevice(
       status: "ONLINE",
       heartbeatIntervalSeconds: HEARTBEAT_INTERVAL_SECONDS,
       registeredByUserId: user.id,
-      apiKeyHash: null,
+      ...(issuedCredential ? { apiKeyHash: hashAgentCredential(issuedCredential) } : {}),
       lastSeenAt: now,
       updatedAt: now,
       ...(existing.exists
@@ -95,6 +119,7 @@ export async function registerShopDevice(
 
   return {
     deviceId: agentId,
+    ...(issuedCredential ? { agentCredential: issuedCredential } : {}),
     heartbeatIntervalSeconds: HEARTBEAT_INTERVAL_SECONDS,
     status: "ONLINE" as const,
   };

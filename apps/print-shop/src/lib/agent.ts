@@ -5,6 +5,7 @@ const SECRET_COMMANDS = new Set([
   "get_refresh_token",
   "set_refresh_token",
   "clear_refresh_token",
+  "set_agent_cloud_credential",
 ])
 
 export function isTauriRuntime() {
@@ -99,6 +100,15 @@ export async function getStoredRefreshToken() {
 
 export function storeRefreshToken(refreshToken: string) {
   return call<{ ok: boolean }>("set_refresh_token", { refreshToken })
+}
+
+export function storeAgentCloudCredential(input: {
+  serverBaseUrl: string
+  shopId: string
+  agentId: string
+  credential: string
+}) {
+  return call<{ ok: boolean }>("set_agent_cloud_credential", input)
 }
 
 export function clearStoredRefreshToken() {

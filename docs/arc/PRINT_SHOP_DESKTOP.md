@@ -1,6 +1,6 @@
 # CtrlP Print Shop Desktop (Tauri UI + C# Agent)
 
-> **Status:** Auth, device heartbeat, printer capabilities/shop config, server-streamed orders, and the durable local queue are in. Physical PDF execution and agent-to-cloud reconciliation remain.  
+> **Status:** Auth, device heartbeat, printer capabilities/shop config, server-streamed orders, leased cloud-to-agent handoff, and PDF/JPEG/PNG spool submission are in.
 > **Platform:** Windows 10/11 x64 only.  
 > **Source of truth for this stack:** this file, plus `apps/print-shop/AGENTS.md` and `apps/print-agent/AGENTS.md`.  
 > **PRD progress checklist:** [`docs/developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md`](../developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md).
@@ -15,7 +15,7 @@ Shop operators get **one installer EXE**. After install:
 
 1. The Tauri app (React UI) is the frontend.
 2. A compiled C# agent runs as a sidecar, in a loop, talking to Windows APIs.
-3. The UI sends jobs/commands; the agent processes them and returns results.
+3. The UI sends commands; the agent returns results and durable-queue notifications. The agent independently polls assigned cloud jobs, validates/stages them, and submits rendered pages to Windows.
 
 ```text
 Operator
@@ -28,7 +28,7 @@ Thin Rust shell  (spawn sidecar, named-pipe JSON-RPC client)
    │  \\.\pipe\ctrlp-print-agent
    ▼
 C# print agent  (sidecar EXE, infinite listen loop)
-   │  winspool.drv
+   │  Print Schema/GDI/winspool discovery today
    ▼
 Windows Print Spooler → printer driver → hardware
 ```
@@ -44,17 +44,16 @@ Windows Print Spooler → printer driver → hardware
 | Rust IPC | `apps/print-shop/src-tauri/src/agent/` | Spawn sidecar, framed JSON-RPC | Hello handshake, request/response, events |
 | C# host | `apps/print-agent/.../Host` | Detached single-instance process, CLI, log file | Yes |
 | C# IPC | `apps/print-agent/.../Ipc` | Named pipe server, JSON-RPC 2.0 | Yes |
-| C# core | `apps/print-agent/.../Core` | Handlers, SQLite WAL job journal, worker | Durable queue; PDF executor pending |
-| Windows adapter | `apps/print-agent/.../Windows` | winspool + Print Schema/GDI catalog | Discovery, live status, capabilities |
-| Cloud HTTP | `apps/print-shop/src/lib/cloud.ts` | Auth, device, printer GET/POST/PATCH | Yes (no Firebase SDK) |
+| C# core | `apps/print-agent/.../Core` | Handlers, SQLite WAL job journal, cloud synchronizer, worker | Durable queue, lease/stage/report lifecycle |
+| Windows adapter | `apps/print-agent/.../Windows` | winspool + Print Schema/GDI/PDFium renderer | Discovery, live status, capabilities, PDF/JPEG/PNG submission |
+| Cloud HTTP | `apps/print-shop/src/lib/cloud.ts` | Auth, devices, printers, orders, documents, REST + SSE | Yes (no Firebase SDK) |
 | Sidecar bundle | `externalBin` + publish script | Agent EXE next to Tauri binary | Yes |
 | NSIS installer | `tauri.conf.json` `bundle.targets: ["nsis"]` | Single setup EXE for the shop PC | Configured; needs `pnpm desktop:build` |
 
 **Not in this stack yet** (full leftover list: [progress checklist](../developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md)):
 
-- Submitting a real PDF/image to the Windows spooler
-- Physical PDF print execution, spooler correlation, and agent-to-cloud reconciliation
-- Pickup/cash workflow, dashboard metrics, pricing/hours editors
+- Rich cloud/local execution view, direct reassign control, and hardware-level print confirmation
+- Pricing/hours editors, richer dashboard metrics, and customer-state synchronization
 - Windows Service host (the current detached agent is per-user, not a service)
 
 ---
@@ -122,7 +121,7 @@ Windows APIs stay in `Ctrlp.PrintAgent.Windows`. React never calls Win32.
 | `printers.list` | `{}` | `{ printers: PrinterDto[] }` |
 | `printers.get` | `{ id }` | `PrinterDto` |
 | `printers.refresh` | `{}` | `{ printers }` |
-| `jobs.enqueue` | `{ printerId?, documentPath?, documentName?, copies? }` | `JobDto` |
+| `jobs.enqueue` | `{ printerId?, documentPath?, documentName?, copies?, cloudJobId?, documentSha256?, resolvedSettings?, idempotencyKey?, pagesTotal? }` | `JobDto` |
 | `jobs.list` | `{}` | `{ jobs }` |
 | `jobs.get` | `{ id }` | `JobDto` |
 | `jobs.cancel` | `{ id }` | `JobDto` |
@@ -135,8 +134,8 @@ Windows APIs stay in `Ctrlp.PrintAgent.Windows`. React never calls Win32.
 
 `PrinterDto` includes identity, live `status` / `statusReason` / `jobCount`, Windows default, hardware flags (`isColorCapable`, `isDuplexCapable`, `supportedPaperSizes`), copies max, and `options` (color modes, papers, trays, duplex, dpi, current driver defaults, unmatched `raw` names). Printer `id` is still the Windows queue name; Firestore `printerId` is `sha256(systemName).slice(0,32)`.
 
-`JobDto` includes identity, cloud-job correlation, state/progress/retry and terminal timing. Local paths are never serialized through IPC or logs. The SQLite journal uses WAL and restart recovery turns an ambiguous in-progress print into an explicit failure for operator retry.  
-Enqueue validates `printerId` if present; physical PDF execution is still intentionally unavailable until the PrintTicket-aware renderer is installed.
+`JobDto` includes identity, cloud order/document/job/lease correlation, state/progress/retry, spooler ID, and terminal timing. Local paths are never serialized through IPC or logs. The SQLite journal uses WAL and restart recovery turns an ambiguous in-progress print into an explicit failure for operator retry.
+The agent stores its device-scoped cloud credential in Credential Manager, polls and claims only assigned jobs, stages to its private data root, checks SHA-256, then renders PDFs with PDFium (`Docnet.Core`) or JPEG/PNG with GDI before calling `PrintDocument`. Raw PDF bytes are never sent to `WritePrinter`.
 
 ### UI → Rust commands
 
@@ -147,7 +146,7 @@ React calls `@tauri-apps/api/core` `invoke`:
 | `agent_ping` | `agent.ping` |
 | `get_agent_status` | `agent.status` (or local snapshot if disconnected) |
 | `list_printers` / `get_printer` / `refresh_printers` | printers.* |
-| `enqueue_job` / `list_jobs` / `get_job` / `cancel_job` | jobs.* |
+| `enqueue_job` / `list_jobs` / `get_job` / `cancel_job` / `retry_job` | jobs.* |
 | `shutdown_agent` | `agent.shutdown` |
 | `get_refresh_token` / `set_refresh_token` / `clear_refresh_token` | secrets.* (Windows Credential Manager) |
 | `get_host_identity` / `get_host_telemetry` | host.identity / host.telemetry |

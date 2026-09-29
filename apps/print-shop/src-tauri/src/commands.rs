@@ -117,6 +117,28 @@ pub async fn set_refresh_token(
 }
 
 #[tauri::command]
+pub async fn set_agent_cloud_credential(
+    bridge: State<'_, AgentBridge>,
+    server_base_url: String,
+    shop_id: String,
+    agent_id: String,
+    credential: String,
+) -> Result<Value, String> {
+    traced(
+        &bridge,
+        "set_agent_cloud_credential",
+        "secrets.setAgentCloudCredential",
+        json!({
+            "serverBaseUrl": server_base_url,
+            "shopId": shop_id,
+            "agentId": agent_id,
+            "credential": credential,
+        }),
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn clear_refresh_token(bridge: State<'_, AgentBridge>) -> Result<Value, String> {
     traced(
         &bridge,
