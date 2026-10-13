@@ -62,13 +62,15 @@ impl AgentBridge {
         let _rpc = self.call_lock.lock().await;
         let id = Uuid::new_v4().to_string();
         let started = Instant::now();
-        log::write(
-            "rpc",
-            format!(
-                "begin method={method} id={id} params={}",
-                redact_params(method, &params)
-            ),
-        );
+        if !is_quiet_rpc(method) {
+            log::write(
+                "rpc",
+                format!(
+                    "begin method={method} id={id} params={}",
+                    redact_params(method, &params)
+                ),
+            );
+        }
         let (tx, rx) = oneshot::channel();
         {
             let mut guard = self.inner.lock().await;
@@ -82,10 +84,12 @@ impl AgentBridge {
                         "params": params,
                     });
                     let payload = serde_json::to_vec(&request).map_err(|err| err.to_string())?;
-                    log::write(
-                        "rpc",
-                        format!("write method={method} id={id} bytes={}", payload.len()),
-                    );
+                    if !is_quiet_rpc(method) {
+                        log::write(
+                            "rpc",
+                            format!("write method={method} id={id} bytes={}", payload.len()),
+                        );
+                    }
                     framing::write_frame(&mut ready.writer, &payload)
                         .await
                         .map_err(|err| {
@@ -138,14 +142,15 @@ impl AgentBridge {
             })?;
 
         match &result {
-            Ok(value) => log::write(
+            Ok(value) if !is_quiet_rpc(method) => log::write(
                 "rpc",
                 format!(
                     "ok method={method} id={id} elapsedMs={} result={}",
                     started.elapsed().as_millis(),
-                    redact_params(method, value)
+                    summarize_rpc_value(method, value)
                 ),
             ),
+            Ok(_) => {}
             Err(error) => log::write(
                 "rpc",
                 format!(
@@ -192,7 +197,6 @@ async fn read_loop(mut reader: ReadHalf<PipeStream>, app: AppHandle) {
             }
         };
 
-        log::write("bridge", format!("frame recv bytes={}", payload.len()));
         let value: Value = match serde_json::from_slice(&payload) {
             Ok(value) => value,
             Err(error) => {
@@ -214,14 +218,6 @@ async fn read_loop(mut reader: ReadHalf<PipeStream>, app: AppHandle) {
                     } else {
                         Ok(value.get("result").cloned().unwrap_or(Value::Null))
                     };
-                    log::write(
-                        "bridge",
-                        format!(
-                            "dispatch id={id} pending={} {}",
-                            ready.pending.len(),
-                            if result.is_ok() { "result" } else { "error" }
-                        ),
-                    );
                     let _ = tx.send(result);
                 } else {
                     log::write("bridge", format!("orphan response id={id}"));
@@ -307,10 +303,35 @@ pub fn split_pipe(stream: PipeStream) -> (ReadHalf<PipeStream>, WriteHalf<PipeSt
     split(stream)
 }
 
+fn is_quiet_rpc(method: &str) -> bool {
+    matches!(
+        method,
+        "agent.status" | "agent.ping" | "printers.list" | "host.telemetry" | "jobs.list"
+    )
+}
+
 fn redact_params(method: &str, params: &Value) -> String {
     if method.starts_with("secrets.") {
         "{redacted}".to_string()
     } else {
         params.to_string()
+    }
+}
+
+fn summarize_rpc_value(method: &str, value: &Value) -> String {
+    if method.starts_with("secrets.") {
+        return "{redacted}".to_string();
+    }
+    if let Some(printers) = value.get("printers").and_then(Value::as_array) {
+        return format!("{{\"printers\":{}}}", printers.len());
+    }
+    if let Some(jobs) = value.get("jobs").and_then(Value::as_array) {
+        return format!("{{\"jobs\":{}}}", jobs.len());
+    }
+    let rendered = value.to_string();
+    if rendered.len() > 400 {
+        format!("{}…", &rendered[..400])
+    } else {
+        rendered
     }
 }

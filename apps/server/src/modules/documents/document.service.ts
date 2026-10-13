@@ -242,27 +242,43 @@ export async function confirmDocumentShredded(
   docId: string,
 ) {
   const orderRef = getFirebaseFirestore().doc(`shops/${user.shopId}/orders/${orderId}`);
+  const snapshot = await orderRef.get();
+  if (!snapshot.exists) {
+    throw new AuthServiceError(404, "ORDER_NOT_FOUND");
+  }
+
+  const documents = [...((snapshot.get("documents") ?? []) as StoredOrderDocument[])];
+  const index = documents.findIndex((entry) => entry.docId === docId || entry.id === docId);
+  if (index < 0) {
+    throw new AuthServiceError(404, "DOCUMENT_NOT_FOUND");
+  }
+
+  if (documents[index].shreddedAt) {
+    return { id: orderId, shredded: true };
+  }
+
   await getFirebaseFirestore().runTransaction(async (transaction) => {
-    const snapshot = await transaction.get(orderRef);
-    if (!snapshot.exists) {
+    const fresh = await transaction.get(orderRef);
+    if (!fresh.exists) {
       throw new AuthServiceError(404, "ORDER_NOT_FOUND");
     }
-
-    const documents = [...((snapshot.get("documents") ?? []) as StoredOrderDocument[])];
-    const index = documents.findIndex((entry) => entry.docId === docId || entry.id === docId);
-    if (index < 0) {
+    const next = [...((fresh.get("documents") ?? []) as StoredOrderDocument[])];
+    const nextIndex = next.findIndex((entry) => entry.docId === docId || entry.id === docId);
+    if (nextIndex < 0) {
       throw new AuthServiceError(404, "DOCUMENT_NOT_FOUND");
     }
-
-    documents[index] = {
-      ...documents[index],
+    if (next[nextIndex].shreddedAt) {
+      return;
+    }
+    next[nextIndex] = {
+      ...next[nextIndex],
       shreddedAt: new Date().toISOString(),
     };
     transaction.update(orderRef, {
-      documents,
+      documents: next,
       updatedAt: FieldValue.serverTimestamp(),
     });
   });
 
-  return getShopOrder(user, orderId);
+  return { id: orderId, shredded: true };
 }

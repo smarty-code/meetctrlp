@@ -156,7 +156,8 @@ public sealed record JobDto(
     [property: JsonPropertyName("cloudOrderId")] string? CloudOrderId = null,
     [property: JsonPropertyName("cloudDocumentId")] string? CloudDocumentId = null,
     [property: JsonPropertyName("leaseId")] string? LeaseId = null,
-    [property: JsonIgnore] string? ResolvedSettings = null);
+    [property: JsonIgnore] string? ResolvedSettings = null,
+    [property: JsonIgnore] bool CloudAcked = false);
 
 public sealed record JobEventDto(
     [property: JsonPropertyName("type")] string Type,

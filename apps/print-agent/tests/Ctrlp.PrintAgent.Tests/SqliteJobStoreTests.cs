@@ -43,6 +43,24 @@ public sealed class SqliteJobStoreTests : IDisposable
         Assert.NotNull(retried);
         Assert.Equal("queued", retried!.State);
         Assert.Equal(1, retried.RetryCount);
+        Assert.False(retried.CloudAcked);
+    }
+
+    [Fact]
+    public void AcknowledgesCloudReportOnceAndClearsOnRetry()
+    {
+        var store = Create(Path.Combine(_root, "queue.db"));
+        var queued = store.Enqueue(Request("key-ack"));
+        Assert.False(queued.CloudAcked);
+        Assert.NotNull(store.ClaimNext());
+        Assert.Equal("failed", store.Fail(queued.Id, "offline")!.State);
+
+        var acked = store.MarkCloudAcked(queued.Id);
+        Assert.True(acked!.CloudAcked);
+        Assert.True(store.Get(queued.Id)!.CloudAcked);
+
+        var retried = store.Retry(queued.Id);
+        Assert.False(retried!.CloudAcked);
     }
 
     public void Dispose()

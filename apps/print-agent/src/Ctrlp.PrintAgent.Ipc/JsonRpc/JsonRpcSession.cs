@@ -42,7 +42,6 @@ public sealed class JsonRpcSession
                 return;
             }
 
-            _log?.Invoke($"rpc frame recv bytes={payload.Length}");
             var responseBytes = await HandleFrameAsync(payload, cancellationToken).ConfigureAwait(false);
             if (responseBytes is null)
             {
@@ -78,7 +77,6 @@ public sealed class JsonRpcSession
     private async Task WriteAsync(byte[] payload, CancellationToken cancellationToken)
     {
         var stream = _stream ?? throw new InvalidOperationException("RPC session is not connected.");
-        _log?.Invoke($"rpc frame send bytes={payload.Length}");
         await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -130,11 +128,17 @@ public sealed class JsonRpcSession
                 return hasId ? Encode(Error(id, RpcErrorCodes.InvalidRequest, "method is required")) : null;
             }
 
-            _log?.Invoke($"rpc begin method={method} id={idText}");
+            if (!IsQuietMethod(method))
+            {
+                _log?.Invoke($"rpc begin method={method} id={idText}");
+            }
             try
             {
                 var result = await _dispatcher.DispatchAsync(method, paramsEl, _context, cancellationToken).ConfigureAwait(false);
-                _log?.Invoke($"rpc ok method={method} id={idText} elapsedMs={clock.ElapsedMilliseconds}");
+                if (!IsQuietMethod(method))
+                {
+                    _log?.Invoke($"rpc ok method={method} id={idText} elapsedMs={clock.ElapsedMilliseconds}");
+                }
                 if (!hasId)
                 {
                     return null;
@@ -182,6 +186,10 @@ public sealed class JsonRpcSession
 
     private static byte[] Encode(object value) =>
         Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value, AgentJson.Options));
+
+    private static bool IsQuietMethod(string? method) =>
+        method is RpcMethods.Ping or RpcMethods.Status or RpcMethods.PrintersList
+            or RpcMethods.JobsList or RpcMethods.HostTelemetry;
 
     private sealed class JsonRpcSuccess
     {

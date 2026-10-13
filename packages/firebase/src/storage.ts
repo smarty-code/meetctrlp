@@ -9,6 +9,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getS3Config } from "./config";
 
 let s3Client: S3Client | undefined;
+let s3ClientConfigKey: string | undefined;
 
 function requireObjectKey(key: string) {
   if (!key.trim()) {
@@ -20,12 +21,17 @@ function requireObjectKey(key: string) {
 
 function getClientAndConfig() {
   const config = getS3Config();
+  const configKey = `${config.endpoint}|${config.bucketName}|${config.accessKeyId}|${config.region}`;
 
-  if (!s3Client) {
+  if (!s3Client || s3ClientConfigKey !== configKey) {
+    s3ClientConfigKey = configKey;
     s3Client = new S3Client({
       endpoint: config.endpoint,
       region: config.region,
       forcePathStyle: true,
+      // Default SDK checksums embed x-amz-checksum-* in presigned URLs; browsers cannot send those headers on XHR PUT.
+      requestChecksumCalculation: "WHEN_REQUIRED",
+      responseChecksumValidation: "WHEN_REQUIRED",
       credentials: {
         accessKeyId: config.accessKeyId,
         secretAccessKey: config.secretAccessKey,

@@ -358,7 +358,7 @@ export default function App() {
     const timer = window.setInterval(() => {
       void (async () => {
         try {
-          await beatOnce(idToken, deviceId, printers)
+          await beatOnce(idToken, deviceId, printersRef.current)
         } catch (err) {
           shopWarn("device", "heartbeat failed", err)
           setCloud("reconnecting")
@@ -368,7 +368,7 @@ export default function App() {
     }, 30_000)
 
     return () => window.clearInterval(timer)
-  }, [idToken, deviceId, printers])
+  }, [idToken, deviceId])
 
   async function refreshAll(userInitiated = false) {
     shopLog("ui", "refreshAll begin", { userInitiated, busy })
@@ -409,14 +409,14 @@ export default function App() {
   async function pollStatus() {
     try {
       const nextStatus = await getAgentStatus()
-      shopLog("ui", "poll status", nextStatus.state, {
-        printers: nextStatus.printerCount,
-        queued: nextStatus.queuedJobs,
-      })
       setStatus(nextStatus)
-      if (nextStatus.state === "disconnected" || nextStatus.state === "starting") {
-        return
-      }
+    } catch (err) {
+      shopWarn("ui", "poll status failed", err)
+    }
+  }
+
+  async function pollPrinters() {
+    try {
       const live = await listPrinters()
       const merged = mergeLiveStatus(printersRef.current, live)
       applyPrinters(merged)
@@ -425,7 +425,7 @@ export default function App() {
         await reportPrinterTelemetry(current.idToken, current.shopId, merged)
       }
     } catch (err) {
-      shopWarn("ui", "poll status failed", err)
+      shopWarn("ui", "poll printers failed", err)
     }
   }
 
@@ -435,10 +435,16 @@ export default function App() {
     }
     shopLog("ui", "shell mount", { tauri: isTauriRuntime() })
     void refreshAll(true)
-    const timer = window.setInterval(() => {
+    const statusTimer = window.setInterval(() => {
       void pollStatus()
-    }, 5000)
-    return () => window.clearInterval(timer)
+    }, 15_000)
+    const printerTimer = window.setInterval(() => {
+      void pollPrinters()
+    }, 60_000)
+    return () => {
+      window.clearInterval(statusTimer)
+      window.clearInterval(printerTimer)
+    }
   }, [user])
 
   useEffect(() => {

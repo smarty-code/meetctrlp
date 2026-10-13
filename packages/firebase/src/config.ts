@@ -139,10 +139,10 @@ export function assertFirebaseCredentials(config: FirebaseConfig) {
 
 export function getS3Config(): S3Config {
   return {
-    endpoint: requireEnvironmentValue("S3_ENDPOINT"),
-    region: process.env.S3_REGION ?? "auto",
-    bucketName: requireEnvironmentValue("S3_BUCKET_NAME"),
-    accessKeyId: requireEnvironmentValue("S3_ACCESS_KEY_ID"),
-    secretAccessKey: requireEnvironmentValue("S3_SECRET_ACCESS_KEY"),
+    endpoint: stripWrappingQuotes(requireEnvironmentValue("S3_ENDPOINT")),
+    region: stripWrappingQuotes(process.env.S3_REGION ?? "auto"),
+    bucketName: stripWrappingQuotes(requireEnvironmentValue("S3_BUCKET_NAME")),
+    accessKeyId: stripWrappingQuotes(requireEnvironmentValue("S3_ACCESS_KEY_ID")),
+    secretAccessKey: stripWrappingQuotes(requireEnvironmentValue("S3_SECRET_ACCESS_KEY")),
   };
 }

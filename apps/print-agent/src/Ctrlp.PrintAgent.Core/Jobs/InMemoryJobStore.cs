@@ -99,7 +99,11 @@ public sealed class InMemoryJobStore : IJobStore
             RetryCount = job.RetryCount + 1,
             StartedAt = null,
             CompletedAt = null,
+            CloudAcked = false,
         });
+
+    public JobDto? MarkCloudAcked(string id) =>
+        Update(id, job => job with { CloudAcked = true });
 
     private JobDto? Update(string id, Func<JobDto, JobDto> update)
     {

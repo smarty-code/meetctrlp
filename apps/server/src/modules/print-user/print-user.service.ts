@@ -32,7 +32,8 @@ import {
   pageSelectionValue,
 } from "@/src/modules/print-user/print-user.helpers";
 import {
-  savePrintUserDocuments,
+  getPrintUserSession,
+  mutatePrintUserDocuments,
   setPrintUserActiveOrder,
 } from "@/src/modules/print-user/print-user-session.service";
 import type { GuestDocument, PrintUserSession } from "@/src/modules/print-user/print-user.types";
@@ -71,11 +72,6 @@ export async function createUploadIntent(session: PrintUserSession, input: Print
     throw new AuthServiceError(400, "file exceeds the 50MB limit");
   }
 
-  const active = session.documents.filter((document) => document.status !== "FAILED");
-  if (active.length >= MAX_GUEST_FILES) {
-    throw new AuthServiceError(400, "you can upload up to 10 documents per order");
-  }
-
   const docId = randomUUID();
   const storageKey = guestStorageKey(session.shopId, session.id, docId, mimeType);
   const document: GuestDocument = {
@@ -90,7 +86,13 @@ export async function createUploadIntent(session: PrintUserSession, input: Print
     config: defaultConfig(1),
   };
 
-  await savePrintUserDocuments(session.id, [...session.documents, document]);
+  await mutatePrintUserDocuments(session.id, (documents) => {
+    const active = documents.filter((entry) => entry.status !== "FAILED");
+    if (active.length >= MAX_GUEST_FILES) {
+      throw new AuthServiceError(400, "you can upload up to 10 documents per order");
+    }
+    return { documents: [...documents, document], result: undefined };
+  });
 
   let uploadUrl: string;
   try {
@@ -112,7 +114,12 @@ export async function createUploadIntent(session: PrintUserSession, input: Print
 }
 
 export async function completeGuestDocument(session: PrintUserSession, docId: string) {
-  const document = requireDocument(session, docId);
+  const current = await getPrintUserSession(session.id);
+  if (!current) {
+    throw new AuthServiceError(401, "guest session not found");
+  }
+
+  const document = requireDocument(current, docId);
   if (document.status === "READY" && document.pageCount) {
     return document;
   }
@@ -138,11 +145,19 @@ export async function completeGuestDocument(session: PrintUserSession, docId: st
     config: defaultConfig(inspected.pageCount),
   };
 
-  await savePrintUserDocuments(
-    session.id,
-    session.documents.map((entry) => (entry.id === docId ? ready : entry)),
-  );
-  return ready;
+  return mutatePrintUserDocuments(session.id, (documents) => {
+    const existing = documents.find((entry) => entry.id === docId);
+    if (!existing) {
+      throw new AuthServiceError(404, "DOCUMENT_NOT_FOUND");
+    }
+    if (existing.status === "READY" && existing.pageCount) {
+      return { documents, result: existing };
+    }
+    return {
+      documents: documents.map((entry) => (entry.id === docId ? ready : entry)),
+      result: ready,
+    };
+  });
 }
 
 export async function deleteGuestDocument(session: PrintUserSession, docId: string) {
@@ -152,10 +167,10 @@ export async function deleteGuestDocument(session: PrintUserSession, docId: stri
   } catch {
     // The guest cart should still drop the file if object storage already removed it.
   }
-  await savePrintUserDocuments(
-    session.id,
-    session.documents.filter((entry) => entry.id !== docId),
-  );
+  await mutatePrintUserDocuments(session.id, (documents) => ({
+    documents: documents.filter((entry) => entry.id !== docId),
+    result: undefined,
+  }));
 }
 
 export async function updateGuestDocumentConfiguration(
@@ -205,11 +220,15 @@ export async function updateGuestDocumentConfiguration(
     },
   };
 
-  await savePrintUserDocuments(
-    session.id,
-    session.documents.map((entry) => (entry.id === docId ? updated : entry)),
-  );
-  return updated;
+  return mutatePrintUserDocuments(session.id, (documents) => {
+    if (!documents.some((entry) => entry.id === docId)) {
+      throw new AuthServiceError(404, "DOCUMENT_NOT_FOUND");
+    }
+    return {
+      documents: documents.map((entry) => (entry.id === docId ? updated : entry)),
+      result: updated,
+    };
+  });
 }
 
 export async function quoteGuestSession(session: PrintUserSession) {

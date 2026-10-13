@@ -195,12 +195,26 @@ pub async fn get_host_telemetry(bridge: State<'_, AgentBridge>) -> Result<Value,
     traced(&bridge, "get_host_telemetry", "host.telemetry", json!({})).await
 }
 
+const QUIET_COMMANDS: &[&str] = &[
+    "get_agent_status",
+    "list_printers",
+    "agent_ping",
+    "get_host_telemetry",
+    "list_jobs",
+];
+
+fn is_quiet_command(command: &str) -> bool {
+    QUIET_COMMANDS.contains(&command)
+}
+
 async fn traced(
     bridge: &AgentBridge,
     command: &str,
     method: &str,
     params: Value,
 ) -> Result<Value, String> {
-    log::write("command", format!("{command} invoke method={method}"));
+    if !is_quiet_command(command) {
+        log::write("command", format!("{command} invoke method={method}"));
+    }
     bridge.call(method, params).await
 }

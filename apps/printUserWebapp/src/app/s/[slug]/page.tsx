@@ -56,7 +56,7 @@ export default function ShopUploadPage() {
 
   const runUpload = async (items: UploadedFileItem[]) => {
     setIsUploadingOverall(true)
-    await Promise.all(
+    const outcomes = await Promise.all(
       items.map(async (item) => {
         try {
           const completed = await uploadOneFile(item.file, item.id, (progress) => {
@@ -79,6 +79,7 @@ export default function ShopUploadPage() {
                 : file,
             ),
           )
+          return true
         } catch (error) {
           setUploadedFiles((prev) =>
             prev.map((file) =>
@@ -91,10 +92,12 @@ export default function ShopUploadPage() {
                 : file,
             ),
           )
+          return false
         }
       }),
     )
     setIsUploadingOverall(false)
+    return outcomes.filter(Boolean).length
   }
 
   const handleFilesSelected = (files: FileList | null) => {
@@ -133,8 +136,7 @@ export default function ShopUploadPage() {
     setUploadedFiles((prev) => [...prev, ...newItems])
     const validNewItems = newItems.filter((item) => item.status === "uploading")
     if (validNewItems.length === 0) return
-    void runUpload(validNewItems).then(() => {
-      const succeeded = validNewItems.length
+    void runUpload(validNewItems).then((succeeded) => {
       if (succeeded > 0) {
         showToast(`${succeeded} document${succeeded > 1 ? "s" : ""} uploaded`)
       }

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { FieldValue } from "@ctrlp/firebase/firestore";
+import { FieldValue, getFirebaseFirestore } from "@ctrlp/firebase/firestore";
 
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
 import {
@@ -88,16 +88,23 @@ async function findResumableSession(shopId: string, ipAddress: string) {
   const snapshot = await printUsersCollection()
     .where("shopId", "==", shopId)
     .where("ipAddress", "==", ipAddress)
-    .where("expiresAt", ">", now)
-    .orderBy("expiresAt", "desc")
-    .limit(1)
+    .limit(10)
     .get();
 
   if (snapshot.empty) {
     return undefined;
   }
 
-  return toSession(snapshot.docs[0]);
+  const sessions = snapshot.docs
+    .map((document) => toSession(document))
+    .filter((session) => !isSessionExpired(session.expiresAt, now))
+    .sort((left, right) => {
+      const leftMs = left.expiresAt ? new Date(left.expiresAt).getTime() : 0;
+      const rightMs = right.expiresAt ? new Date(right.expiresAt).getTime() : 0;
+      return rightMs - leftMs;
+    });
+
+  return sessions[0];
 }
 
 async function touchSession(session: PrintUserSession) {
@@ -190,6 +197,36 @@ export async function savePrintUserDocuments(printUserId: string, documents: Gue
     },
     { merge: true },
   );
+}
+
+/** Atomically read-modify-write guest documents (safe for parallel upload intents). */
+export async function mutatePrintUserDocuments<T>(
+  printUserId: string,
+  mutate: (documents: GuestDocument[]) => { documents: GuestDocument[]; result: T },
+): Promise<T> {
+  const ref = printUsersCollection().doc(printUserId);
+
+  return getFirebaseFirestore().runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists) {
+      throw new AuthServiceError(401, "guest session not found");
+    }
+
+    const session = toSession(snapshot);
+    const { documents: nextDocuments, result } = mutate(session.documents);
+
+    transaction.set(
+      ref,
+      {
+        documents: nextDocuments,
+        lastSeenAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+
+    return result;
+  });
 }
 
 export async function setPrintUserActiveOrder(printUserId: string, orderId: string) {

@@ -122,7 +122,6 @@ internal sealed class PrintersListHandler : RpcHandler<object, PrinterListRespon
     {
         var printers = _runtime.Printers.List();
         _runtime.RememberPrinterCount(printers.Count);
-        AgentTrace.Write($"printers.list count={printers.Count}");
         return new(printers);
     }
 }

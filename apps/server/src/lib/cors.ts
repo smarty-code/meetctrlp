@@ -32,7 +32,16 @@ export function isAllowedDesktopOrigin(origin: string | null) {
     return false;
   }
 
-  return allowedOrigins().has(origin);
+  if (allowedOrigins().has(origin)) {
+    return true;
+  }
+
+  try {
+    const url = new URL(origin);
+    return ["localhost", "127.0.0.1", "tauri.localhost"].includes(url.hostname);
+  } catch {
+    return false;
+  }
 }
 
 export function desktopCorsHeaders(origin: string | null) {
@@ -43,8 +52,10 @@ export function desktopCorsHeaders(origin: string | null) {
   return {
     "Access-Control-Allow-Origin": origin as string,
     "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    "Access-Control-Allow-Headers":
+      "Authorization, Content-Type, X-Ctrlp-Agent-Key, X-Ctrlp-Agent-Id",
     "Access-Control-Allow-Credentials": "true",
+    "Access-Control-Max-Age": "86400",
     Vary: "Origin",
   };
 }

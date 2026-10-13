@@ -34,12 +34,13 @@ public sealed class AgentCloudSynchronizer
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+        var delay = TimeSpan.FromSeconds(3);
         while (!cancellationToken.IsCancellationRequested)
         {
+            var hadWork = false;
             try
             {
-                await SynchronizeOnceAsync(cancellationToken).ConfigureAwait(false);
+                hadWork = await SynchronizeOnceAsync(cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -49,24 +50,39 @@ public sealed class AgentCloudSynchronizer
             {
                 _log?.Invoke($"cloud sync failed: {exception.GetType().Name}: {exception.Message}");
             }
-            await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false);
+
+            delay = hadWork
+                ? TimeSpan.FromSeconds(3)
+                : TimeSpan.FromSeconds(Math.Min(30, Math.Max(3, delay.TotalSeconds * 2)));
+            try
+            {
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
         }
     }
 
-    public async Task SynchronizeOnceAsync(CancellationToken cancellationToken)
+    public async Task<bool> SynchronizeOnceAsync(CancellationToken cancellationToken)
     {
         var credential = _secrets.GetAgentCloudCredential();
         if (credential is null)
         {
-            return;
+            return false;
         }
+
+        var hadWork = false;
         foreach (var local in _jobs.List().Where(job =>
                      !string.IsNullOrWhiteSpace(job.CloudJobId) &&
+                     !job.CloudAcked &&
                      job.State is "completed" or "failed" or "cancelled"))
         {
             try
             {
                 await ReportAsync(local, cancellationToken).ConfigureAwait(false);
+                hadWork = true;
             }
             catch (Exception exception)
             {
@@ -83,18 +99,21 @@ public sealed class AgentCloudSynchronizer
         if (!response.IsSuccessStatusCode)
         {
             _log?.Invoke($"cloud job poll failed status={(int)response.StatusCode}");
-            return;
+            return hadWork;
         }
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false));
         if (!document.RootElement.TryGetProperty("jobs", out var jobs) || jobs.ValueKind != JsonValueKind.Array)
         {
-            return;
+            return hadWork;
         }
 
         foreach (var remote in jobs.EnumerateArray())
         {
             await StageAndEnqueueAsync(credential, remote, cancellationToken).ConfigureAwait(false);
+            hadWork = true;
         }
+
+        return hadWork;
     }
 
     public async Task ReportAsync(JobDto job, CancellationToken cancellationToken = default)
@@ -148,8 +167,11 @@ public sealed class AgentCloudSynchronizer
             if (!shred.IsSuccessStatusCode)
             {
                 _log?.Invoke($"cloud shred acknowledgement failed status={(int)shred.StatusCode}");
+                return;
             }
         }
+
+        _jobs.MarkCloudAcked(job.Id);
     }
 
     private async Task StageAndEnqueueAsync(

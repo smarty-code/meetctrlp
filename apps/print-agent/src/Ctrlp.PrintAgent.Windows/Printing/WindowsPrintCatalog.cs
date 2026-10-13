@@ -105,7 +105,10 @@ public sealed class WindowsPrintCatalog : IPrinterCatalog
 
     private IReadOnlyList<PrinterDto> EnumerateLive(string reason)
     {
-        _log?.Invoke($"print queues enumerate reason={reason}");
+        if (reason != "list")
+        {
+            _log?.Invoke($"print queues enumerate reason={reason}");
+        }
         try
         {
             return StaRunner.Run(() => EnumeratePrintQueues(), TimeSpan.FromSeconds(8));

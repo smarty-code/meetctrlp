@@ -59,6 +59,7 @@ public sealed class SqliteJobStore : IJobRepository
         EnsureColumn(connection, "cloud_order_id", "TEXT NULL");
         EnsureColumn(connection, "cloud_document_id", "TEXT NULL");
         EnsureColumn(connection, "lease_id", "TEXT NULL");
+        EnsureColumn(connection, "cloud_acked", "INTEGER NOT NULL DEFAULT 0");
         // A prior agent process cannot still be printing after a crash. Surface those
         // records for deliberate operator retry instead of silently duplicating output.
         Execute(connection, """
@@ -188,7 +189,17 @@ public sealed class SqliteJobStore : IJobRepository
         Update(id, "state = 'failed', error = $error, completed_at = $now", "state = 'printing'", ("$error", reason));
 
     public JobDto? Retry(string id) =>
-        Update(id, "state = 'queued', retry_count = retry_count + 1, error = NULL, started_at = NULL, completed_at = NULL", "state = 'failed'");
+        Update(id, "state = 'queued', retry_count = retry_count + 1, error = NULL, started_at = NULL, completed_at = NULL, cloud_acked = 0", "state = 'failed'");
+
+    public JobDto? MarkCloudAcked(string id)
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE jobs SET cloud_acked = 1 WHERE id = $id AND cloud_job_id IS NOT NULL";
+        command.Parameters.AddWithValue("$id", id);
+        command.ExecuteNonQuery();
+        return Get(id);
+    }
 
     private JobDto? Update(string id, string set, string predicate, params (string Name, object? Value)[] values)
     {
@@ -294,12 +305,19 @@ public sealed class SqliteJobStore : IJobRepository
         Text(reader, "cloud_order_id"),
         Text(reader, "cloud_document_id"),
         Text(reader, "lease_id"),
-        Text(reader, "resolved_settings"));
+        Text(reader, "resolved_settings"),
+        IntOrDefault(reader, "cloud_acked") != 0);
 
     private static string? Text(SqliteDataReader reader, string column)
     {
         var index = reader.GetOrdinal(column);
         return reader.IsDBNull(index) ? null : reader.GetString(index);
+    }
+
+    private static int IntOrDefault(SqliteDataReader reader, string column)
+    {
+        var index = reader.GetOrdinal(column);
+        return reader.IsDBNull(index) ? 0 : reader.GetInt32(index);
     }
 
     private static int? NullableInt(SqliteDataReader reader, string column)

@@ -8,6 +8,14 @@ const SECRET_COMMANDS = new Set([
   "set_agent_cloud_credential",
 ])
 
+const QUIET_COMMANDS = new Set([
+  "get_agent_status",
+  "list_printers",
+  "agent_ping",
+  "get_host_telemetry",
+  "list_jobs",
+])
+
 export function isTauriRuntime() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
 }
@@ -20,16 +28,20 @@ async function call<T>(command: string, args?: Record<string, unknown>) {
 
   const { invoke } = await import("@tauri-apps/api/core")
   const started = performance.now()
-  shopLog("ipc", "begin", command, SECRET_COMMANDS.has(command) ? "{redacted}" : (args ?? {}))
+  if (!QUIET_COMMANDS.has(command)) {
+    shopLog("ipc", "begin", command, SECRET_COMMANDS.has(command) ? "{redacted}" : (args ?? {}))
+  }
   try {
     const result = await invoke<T>(command, args)
-    shopLog(
-      "ipc",
-      "ok",
-      command,
-      `${Math.round(performance.now() - started)}ms`,
-      SECRET_COMMANDS.has(command) ? "{redacted}" : result
-    )
+    if (!QUIET_COMMANDS.has(command)) {
+      shopLog(
+        "ipc",
+        "ok",
+        command,
+        `${Math.round(performance.now() - started)}ms`,
+        SECRET_COMMANDS.has(command) ? "{redacted}" : result
+      )
+    }
     return result
   } catch (error) {
     shopError(
@@ -53,7 +65,6 @@ export function getAgentStatus() {
 
 export async function listPrinters() {
   const result = await call<{ printers: Printer[] }>("list_printers")
-  shopLog("printers", "list", result.printers.length, result.printers)
   return result.printers
 }
 
@@ -63,7 +74,7 @@ export function getPrinter(id: string) {
 
 export async function refreshPrinters() {
   const result = await call<{ printers: Printer[] }>("refresh_printers")
-  shopLog("printers", "refresh", result.printers.length, result.printers)
+  shopLog("printers", "refresh", result.printers.length)
   return result.printers
 }
 
@@ -77,7 +88,6 @@ export function exportAgentLog() {
 
 export async function listJobs() {
   const result = await call<{ jobs: PrintJob[] }>("list_jobs")
-  shopLog("jobs", "list", result.jobs.length)
   return result.jobs
 }
 

@@ -749,18 +749,17 @@ export async function updatePrintJob(
   const idempotencyRef = db.doc(`shops/${user.shopId}/idempotencyKeys/${input.idempotencyKey}`);
 
   await db.runTransaction(async (transaction) => {
-    const [keySnap, orderSnap, jobSnap, siblingJobs] = await Promise.all([
-      transaction.get(idempotencyRef),
-      transaction.get(orderRef),
-      transaction.get(jobRef),
-      transaction.get(orderRef.collection("printJobs")),
-    ]);
+    const keySnap = await transaction.get(idempotencyRef);
     if (keySnap.exists) {
       if (keySnap.get("orderId") === orderId && keySnap.get("jobId") === jobId) {
         return;
       }
       throw new AuthServiceError(409, "IDEMPOTENCY_KEY_REUSED");
     }
+    const [orderSnap, jobSnap] = await Promise.all([
+      transaction.get(orderRef),
+      transaction.get(jobRef),
+    ]);
     if (!orderSnap.exists) {
       throw new AuthServiceError(404, "ORDER_NOT_FOUND");
     }
@@ -774,6 +773,10 @@ export async function updatePrintJob(
     if (input.pagesPrinted !== undefined && input.pagesPrinted > pagesTotal) {
       throw new AuthServiceError(400, "PRINT_JOB_PAGES_EXCEED_TOTAL");
     }
+
+    const siblingJobs = input.status === "COMPLETED"
+      ? await transaction.get(orderRef.collection("printJobs"))
+      : null;
 
     const now = FieldValue.serverTimestamp();
     const update: Record<string, unknown> = {
@@ -795,7 +798,7 @@ export async function updatePrintJob(
       transaction.update(orderRef, { status: "PRINTING", updatedAt: now });
     }
 
-    if (input.status === "COMPLETED") {
+    if (input.status === "COMPLETED" && siblingJobs) {
       const expectedDocumentIds = new Set(
         Array.isArray(orderSnap.get("documents"))
           ? (orderSnap.get("documents") as Array<Record<string, unknown>>)

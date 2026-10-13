@@ -17,6 +17,7 @@ public interface IJobStore
     JobDto? Complete(string id, int? spoolerJobId = null);
     JobDto? Fail(string id, string reason);
     JobDto? Retry(string id);
+    JobDto? MarkCloudAcked(string id);
 }
 
 public interface IJobRepository : IJobStore

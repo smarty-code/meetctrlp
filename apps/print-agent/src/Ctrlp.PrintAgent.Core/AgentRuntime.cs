@@ -56,8 +56,6 @@ public sealed class AgentRuntime
     {
         var jobs = Jobs.List();
         var queued = jobs.Count(job => job.State is "queued" or "created" or "printing");
-        AgentTrace.Write(
-            $"agent.status state={State} printerCount={_printerCount} jobs={jobs.Count} queued={queued} uptimeMs={(long)(DateTimeOffset.UtcNow - _startedAt).TotalMilliseconds}");
         return new AgentStatusDto(
             ProtocolVersion: ProtocolInfo.Version,
             AgentVersion: Options.AgentVersion,
