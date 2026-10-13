@@ -634,7 +634,6 @@ export async function listOrderPrintJobs(user: AuthSessionUser, orderId: string)
 }
 
 export async function listAgentPrintJobs(user: AuthSessionUser, input: ClaimAgentPrintJobsRequestInput) {
-  const db = getFirebaseFirestore();
   const jobs = await listQueuedJobsByCollectionGroup(user.shopId, input).catch(() =>
     listQueuedJobsFromActiveOrders(user.shopId, input),
   );

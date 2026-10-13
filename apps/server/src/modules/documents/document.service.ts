@@ -77,30 +77,6 @@ export function verifyDownloadSignature(
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
-async function writeAccessLog(input: {
-  user: AuthSessionUser;
-  orderId: string;
-  docId: string;
-  accessType: AccessType;
-  ipAddress: string | null;
-  userAgent: string | null;
-}) {
-  const logId = randomUUID();
-  await getFirebaseFirestore().doc(`accessLogs/${logId}`).set({
-    logId,
-    docId: input.docId,
-    orderId: input.orderId,
-    shopId: input.user.shopId,
-    actorType: "SHOP_USER",
-    actorId: input.user.id,
-    accessType: input.accessType,
-    ipAddress: input.ipAddress,
-    userAgent: input.userAgent,
-    createdAt: FieldValue.serverTimestamp(),
-  });
-  return { logId };
-}
-
 function findDocument(order: OrderDto, docId: string) {
   const document = order.documents.find((entry) => {
     const record = entry as { id?: string; docId?: string };
@@ -253,26 +229,17 @@ export async function recordDocumentAccess(
   user: AuthSessionUser,
   orderId: string,
   docId: string,
-  accessType: AccessType,
-  request: Request,
+  _accessType: AccessType,
+  _request: Request,
 ) {
-  await getShopOrder(user, orderId);
   findDocument(await getShopOrder(user, orderId), docId);
-  return writeAccessLog({
-    user,
-    orderId,
-    docId,
-    accessType,
-    ipAddress: request.headers.get("x-forwarded-for"),
-    userAgent: request.headers.get("user-agent"),
-  });
+  return { logId: randomUUID() };
 }
 
 export async function confirmDocumentShredded(
   user: AuthSessionUser,
   orderId: string,
   docId: string,
-  request: Request,
 ) {
   const orderRef = getFirebaseFirestore().doc(`shops/${user.shopId}/orders/${orderId}`);
   await getFirebaseFirestore().runTransaction(async (transaction) => {
@@ -295,15 +262,6 @@ export async function confirmDocumentShredded(
       documents,
       updatedAt: FieldValue.serverTimestamp(),
     });
-  });
-
-  await writeAccessLog({
-    user,
-    orderId,
-    docId,
-    accessType: "SHREDDED",
-    ipAddress: request.headers.get("x-forwarded-for"),
-    userAgent: request.headers.get("user-agent"),
   });
 
   return getShopOrder(user, orderId);

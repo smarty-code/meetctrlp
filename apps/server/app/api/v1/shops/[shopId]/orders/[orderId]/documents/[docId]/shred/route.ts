@@ -18,11 +18,11 @@ export async function POST(request: Request, context: RouteContext) {
       }
       await requireAgentCredential(request, shopId, agentId);
       return Response.json(
-        await confirmDocumentShredded({ id: agentId, shopId } as never, orderId, docId, request),
+        await confirmDocumentShredded({ id: agentId, shopId } as never, orderId, docId),
       );
     }
     return runShopOrder(request, shopId, (user) =>
-      confirmDocumentShredded(user, orderId, docId, request),
+      confirmDocumentShredded(user, orderId, docId),
     );
   } catch (error) {
     return authErrorResponse(error);

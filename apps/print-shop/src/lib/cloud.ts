@@ -407,20 +407,6 @@ export async function getDocumentDownloadUrl(token: string, shopId: string, orde
   )
 }
 
-export function recordDocumentAccess(
-  token: string,
-  shopId: string,
-  orderId: string,
-  docId: string,
-  accessType: "DOWNLOADED" | "PREVIEWED" | "SPOOLED_TO_PRINTER" | "SHREDDED"
-) {
-  return request<{ logId: string }>(`/api/v1/shops/${shopId}/orders/${orderId}/documents/${docId}/access`, {
-    method: "POST",
-    token,
-    body: JSON.stringify({ accessType }),
-  })
-}
-
 export function markDocumentShredded(token: string, shopId: string, orderId: string, docId: string) {
   return request<{ docId: string }>(`/api/v1/shops/${shopId}/orders/${orderId}/documents/${docId}/shred`, {
     method: "POST",

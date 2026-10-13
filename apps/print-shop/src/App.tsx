@@ -53,7 +53,6 @@ import {
   serverBaseUrl,
   dispatchOrderPrintJob,
   rejectShopOrder,
-  recordDocumentAccess,
   recordCashPayment,
   retryOrderPrintJob,
   streamShopOrders,
@@ -728,8 +727,6 @@ export default function App() {
       if (actualHash !== download.sha256Hash) {
         throw new Error("The downloaded document hash does not match the order.")
       }
-      await recordDocumentAccess(current.idToken, current.shopId, order.id, documentId, "DOWNLOADED")
-      await recordDocumentAccess(current.idToken, current.shopId, order.id, documentId, "PREVIEWED")
       const url = URL.createObjectURL(new Blob([bytes], { type: download.mimeType ?? "application/pdf" }))
       window.open(url, "_blank", "noopener,noreferrer")
       window.setTimeout(() => URL.revokeObjectURL(url), 60_000)

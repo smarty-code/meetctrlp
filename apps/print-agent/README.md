@@ -1,7 +1,8 @@
 # CtrlP print agent (C#)
 
-Windows sidecar that the Tauri print shop UI talks to over a named pipe.
+Windows sidecar that the Tauri print shop UI talks to over a named pipe. Cloud job sync talks to [`apps/server`](../server).
 
+Monorepo onboarding: [`README.md`](../../README.md).  
 Full architecture, protocol, and scripts: [`docs/arc/PRINT_SHOP_DESKTOP.md`](../../docs/arc/PRINT_SHOP_DESKTOP.md).  
 Coding rules: [`AGENTS.md`](./AGENTS.md).
 
