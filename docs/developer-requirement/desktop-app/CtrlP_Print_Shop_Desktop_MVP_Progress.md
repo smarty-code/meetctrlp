@@ -2,6 +2,7 @@
 
 **Purpose:** Standalone tracker of what the **Tauri + C# sidecar** product has shipped versus what the PRD still requires.  
 **Product PRD:** [`Print Shop Partner Desktop MVP.md`](./Print%20Shop%20Partner%20Desktop%20MVP.md) (screens 1–6, FR-01–FR-46).  
+**Feature Audit:** [`Print_Shop_Partner_Desktop_MVP_Feature_Audit.md`](./Print_Shop_Partner_Desktop_MVP_Feature_Audit.md).  
 **Engineering stack:** [`docs/arc/PRINT_SHOP_DESKTOP.md`](../../arc/PRINT_SHOP_DESKTOP.md).  
 **Not this product:** `apps/desktop-proto` (WPF), `docs/arc/SHOP_DESKTOP_AGENT_V1.md` (retired Rust agent).
 
