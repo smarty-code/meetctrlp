@@ -38,7 +38,14 @@ export type PublicShop = {
     opensAt: string
     closesAt: string
     isClosed: boolean
+    isOpen24Hours: boolean
+    /** 12-hour display text from the server, e.g. "9:00 AM – 9:00 PM". */
+    label: string
   }>
+  /** Computed by the server in shop time, e.g. "Open until 9:00 PM". */
+  openStatusLabel: string
+  todayHoursLabel: string
+  isOpen24x7: boolean
   acceptsCash: boolean
   acceptsOnline: boolean
 }
@@ -219,6 +226,15 @@ export function saveDocumentConfiguration(
     `/api/v1/public/session/documents/${encodeURIComponent(docId)}`,
     { method: "PUT", body: JSON.stringify(input) },
   )
+}
+
+export function saveDocumentConfigurations(
+  documents: Array<Parameters<typeof saveDocumentConfiguration>[1] & { documentId: string }>,
+) {
+  return request<{ documents: GuestDocumentDto[] }>("/api/v1/public/session/documents", {
+    method: "PUT",
+    body: JSON.stringify({ documents }),
+  })
 }
 
 export function quoteGuestSession() {

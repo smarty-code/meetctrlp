@@ -11,6 +11,7 @@
     "./checkbox": "./src/components/checkbox.tsx",
     "./input": "./src/components/input.tsx",
     "./label": "./src/components/label.tsx",
+    "./native-select": "./src/components/native-select.tsx",
     "./separator": "./src/components/separator.tsx",
     "./switch": "./src/components/switch.tsx",
     "./utils": "./src/lib/utils.ts",

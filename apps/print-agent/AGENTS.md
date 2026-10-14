@@ -85,6 +85,12 @@ Do **not**:
 - PDF/JPEG/PNG jobs are rendered through PDFium/GDI and submitted through `PrintDocument`; never send raw document bytes to `WritePrinter`. A successful submission is spool acceptance, not a physical-paper guarantee.
 - Restart recovery marks an ambiguous in-flight print as failed for an explicit operator retry; it never blindly duplicates output.
 - The agent stores a device-scoped cloud credential (not a Firebase token), claims only its assigned cloud jobs, stages/verifies them, reports lifecycle state, and acknowledges shred after a successful spool.
+- Rules for the cloud sync loop (`src/Ctrlp.PrintAgent.Core/Cloud/AgentCloudSynchronizer.cs`). Keep them when changing it:
+  - **Separate jobs:** an order has one cloud job per document. Stage each polled job in its own try/catch so one bad document never holds back its siblings.
+  - **Failed staging:** if staging fails after a successful claim, report the job `FAILED` (`AGENT_STAGING_FAILED`). A claimed job left in `DISPATCHING` can't be retried from the shop.
+  - **Idempotency keys:** claim and stage keys include the cloud `retryCount` (`agent-claim-{jobId}-{retryCount}`, `agent-stage-{jobId}-{retryCount}`). That lets a cloud retry of the same job id be claimed again.
+  - **Acknowledgement:** reports are fire-and-forget and can arrive out of order. Mark a local job cloud-acked only after a final report (`COMPLETED`, `FAILED`, `CANCELLED`) succeeds. The sync sweep re-sends unacked final reports.
+  - **Error text:** the server limits `errorMessage` to 500 characters.
 - `printers.testPage` writes a one-page PDF and prints through the same GDI executor as orders. `host.exportLog` copies `agent.log` to a caller-supplied path without document bytes, tokens, or signed URLs.
 - Pause/resume of an in-flight Windows GDI job is unsupported; the queue UI retries, reassigns, or cancels instead.
 - PRD leftover tracker: [`CtrlP_Print_Shop_Desktop_MVP_Progress.md`](../../docs/developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md).

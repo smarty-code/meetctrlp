@@ -31,6 +31,7 @@ curl http://localhost:3000/api/health
 ```
 
 See [`docs/auth.md`](./docs/auth.md) for shop-owner registration, login, refresh, devices, and shop settings APIs.
+See [`docs/print-user.md`](./docs/print-user.md) for the guest customer session, upload, cart, and checkout APIs.
 
 ## Commands (repo root)
 

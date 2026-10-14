@@ -1,4 +1,6 @@
-import type { CloudPrintJob, PrintJob, Printer, ShopNotification, ShopOrder } from "./protocol"
+import { formatTime12h, minutesToTime, timeToMinutes } from "@ctrlp/schemas"
+
+import type { CloudPrintJob, PrintJob, Printer, ShopBusinessHour, ShopNotification, ShopOrder } from "./protocol"
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -190,13 +192,57 @@ export function filterOrders(
 
 export const weekdayLabels = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 
-export function defaultHours(): Array<{ dayOfWeek: number; opensAt: string; closesAt: string; isClosed: boolean }> {
+export type EditableBusinessHour = {
+  dayOfWeek: number
+  opensAt: string
+  closesAt: string
+  isClosed: boolean
+  isOpen24Hours: boolean
+}
+
+export function defaultHours(): EditableBusinessHour[] {
   return weekdayLabels.map((_, dayOfWeek) => ({
     dayOfWeek,
     opensAt: "09:00",
     closesAt: "21:00",
     isClosed: true,
+    isOpen24Hours: false,
   }))
+}
+
+/** One row per weekday from the saved config, filling gaps and older payloads with defaults. */
+export function editableHours(saved: ShopBusinessHour[] | undefined): EditableBusinessHour[] {
+  if (!saved || saved.length === 0) return defaultHours()
+  return defaultHours().map((fallback) => {
+    const day = saved.find((entry) => entry.dayOfWeek === fallback.dayOfWeek)
+    if (!day) return fallback
+    return {
+      dayOfWeek: day.dayOfWeek,
+      opensAt: day.opensAt,
+      closesAt: day.closesAt,
+      isClosed: day.isClosed,
+      isOpen24Hours: day.isOpen24Hours === true && !day.isClosed,
+    }
+  })
+}
+
+const TIME_STEP_MINUTES = 15
+
+/** 12-hour picker options in 15-minute steps; keeps an off-grid saved time selectable. */
+export function timeOptions(current?: string): Array<{ value: string; label: string }> {
+  const values = Array.from({ length: (24 * 60) / TIME_STEP_MINUTES }, (_, index) =>
+    minutesToTime(index * TIME_STEP_MINUTES),
+  )
+  if (current && !values.includes(current)) {
+    values.push(current)
+    values.sort((left, right) => timeToMinutes(left) - timeToMinutes(right))
+  }
+  return values.map((value) => ({ value, label: formatTime12h(value) }))
+}
+
+/** Sets every day to open around the clock, or back to regular open hours. */
+export function setOpen24x7(hours: EditableBusinessHour[], enabled: boolean): EditableBusinessHour[] {
+  return hours.map((hour) => ({ ...hour, isClosed: false, isOpen24Hours: enabled }))
 }
 
 export function paiseToRupeesInput(paise: number) {

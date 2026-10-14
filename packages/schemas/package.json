@@ -8,7 +8,8 @@
     "./auth": "./src/auth.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test ./src/business-hours.test.ts"
   },
   "dependencies": {
     "zod": "^3.25.76"

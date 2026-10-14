@@ -107,9 +107,21 @@ public sealed class AgentCloudSynchronizer
             return hadWork;
         }
 
+        // Orders fan out into one job per document; one bad document must not hold back its siblings.
         foreach (var remote in jobs.EnumerateArray())
         {
-            await StageAndEnqueueAsync(credential, remote, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await StageAndEnqueueAsync(credential, remote, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _log?.Invoke($"cloud job staging failed: {exception.GetType().Name}: {exception.Message}");
+            }
             hadWork = true;
         }
 
@@ -156,6 +168,13 @@ public sealed class AgentCloudSynchronizer
             return;
         }
 
+        // Reports are sent without awaiting, so PRINTING and COMPLETED can race. Only a terminal
+        // report may ack the job, otherwise a lost COMPLETED would never be re-sent by the sweep.
+        if (status is not ("COMPLETED" or "FAILED" or "CANCELLED"))
+        {
+            return;
+        }
+
         if (status == "COMPLETED" && !string.IsNullOrWhiteSpace(job.CloudDocumentId))
         {
             using var shred = await SendAsync(
@@ -187,11 +206,17 @@ public sealed class AgentCloudSynchronizer
             return;
         }
 
+        // A cloud retry re-queues the same job id with a higher retryCount; keying on it lets the
+        // retried attempt be claimed and staged instead of replaying the first attempt's keys.
+        var attempt = remote.TryGetProperty("retryCount", out var retryElement) && retryElement.ValueKind == JsonValueKind.Number
+            ? retryElement.GetInt32()
+            : 0;
+
         using var claim = await SendAsync(
             credential,
             HttpMethod.Post,
             $"/api/v1/shops/{Uri.EscapeDataString(credential.ShopId)}/orders/{Uri.EscapeDataString(orderId)}/jobs/{Uri.EscapeDataString(jobId)}/claim",
-            JsonSerializer.Serialize(new { agentId = credential.AgentId, idempotencyKey = $"agent-claim-{jobId}" }),
+            JsonSerializer.Serialize(new { agentId = credential.AgentId, idempotencyKey = $"agent-claim-{jobId}-{attempt}" }),
             cancellationToken).ConfigureAwait(false);
         if (claim.StatusCode == System.Net.HttpStatusCode.Conflict)
         {
@@ -205,6 +230,31 @@ public sealed class AgentCloudSynchronizer
         using var claimed = JsonDocument.Parse(await claim.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false));
         var leaseId = Text(claimed.RootElement, "leaseId");
 
+        try
+        {
+            await StageClaimedJobAsync(credential, remote, jobId, orderId, documentId, leaseId, attempt, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            // The job is already DISPATCHING on the server. Report it FAILED so the shop can see it
+            // and retry or reassign, instead of leaving it leased forever.
+            await ReportStagingFailureAsync(credential, orderId, jobId, attempt, exception.Message, cancellationToken)
+                .ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private async Task StageClaimedJobAsync(
+        AgentCloudCredential credential,
+        JsonElement remote,
+        string jobId,
+        string orderId,
+        string documentId,
+        string? leaseId,
+        int attempt,
+        CancellationToken cancellationToken)
+    {
         using var ticket = await SendAsync(
             credential,
             HttpMethod.Get,
@@ -253,11 +303,46 @@ public sealed class AgentCloudSynchronizer
             CloudJobId: jobId,
             DocumentSha256: sha256,
             ResolvedSettings: settings,
-            IdempotencyKey: $"agent-stage-{jobId}",
+            IdempotencyKey: $"agent-stage-{jobId}-{attempt}",
             PagesTotal: remote.TryGetProperty("pagesTotal", out var pages) ? pages.GetInt32() : 0,
             CloudOrderId: orderId,
             CloudDocumentId: documentId,
             LeaseId: leaseId));
+    }
+
+    private async Task ReportStagingFailureAsync(
+        AgentCloudCredential credential,
+        string orderId,
+        string jobId,
+        int attempt,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var payload = JsonSerializer.Serialize(new
+            {
+                idempotencyKey = $"agent-stage-failed-{jobId}-{attempt}",
+                status = "FAILED",
+                errorCode = "AGENT_STAGING_FAILED",
+                // The server caps errorMessage at 500 characters.
+                errorMessage = reason.Length > 500 ? reason[..500] : reason,
+            });
+            using var response = await SendAsync(
+                credential,
+                HttpMethod.Patch,
+                $"/api/v1/shops/{Uri.EscapeDataString(credential.ShopId)}/orders/{Uri.EscapeDataString(orderId)}/jobs/{Uri.EscapeDataString(jobId)}",
+                payload,
+                cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                _log?.Invoke($"cloud staging failure report failed status={(int)response.StatusCode}");
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            _log?.Invoke($"cloud staging failure report failed: {exception.GetType().Name}: {exception.Message}");
+        }
     }
 
     private Task<HttpResponseMessage> SendAsync(

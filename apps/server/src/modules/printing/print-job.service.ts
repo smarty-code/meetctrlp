@@ -263,7 +263,8 @@ function toPrintJobDto(snapshot: { id: string; data: () => Record<string, unknow
 function assertJobTransition(current: PrintJobStatus, next: PrintJobStatus) {
   const transitions: Record<PrintJobStatus, PrintJobStatus[]> = {
     QUEUED: ["DISPATCHING", "CANCELLED"],
-    DISPATCHING: ["PRINTING", "FAILED", "CANCELLED"],
+    // Agent reports are not ordered; a fast job's COMPLETED can land before its PRINTING.
+    DISPATCHING: ["PRINTING", "COMPLETED", "FAILED", "CANCELLED"],
     PRINTING: ["COMPLETED", "FAILED", "CANCELLED"],
     COMPLETED: [],
     FAILED: ["QUEUED", "CANCELLED"],
@@ -494,7 +495,8 @@ export async function dispatchPrintJob(user: AuthSessionUser, orderId: string, i
   if (!document) {
     throw new AuthServiceError(404, "DOCUMENT_NOT_FOUND");
   }
-  if (order.status !== "SHOP_ACCEPTED") {
+  // The first claimed job moves the order to PRINTING; sibling documents must still be dispatchable.
+  if (order.status !== "SHOP_ACCEPTED" && order.status !== "PRINTING") {
     throw new AuthServiceError(409, "ORDER_NOT_ACCEPTED");
   }
   if (!document.storageKey) {
@@ -921,7 +923,7 @@ export async function queueIncomingOrder(user: AuthSessionUser, orderId: string)
         },
       });
     } catch (error) {
-      console.error("No printer assigned for document", documentId, error);
+      console.error("Could not queue print job for document", documentId, error);
     }
   }
 }

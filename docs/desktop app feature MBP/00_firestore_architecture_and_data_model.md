@@ -107,9 +107,10 @@ Represents the print shop's business entity, operational hours, capabilities, an
     { "dayOfWeek": 3, "opensAt": "09:00", "closesAt": "21:00", "isClosed": false },
     { "dayOfWeek": 4, "opensAt": "09:00", "closesAt": "21:00", "isClosed": false },
     { "dayOfWeek": 5, "opensAt": "09:00", "closesAt": "21:00", "isClosed": false },
-    { "dayOfWeek": 6, "opensAt": "09:00", "closesAt": "21:00", "isClosed": false },
-    { "dayOfWeek": 0, "opensAt": "10:00", "closesAt": "18:00", "isClosed": false }
+    { "dayOfWeek": 6, "opensAt": "18:00", "closesAt": "02:00", "isClosed": false, "isOpen24Hours": false }, // closes 2:00 AM Sunday
+    { "dayOfWeek": 0, "opensAt": "00:00", "closesAt": "00:00", "isClosed": false, "isOpen24Hours": true }   // open 24 hours
   ],
+  // Times are 24-hour HH:mm in Asia/Kolkata and shown as 12-hour text. A missing isOpen24Hours reads as false.
   "stats": {
     "totalOrdersToday": 42,
     "grossRevenueTodayPaise": 185000,

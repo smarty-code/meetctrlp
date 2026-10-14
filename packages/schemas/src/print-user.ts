@@ -17,6 +17,18 @@ export const printUserPrintConfigurationSchema = z.object({
   }),
 });
 
+/** Saves print settings for every document in the guest cart in one request. */
+export const printUserBatchConfigurationSchema = z.object({
+  documents: z
+    .array(
+      printUserPrintConfigurationSchema.extend({
+        documentId: z.string().trim().min(1).max(128),
+      }),
+    )
+    .min(1)
+    .max(10),
+});
+
 export const printUserSubmitOrderRequestSchema = z.object({
   paymentMethod: z.enum(["CASH", "ONLINE"]),
   idempotencyKey: z.string().trim().min(8).max(128),
@@ -32,6 +44,9 @@ export type PrintUserUploadIntentRequestInput = z.infer<
 >;
 export type PrintUserPrintConfigurationInput = z.infer<
   typeof printUserPrintConfigurationSchema
+>;
+export type PrintUserBatchConfigurationInput = z.infer<
+  typeof printUserBatchConfigurationSchema
 >;
 export type PrintUserSubmitOrderRequestInput = z.infer<
   typeof printUserSubmitOrderRequestSchema

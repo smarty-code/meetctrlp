@@ -1,12 +1,22 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { businessHourProblem, closesNextDay, describeBusinessHour, formatTime12h } from "@ctrlp/schemas"
 import { Badge } from "@ctrlp/ui/badge"
 import { Button } from "@ctrlp/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ctrlp/ui/card"
 import { Input } from "@ctrlp/ui/input"
 import { Label } from "@ctrlp/ui/label"
+import { NativeSelect, NativeSelectOption } from "@ctrlp/ui/native-select"
 import { Switch } from "@ctrlp/ui/switch"
 
-import { defaultHours, paiseToRupeesInput, rupeesInputToPaise, weekdayLabels } from "../lib/dashboard"
+import {
+  editableHours,
+  paiseToRupeesInput,
+  rupeesInputToPaise,
+  setOpen24x7,
+  timeOptions,
+  weekdayLabels,
+  type EditableBusinessHour,
+} from "../lib/dashboard"
 import { appVersion, type AgentStatus, type OrderAutomation, type Printer, type ShopConfig, type ShopProfile, type ShopUser } from "../lib/protocol"
 
 export function SettingsScreen({
@@ -56,9 +66,7 @@ export function SettingsScreen({
     }
   }) => Promise<void>
   onSavePricing: (input: { bwA4PricePaise: number; colorA4PricePaise: number; colorA3PricePaise: number }) => Promise<void>
-  onSaveHours: (
-    hours: Array<{ dayOfWeek: number; opensAt: string; closesAt: string; isClosed: boolean }>,
-  ) => Promise<void>
+  onSaveHours: (hours: EditableBusinessHour[]) => Promise<void>
   onSaveCapabilities: (input: { colorPrinting: boolean; a3Printing: boolean }) => Promise<void>
   onUpdateAutomation: (automation: OrderAutomation) => void
   onExportLog: () => Promise<string | null>
@@ -76,7 +84,9 @@ export function SettingsScreen({
   const [bw, setBw] = useState(paiseToRupeesInput(config?.pricing.bwA4PricePaise ?? 0))
   const [colorA4, setColorA4] = useState(paiseToRupeesInput(config?.pricing.colorA4PricePaise ?? 0))
   const [colorA3, setColorA3] = useState(paiseToRupeesInput(config?.pricing.colorA3PricePaise ?? 0))
-  const [hours, setHours] = useState(config?.businessHours.length === 7 ? config.businessHours : defaultHours())
+  const [hours, setHours] = useState(() => editableHours(config?.businessHours))
+  const isOpen24x7 = hours.every((hour) => !hour.isClosed && hour.isOpen24Hours)
+  const hasHoursProblem = hours.some((hour) => businessHourProblem(hour) !== null)
   const [colorPrinting, setColorPrinting] = useState(config?.capabilities.colorPrinting ?? false)
   const [a3Printing, setA3Printing] = useState(config?.capabilities.a3Printing ?? false)
   const [exportMessage, setExportMessage] = useState<string | null>(null)
@@ -98,7 +108,7 @@ export function SettingsScreen({
     setBw(paiseToRupeesInput(config.pricing.bwA4PricePaise))
     setColorA4(paiseToRupeesInput(config.pricing.colorA4PricePaise))
     setColorA3(paiseToRupeesInput(config.pricing.colorA3PricePaise))
-    setHours(config.businessHours.length === 7 ? config.businessHours : defaultHours())
+    setHours(editableHours(config.businessHours))
     setColorPrinting(config.capabilities.colorPrinting)
     setA3Printing(config.capabilities.a3Printing)
   }, [config])
@@ -233,53 +243,82 @@ export function SettingsScreen({
         <CardHeader>
           <CardTitle>Hours</CardTitle>
           <CardDescription>
-            Open now: {config?.openNow ? "Yes" : "No"} (Asia/Kolkata). Empty hours keep the shop closed to customers.
+            {config?.openStatusLabel ?? (config?.openNow ? "Open now" : "Closed now")} · India time (Asia/Kolkata).
+            Customers see these hours, and uploads pause while you are closed.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          {hours.map((hour) => (
-            <div key={hour.dayOfWeek} className="grid items-center gap-3 rounded-[12px] border border-graphite px-3 py-3 md:grid-cols-[140px_1fr_1fr_auto]">
-              <p className="text-body font-bold">{weekdayLabels[hour.dayOfWeek]}</p>
-              <Input
-                className="rounded-[12px]"
-                value={hour.opensAt}
-                disabled={hour.isClosed}
-                onChange={(event) =>
-                  setHours((current) =>
-                    current.map((entry) =>
-                      entry.dayOfWeek === hour.dayOfWeek ? { ...entry, opensAt: event.target.value } : entry,
-                    ),
-                  )
-                }
-              />
-              <Input
-                className="rounded-[12px]"
-                value={hour.closesAt}
-                disabled={hour.isClosed}
-                onChange={(event) =>
-                  setHours((current) =>
-                    current.map((entry) =>
-                      entry.dayOfWeek === hour.dayOfWeek ? { ...entry, closesAt: event.target.value } : entry,
-                    ),
-                  )
-                }
-              />
-              <div className="flex items-center gap-2">
-                <Switch
-                  checked={!hour.isClosed}
-                  onCheckedChange={(open) =>
-                    setHours((current) =>
-                      current.map((entry) =>
-                        entry.dayOfWeek === hour.dayOfWeek ? { ...entry, isClosed: !open } : entry,
-                      ),
-                    )
-                  }
-                />
-                <span className="text-caption text-ash">{hour.isClosed ? "Closed" : "Open"}</span>
-              </div>
+          <div className="flex items-center justify-between gap-3 rounded-[12px] border border-graphite px-3 py-3">
+            <div>
+              <Label htmlFor="hours-open-24x7">Open 24 hours, every day</Label>
+              <p className="text-caption text-ash">Turn off to set opening and closing times for each day.</p>
             </div>
-          ))}
-          <Button className="rounded-[12px]" disabled={busy} onClick={() => void onSaveHours(hours)}>
+            <Switch
+              id="hours-open-24x7"
+              checked={isOpen24x7}
+              disabled={busy}
+              onCheckedChange={(enabled) => setHours((current) => setOpen24x7(current, enabled))}
+            />
+          </div>
+          {hours.map((hour) => {
+            const problem = businessHourProblem(hour)
+            const showTimes = !hour.isClosed && !hour.isOpen24Hours
+            const updateDay = (patch: Partial<EditableBusinessHour>) =>
+              setHours((current) =>
+                current.map((entry) => (entry.dayOfWeek === hour.dayOfWeek ? { ...entry, ...patch } : entry)),
+              )
+            return (
+              <div
+                key={hour.dayOfWeek}
+                className="grid items-center gap-3 rounded-[12px] border border-graphite px-3 py-3 md:grid-cols-[120px_auto_auto_1fr]"
+              >
+                <p className="text-body font-bold">{weekdayLabels[hour.dayOfWeek]}</p>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    aria-label={`${weekdayLabels[hour.dayOfWeek]} open`}
+                    checked={!hour.isClosed}
+                    onCheckedChange={(open) => updateDay({ isClosed: !open, isOpen24Hours: open && hour.isOpen24Hours })}
+                  />
+                  <span className="w-12 text-caption text-ash">{hour.isClosed ? "Closed" : "Open"}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    aria-label={`${weekdayLabels[hour.dayOfWeek]} open 24 hours`}
+                    checked={hour.isOpen24Hours}
+                    disabled={hour.isClosed}
+                    onCheckedChange={(enabled) => updateDay({ isOpen24Hours: enabled })}
+                  />
+                  <span className="text-caption text-ash">24 hours</span>
+                </div>
+                {showTimes ? (
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <TimeSelect
+                        label={`${weekdayLabels[hour.dayOfWeek]} opens at`}
+                        value={hour.opensAt}
+                        onChange={(opensAt) => updateDay({ opensAt })}
+                      />
+                      <span className="text-caption text-ash">to</span>
+                      <TimeSelect
+                        label={`${weekdayLabels[hour.dayOfWeek]} closes at`}
+                        value={hour.closesAt}
+                        invalid={problem !== null}
+                        onChange={(closesAt) => updateDay({ closesAt })}
+                      />
+                    </div>
+                    {problem ? (
+                      <p className="text-caption text-destructive">{problem}</p>
+                    ) : closesNextDay(hour) && hour.closesAt !== "00:00" ? (
+                      <p className="text-caption text-ash">Closes the next day at {formatTime12h(hour.closesAt)}.</p>
+                    ) : null}
+                  </div>
+                ) : (
+                  <p className="text-caption text-ash">{describeBusinessHour(hour)}</p>
+                )}
+              </div>
+            )
+          })}
+          <Button className="rounded-[12px]" disabled={busy || hasHoursProblem} onClick={() => void onSaveHours(hours)}>
             Save hours
           </Button>
         </CardContent>
@@ -414,6 +453,36 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       <span className="text-caption text-ash">{label}</span>
       {children}
     </label>
+  )
+}
+
+/** 12-hour time picker; the value stays canonical 24-hour "HH:mm". */
+function TimeSelect({
+  label,
+  value,
+  invalid = false,
+  onChange,
+}: {
+  label: string
+  value: string
+  invalid?: boolean
+  onChange: (value: string) => void
+}) {
+  const options = useMemo(() => timeOptions(value), [value])
+  return (
+    <NativeSelect
+      aria-label={label}
+      aria-invalid={invalid || undefined}
+      className="w-36 [&_select]:h-9 [&_select]:rounded-[12px]"
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    >
+      {options.map((option) => (
+        <NativeSelectOption key={option.value} value={option.value}>
+          {option.label}
+        </NativeSelectOption>
+      ))}
+    </NativeSelect>
   )
 }
 

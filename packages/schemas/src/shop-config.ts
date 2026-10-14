@@ -1,8 +1,21 @@
 import { z } from "zod";
 
+import { businessHourProblem, parseTimeInput } from "./business-hours";
+
 const paiseSchema = z.number().int().min(50).max(10_000);
 
-const timeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "use 24-hour HH:mm");
+/** Accepts 12-hour ("9:30 PM") or 24-hour ("21:30") input and stores canonical "HH:mm". */
+const timeSchema = z
+  .string()
+  .trim()
+  .transform((value, context) => {
+    const canonical = parseTimeInput(value);
+    if (!canonical) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "use a time like 9:30 AM" });
+      return z.NEVER;
+    }
+    return canonical;
+  });
 
 export const updateShopPricingRequestSchema = z.object({
   bwA4PricePaise: paiseSchema,
@@ -27,10 +40,17 @@ export const businessHourSchema = z
     opensAt: timeSchema,
     closesAt: timeSchema,
     isClosed: z.boolean(),
+    // Optional so older desktop builds that never send it keep saving hours.
+    isOpen24Hours: z.boolean().optional().default(false),
   })
-  .refine((hour) => hour.isClosed || hour.opensAt < hour.closesAt, {
-    message: "closing time must be after opening time",
-    path: ["closesAt"],
+  // A closed day is closed; it can't also be open around the clock.
+  .transform((hour) => ({ ...hour, isOpen24Hours: hour.isOpen24Hours && !hour.isClosed }))
+  // Closing before opening is allowed and means the shop closes after midnight.
+  .superRefine((hour, context) => {
+    const problem = businessHourProblem(hour);
+    if (problem) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: problem, path: ["closesAt"] });
+    }
   });
 
 export const updateShopHoursRequestSchema = z

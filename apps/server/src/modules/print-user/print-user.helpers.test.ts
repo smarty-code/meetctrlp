@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  SESSION_TTL_MS,
   billablePages,
   canMockConfirmPayment,
   canSubmitGuestDocuments,
   clientIpFromHeaders,
   guestStorageKey,
+  isAbandonedUpload,
   isEncryptedPdf,
   isPageSelectionValid,
   isSessionExpired,
@@ -16,6 +18,7 @@ import {
   officeFormatMessage,
   parsePageSelection,
   sessionCookieOptions,
+  shouldTouchSession,
 } from "./print-user.helpers.ts";
 
 describe("print-user helpers", () => {
@@ -89,5 +92,24 @@ describe("print-user helpers", () => {
     const bytes = Buffer.from("%PDF-1.4\n/Encrypt 3 0 R\n/Type /Page\n", "latin1");
     assert.equal(isEncryptedPdf(bytes), true);
     assert.equal(isEncryptedPdf(Buffer.from("%PDF-1.4\n/Type /Page\n", "latin1")), false);
+  });
+
+  it("frees cart slots held by failed or stale upload intents only", () => {
+    const now = new Date("2026-10-14T10:00:00Z");
+    const minutesAgo = (minutes: number) => new Date(now.getTime() - minutes * 60_000).toISOString();
+    assert.equal(isAbandonedUpload({ status: "FAILED", createdAt: minutesAgo(1) }, now), true);
+    assert.equal(isAbandonedUpload({ status: "UPLOADING", createdAt: minutesAgo(1) }, now), false);
+    assert.equal(isAbandonedUpload({ status: "UPLOADING", createdAt: minutesAgo(25) }, now), true);
+    assert.equal(isAbandonedUpload({ status: "UPLOADING", createdAt: null }, now), true);
+    assert.equal(isAbandonedUpload({ status: "READY", createdAt: minutesAgo(600) }, now), false);
+  });
+
+  it("re-extends a session at most once per interval", () => {
+    const now = new Date("2026-10-14T10:00:00Z");
+    const fresh = new Date(now.getTime() + SESSION_TTL_MS - 10_000).toISOString();
+    const stale = new Date(now.getTime() + SESSION_TTL_MS - 5 * 60_000).toISOString();
+    assert.equal(shouldTouchSession(fresh, now), false);
+    assert.equal(shouldTouchSession(stale, now), true);
+    assert.equal(shouldTouchSession(null, now), true);
   });
 });

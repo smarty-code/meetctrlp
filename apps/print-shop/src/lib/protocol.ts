@@ -257,9 +257,13 @@ export type ShopProfile = {
 
 export type ShopBusinessHour = {
   dayOfWeek: number
+  /** Canonical 24-hour "HH:mm"; shown to operators in 12-hour form. */
   opensAt: string
   closesAt: string
   isClosed: boolean
+  isOpen24Hours: boolean
+  /** Server-rendered 12-hour text, present on reads only. */
+  label?: string
 }
 
 export type ShopConfig = {
@@ -281,6 +285,10 @@ export type ShopConfig = {
   orderAutomation: OrderAutomation
   businessHours: ShopBusinessHour[]
   openNow: boolean
+  /** "Open until 9:00 PM", "Opens tomorrow at 9:00 AM", ... (absent from older servers). */
+  openStatusLabel?: string
+  todayHoursLabel?: string
+  isOpen24x7?: boolean
 }
 
 export type ShopNotification = {

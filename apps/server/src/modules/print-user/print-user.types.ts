@@ -21,6 +21,7 @@ export type GuestDocument = {
   storageKey: string;
   status: GuestDocumentStatus;
   config: GuestDocumentConfig;
+  createdAt: string | null;
 };
 
 export type PrintUserSession = {
@@ -73,7 +74,14 @@ export type PublicShopDto = {
     opensAt: string;
     closesAt: string;
     isClosed: boolean;
+    isOpen24Hours: boolean;
+    /** 12-hour display text for the day. */
+    label: string;
   }>;
+  /** Evaluated in shop time, e.g. "Open until 9:00 PM" or "Opens tomorrow at 9:00 AM". */
+  openStatusLabel: string;
+  todayHoursLabel: string;
+  isOpen24x7: boolean;
   acceptsCash: boolean;
   acceptsOnline: boolean;
 };

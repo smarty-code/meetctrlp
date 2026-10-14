@@ -16,13 +16,11 @@ export function paiseToRupees(paise: number) {
   return paise / 100
 }
 
-function todayHours(shop: PublicShop) {
-  const day = new Date().getDay()
-  return shop.businessHours.find((hour) => hour.dayOfWeek === day)
-}
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 
 export function mapPublicShopToContext(shop: PublicShop): ShopContext {
-  const hours = todayHours(shop)
+  // Hours text and open state come from the server, computed in the shop's timezone, so the
+  // customer sees exactly what the shop saved regardless of the phone's clock or locale.
   const services = [
     shop.capabilities.bwPrinting ? "Black & White A4" : null,
     shop.capabilities.colorPrinting ? "Color printing" : null,
@@ -36,11 +34,18 @@ export function mapPublicShopToContext(shop: PublicShop): ShopContext {
     slug: shop.slug,
     address: shop.address ?? "Pickup at the shop counter",
     status: shop.status,
-    statusMessage: shop.openNow ? "We're ready to print!" : "The shop is closed right now.",
+    statusMessage: shop.openNow
+      ? "We're ready to print!"
+      : shop.openStatusLabel && shop.openStatusLabel !== "Closed"
+        ? `The shop is closed right now. ${shop.openStatusLabel}.`
+        : "The shop is closed right now.",
     estimatedMinutes: shop.estimatedMinutes,
     startingPriceA4: shop.startingPriceA4,
-    openTime: hours && !hours.isClosed ? hours.opensAt : undefined,
-    closeTime: hours && !hours.isClosed ? hours.closesAt : undefined,
+    hoursToday: shop.todayHoursLabel,
+    openStatusLabel: shop.openStatusLabel,
+    weeklyHours: [...shop.businessHours]
+      .sort((left, right) => left.dayOfWeek - right.dayOfWeek)
+      .map((hour) => ({ day: WEEKDAYS[hour.dayOfWeek] ?? "", label: hour.label })),
     phone: shop.phone ?? undefined,
     mapUrl: shop.address
       ? `https://maps.google.com/?q=${encodeURIComponent(shop.address)}`

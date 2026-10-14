@@ -39,9 +39,7 @@ export function ShopSummaryCard({ shop }: ShopSummaryCardProps) {
                 aria-hidden="true"
               />
               <span className="font-semibold text-midnight">
-                {shop.openTime && shop.closeTime
-                  ? `${shop.openTime} – ${shop.closeTime}`
-                  : "Open Now"}
+                {shop.openStatusLabel || shop.hoursToday || "Open Now"}
               </span>
             </>
           ) : (

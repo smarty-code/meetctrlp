@@ -4,6 +4,7 @@ import {
   readObject,
 } from "@ctrlp/firebase";
 import type {
+  PrintUserBatchConfigurationInput,
   PrintUserPrintConfigurationInput,
   PrintUserSubmitOrderRequestInput,
   PrintUserUploadIntentRequestInput,
@@ -14,6 +15,7 @@ import { inspectDocument } from "@/src/modules/documents/inspect-document";
 import {
   confirmOnlinePayment,
   createPrintUserOrder,
+  findPrintUserOrderByIdempotencyKey,
   getShopOrderById,
 } from "@/src/modules/orders/order.service";
 import { queueIncomingOrder } from "@/src/modules/printing/print-job.service";
@@ -26,15 +28,16 @@ import {
   canMockConfirmPayment,
   canSubmitGuestDocuments,
   guestStorageKey,
+  isAbandonedUpload,
   isPageSelectionValid,
   normalizeMimeType,
   officeFormatMessage,
   pageSelectionValue,
 } from "@/src/modules/print-user/print-user.helpers";
 import {
+  checkoutPrintUserDocuments,
   getPrintUserSession,
   mutatePrintUserDocuments,
-  setPrintUserActiveOrder,
 } from "@/src/modules/print-user/print-user-session.service";
 import type { GuestDocument, PrintUserSession } from "@/src/modules/print-user/print-user.types";
 import { randomUUID } from "node:crypto";
@@ -58,6 +61,21 @@ function requireDocument(session: PrintUserSession, docId: string) {
   return document;
 }
 
+async function deleteStoredObjects(documents: GuestDocument[]) {
+  // Best effort: the cart entry is what holds a slot; a leftover object is only storage.
+  await Promise.allSettled(
+    documents.filter((document) => document.storageKey).map((document) => deleteObject(document.storageKey)),
+  );
+}
+
+async function removeGuestDocument(printUserId: string, document: GuestDocument) {
+  await deleteStoredObjects([document]);
+  await mutatePrintUserDocuments(printUserId, (documents) => ({
+    documents: documents.filter((entry) => entry.id !== document.id),
+    result: undefined,
+  }));
+}
+
 export async function createUploadIntent(session: PrintUserSession, input: PrintUserUploadIntentRequestInput) {
   const officeMessage = officeFormatMessage(input.originalFilename);
   if (officeMessage) {
@@ -72,6 +90,7 @@ export async function createUploadIntent(session: PrintUserSession, input: Print
     throw new AuthServiceError(400, "file exceeds the 50MB limit");
   }
 
+  const now = new Date();
   const docId = randomUUID();
   const storageKey = guestStorageKey(session.shopId, session.id, docId, mimeType);
   const document: GuestDocument = {
@@ -84,20 +103,26 @@ export async function createUploadIntent(session: PrintUserSession, input: Print
     storageKey,
     status: "UPLOADING",
     config: defaultConfig(1),
+    createdAt: now.toISOString(),
   };
 
-  await mutatePrintUserDocuments(session.id, (documents) => {
-    const active = documents.filter((entry) => entry.status !== "FAILED");
-    if (active.length >= MAX_GUEST_FILES) {
-      throw new AuthServiceError(400, "you can upload up to 10 documents per order");
+  const abandoned = await mutatePrintUserDocuments(session.id, (documents) => {
+    const live = documents.filter((entry) => !isAbandonedUpload(entry, now));
+    if (live.length >= MAX_GUEST_FILES) {
+      throw new AuthServiceError(400, `you can upload up to ${MAX_GUEST_FILES} documents per order`);
     }
-    return { documents: [...documents, document], result: undefined };
+    return {
+      documents: [...live, document],
+      result: documents.filter((entry) => isAbandonedUpload(entry, now)),
+    };
   });
+  await deleteStoredObjects(abandoned);
 
   let uploadUrl: string;
   try {
     uploadUrl = await createPresignedUploadUrl(storageKey, mimeType, PRESIGN_TTL_SECONDS);
   } catch (error) {
+    await removeGuestDocument(session.id, document).catch(() => undefined);
     const message = error instanceof Error ? error.message : "";
     if (message.includes("Missing required environment variable")) {
       throw new AuthServiceError(503, "document storage is not configured");
@@ -131,11 +156,18 @@ export async function completeGuestDocument(session: PrintUserSession, docId: st
     throw new AuthServiceError(400, "upload was not found. Retry the file upload.");
   }
 
-  if (bytes.length > MAX_FILE_BYTES) {
-    throw new AuthServiceError(400, "file exceeds the 50MB limit");
+  let inspected: ReturnType<typeof inspectDocument>;
+  try {
+    if (bytes.length > MAX_FILE_BYTES) {
+      throw new AuthServiceError(400, "file exceeds the 50MB limit");
+    }
+    inspected = inspectDocument(bytes, document.mimeType);
+  } catch (error) {
+    // An unreadable file can never become printable, so free its cart slot right away.
+    await removeGuestDocument(session.id, document).catch(() => undefined);
+    throw error;
   }
 
-  const inspected = inspectDocument(bytes, document.mimeType);
   const ready: GuestDocument = {
     ...document,
     fileSizeBytes: inspected.fileSizeBytes,
@@ -161,29 +193,18 @@ export async function completeGuestDocument(session: PrintUserSession, docId: st
 }
 
 export async function deleteGuestDocument(session: PrintUserSession, docId: string) {
-  const document = requireDocument(session, docId);
-  try {
-    await deleteObject(document.storageKey);
-  } catch {
-    // The guest cart should still drop the file if object storage already removed it.
-  }
-  await mutatePrintUserDocuments(session.id, (documents) => ({
-    documents: documents.filter((entry) => entry.id !== docId),
-    result: undefined,
-  }));
+  await removeGuestDocument(session.id, requireDocument(session, docId));
 }
 
-export async function updateGuestDocumentConfiguration(
-  session: PrintUserSession,
-  docId: string,
+function resolveDocumentConfiguration(
+  document: GuestDocument,
   input: PrintUserPrintConfigurationInput,
-) {
-  const document = requireDocument(session, docId);
+  config: Awaited<ReturnType<typeof getShopConfigByShopId>>,
+): GuestDocument["config"] {
   if (document.status !== "READY" || !document.pageCount) {
     throw new AuthServiceError(409, "document is still uploading");
   }
 
-  const config = await getShopConfigByShopId(session.shopId);
   if (input.colorMode === "COLOR" && !config.capabilities.colorPrinting) {
     throw new AuthServiceError(400, "this shop does not offer color printing");
   }
@@ -208,25 +229,51 @@ export async function updateGuestDocumentConfiguration(
     paperSize: input.paperSize,
   });
 
-  const updated: GuestDocument = {
-    ...document,
-    config: {
-      colorMode: input.colorMode,
-      copies: input.copies,
-      paperSize: input.paperSize,
-      pageSelection: pageSelectionValue(input.pageSelection.mode, input.pageSelection.expression, []),
-      billablePages: billed,
-      orientation: input.orientation ?? document.config.orientation,
-    },
+  return {
+    colorMode: input.colorMode,
+    copies: input.copies,
+    paperSize: input.paperSize,
+    pageSelection: pageSelectionValue(input.pageSelection.mode, input.pageSelection.expression, []),
+    billablePages: billed,
+    orientation: input.orientation ?? document.config.orientation,
   };
+}
+
+export async function updateGuestDocumentConfiguration(
+  session: PrintUserSession,
+  docId: string,
+  input: PrintUserPrintConfigurationInput,
+) {
+  const [updated] = await updateGuestDocumentConfigurations(session, [{ ...input, documentId: docId }]);
+  return updated;
+}
+
+/** Validates and saves settings for several cart documents in a single transaction. */
+export async function updateGuestDocumentConfigurations(
+  session: PrintUserSession,
+  inputs: PrintUserBatchConfigurationInput["documents"],
+) {
+  const config = await getShopConfigByShopId(session.shopId);
+  const configs = new Map(
+    inputs.map((input) => [
+      input.documentId,
+      resolveDocumentConfiguration(requireDocument(session, input.documentId), input, config),
+    ]),
+  );
 
   return mutatePrintUserDocuments(session.id, (documents) => {
-    if (!documents.some((entry) => entry.id === docId)) {
-      throw new AuthServiceError(404, "DOCUMENT_NOT_FOUND");
+    for (const docId of configs.keys()) {
+      if (!documents.some((entry) => entry.id === docId)) {
+        throw new AuthServiceError(404, "DOCUMENT_NOT_FOUND");
+      }
     }
+    const next = documents.map((entry) => {
+      const updatedConfig = configs.get(entry.id);
+      return updatedConfig ? { ...entry, config: updatedConfig } : entry;
+    });
     return {
-      documents: documents.map((entry) => (entry.id === docId ? updated : entry)),
-      result: updated,
+      documents: next,
+      result: next.filter((entry) => configs.has(entry.id)),
     };
   });
 }
@@ -264,7 +311,42 @@ export async function quoteGuestSession(session: PrintUserSession) {
   };
 }
 
+function quoteFromOrder(order: Awaited<ReturnType<typeof createPrintUserOrder>>) {
+  const items = order.documents.map((document) => {
+    const billed = document.config?.billablePages || document.pageCount || 1;
+    return {
+      documentId: document.id,
+      documentName: document.originalFilename,
+      billablePages: billed,
+      copies: document.copies,
+      colorMode: document.colorMode,
+      paperSize: document.paperSize,
+      unitPricePaise: document.unitPricePaise,
+      totalPaise: document.totalPaise,
+    };
+  });
+  return {
+    currency: "INR" as const,
+    items,
+    totalPaise: order.amounts.totalMinorUnits,
+    totalSelectedPages: items.reduce((sum, item) => sum + item.billablePages * item.copies, 0),
+    totalCopies: items.reduce((sum, item) => sum + item.copies, 0),
+  };
+}
+
 export async function submitGuestOrder(session: PrintUserSession, input: PrintUserSubmitOrderRequestInput) {
+  // A retried submit must return the original order even though checkout emptied the cart.
+  const placed = await findPrintUserOrderByIdempotencyKey(session.shopId, session.id, input.idempotencyKey);
+  if (placed) {
+    // Also covers a first attempt that created the order but failed before clearing the cart.
+    await checkoutPrintUserDocuments(
+      session.id,
+      placed.id,
+      placed.documents.map((document) => document.id),
+    );
+    return { priceChanged: false as const, quote: quoteFromOrder(placed), order: placed };
+  }
+
   const ready = session.documents.filter((document) => document.status === "READY" && document.pageCount);
   const submitCheck = canSubmitGuestDocuments(ready);
   if (!submitCheck.ok) {
@@ -304,7 +386,16 @@ export async function submitGuestOrder(session: PrintUserSession, input: PrintUs
     })),
   });
 
-  await setPrintUserActiveOrder(session.id, order.id);
+  if (order.printUserId !== session.id) {
+    // createPrintUserOrder replays by key alone; never hand back another guest's order.
+    throw new AuthServiceError(409, "IDEMPOTENCY_KEY_REUSED");
+  }
+
+  await checkoutPrintUserDocuments(
+    session.id,
+    order.id,
+    ready.map((document) => document.id),
+  );
   return { priceChanged: false as const, quote, order };
 }
 

@@ -396,6 +396,23 @@ export async function getShopOrderById(shopId: string, orderId: string) {
   return toOrderDto(snapshot, await readHistory(shopId, orderId));
 }
 
+/** Returns the order a guest already placed with this idempotency key, if any. */
+export async function findPrintUserOrderByIdempotencyKey(
+  shopId: string,
+  printUserId: string,
+  idempotencyKey: string,
+) {
+  const keySnap = await getFirebaseFirestore()
+    .doc(`shops/${shopId}/idempotencyKeys/${idempotencyKey}`)
+    .get();
+  const orderId = keySnap.get("orderId");
+  if (!keySnap.exists || keySnap.get("action") !== "print-user-submit" || typeof orderId !== "string") {
+    return null;
+  }
+  const order = await getShopOrderById(shopId, orderId);
+  return order.printUserId === printUserId ? order : null;
+}
+
 export type PrintUserCheckoutDocument = {
   id: string;
   originalFilename: string;

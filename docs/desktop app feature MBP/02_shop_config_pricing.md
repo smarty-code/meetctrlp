@@ -29,7 +29,7 @@ All financial rates, unit configurations, and capability flags are stored exclus
 | **B&W Capability Flag** | Hardware / Operator | Auto-detected / Toggle | JSON `{ bw_printing: true }` | **Cloud Firestore** | `shops/{shopId}.capabilities.bwPrinting` (`boolean`) |
 | **Color Capability Flag**| Hardware / Operator | Auto-detected / Toggle | JSON `{ color_printing: true }` | **Cloud Firestore** | `shops/{shopId}.capabilities.colorPrinting` (`boolean`) |
 | **A3 Capability Flag** | Hardware / Operator | Auto-detected / Toggle | JSON `{ a3_printing: false }` | **Cloud Firestore** | `shops/{shopId}.capabilities.a3Printing` (`boolean`) |
-| **Day of Week Schedule**| Operator / Admin | Settings Dropdown | JSON `{ day_of_week, opens_at, closes_at }` | **Cloud Firestore** | `shops/{shopId}.businessHours` (array of `{ dayOfWeek: 0–6, opensAt: string, closesAt: string }`) |
+| **Day of Week Schedule**| Operator / Admin | Settings: Open and 24-hours switches, 12-hour time dropdowns | JSON `{ dayOfWeek, opensAt, closesAt, isClosed, isOpen24Hours }` | **Cloud Firestore** | `shops/{shopId}.businessHours` (array of `{ dayOfWeek: 0–6, opensAt: "HH:mm", closesAt: "HH:mm", isClosed: boolean, isOpen24Hours: boolean }`, 24-hour times in Asia/Kolkata) |
 | **Local Pricing Cache** | Server Fetch | `GET /api/v1/shops/{id}/pricing` | In-Memory C# Object | Client RAM | `ShopPricingService._activeRates` dictionary |
 
 ---
@@ -137,8 +137,10 @@ const db = getFirebaseFirestore();
 //   },
 //   businessHours: Array<{
 //     dayOfWeek: number,           // 0 = Sunday … 6 = Saturday
-//     opensAt: string,             // "09:00"
-//     closesAt: string,            // "21:00"
+//     opensAt: string,             // "09:00" (24-hour, shown as 9:00 AM)
+//     closesAt: string,            // "21:00"; earlier than opensAt = closes after midnight
+//     isClosed: boolean,
+//     isOpen24Hours: boolean,      // open all day; times kept but ignored
 //   }>,
 // }
 // ------------------------------------------------------------
@@ -314,3 +316,40 @@ Restart the server so it loads this phase. Sign in on the desktop app, then open
 | 9 | Quote color A4 while color printing is off | Returns 400 `this shop does not offer color printing`. |
 | 10 | Save a new B&W rate of ₹3.00 and quote 10 pages again | The new quote is 3000 paise. The previous quote response is unchanged. |
 | 11 | Return to Printers | The printer list and capability groups are still there. |
+
+### Follow-up: 12-hour hours, late closing, and 24-hour days (14 Oct 2026)
+
+#### Built
+
+- **Hours editor:** each day in Settings → Hours has an **Open** switch, a **24 hours** switch, and two time dropdowns in 15-minute steps with 12-hour labels such as **9:30 PM**. Free-text time boxes are gone.
+- **24/7 shortcut:** an **Open 24 hours, every day** switch turns every day on as 24 hours. Turning it off leaves every day open with its previous opening and closing times.
+- **Late closing:** a closing time earlier than the opening time is allowed and means the shop closes after midnight. The row says **Closes the next day at 2:00 AM**.
+- **Equal times:** a day with the same opening and closing time shows an error, and **Save hours** stays disabled.
+- **Status line:** the Hours card shows the server's status text, for example **Open until 9:00 PM** or **Opens tomorrow at 9:00 AM**.
+- **Server output:** `GET /api/v1/shops/{shopId}/pricing` and the public shop response include a 12-hour `label` per day, plus `openStatusLabel`, `todayHoursLabel`, and `isOpen24x7`.
+- **Customer web app:** shows today's hours, the status text, and the full week in the shop info drawer, exactly as the shop saved them.
+
+#### Decisions
+
+- **Storage:** times are still stored as 24-hour `HH:mm`, which is unambiguous and sorts correctly. Only the screens use 12-hour form. The API accepts both `"9:30 PM"` and `"21:30"`.
+- **Shared rules:** the open/closed rules live in `packages/schemas/src/business-hours.ts`, used by both the server and the desktop app. The customer web app only shows the server's text.
+- **Past midnight:** after midnight, the previous day's late hours decide whether the shop is open. A day closing exactly at 12:00 AM shows no "(next day)".
+- **Older clients:** `isOpen24Hours` is optional in the request, so older desktop builds keep saving. Hours saved before this change read as regular hours.
+- **Closed means closed:** a closed day never keeps the 24-hour flag.
+- **No server enforcement:** the server still does not reject customer orders outside opening hours. The web app only disables uploading while the shop is closed.
+
+#### Test cases
+
+Restart the server and the desktop app, then open **Shop settings**.
+
+| # | Do this | It passes when |
+| --- | --- | --- |
+| 1 | Open the Hours card | Each day shows Open and 24 hours switches. Open days show two dropdowns with times such as **9:00 AM** and **9:00 PM**. |
+| 2 | Set Monday to 6:00 PM – 2:00 AM and save | The row reads **Closes the next day at 2:00 AM**. Firestore stores `opensAt` `18:00` and `closesAt` `02:00`. |
+| 3 | On Tuesday at 1:00 AM India time, open the customer shop page | The shop shows as open with **Open until 2:00 AM**. |
+| 4 | Set the same opening and closing time on a day | The row shows the error and **Save hours** is disabled. |
+| 5 | Turn on **Open 24 hours, every day** and save | Every day has `isOpen24Hours` true. The customer drawer shows **Open 24 hours** for each day and the status reads **Open 24 hours**. |
+| 6 | Turn the 24/7 switch off | Every day is open with its previous opening and closing times. Days that should be closed must be switched off again. |
+| 7 | Mark a day closed while its 24 hours switch is on, then save | Firestore stores `isClosed` true and `isOpen24Hours` false. |
+| 8 | `PUT /api/v1/shops/{shopId}/hours` with `"opensAt": "9:30 AM"` | Saved as `09:30`. |
+| 9 | Send hours without `isOpen24Hours`, as an older desktop build does | The save succeeds and every day has `isOpen24Hours` false. |

@@ -1,24 +1,24 @@
 import { FieldValue, getFirebaseFirestore } from "@ctrlp/firebase/firestore";
-import type {
-  PriceQuoteRequestInput,
-  UpdateOrderAutomationRequestInput,
-  UpdateShopCapabilitiesRequestInput,
-  UpdateShopHoursRequestInput,
-  UpdateShopPricingRequestInput,
+import {
+  describeBusinessHour,
+  parseTimeInput,
+  summarizeBusinessHours,
+  type BusinessHourRule,
+  type PriceQuoteRequestInput,
+  type UpdateOrderAutomationRequestInput,
+  type UpdateShopCapabilitiesRequestInput,
+  type UpdateShopHoursRequestInput,
+  type UpdateShopPricingRequestInput,
 } from "@ctrlp/schemas";
 import type { AuthSessionUser } from "@ctrlp/types";
 
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
 
 const SERVICE = "DOCUMENT_PRINT";
-const TIME_ZONE = "Asia/Kolkata";
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
-export type BusinessHour = {
-  dayOfWeek: number;
-  opensAt: string;
-  closesAt: string;
-  isClosed: boolean;
+export type BusinessHour = BusinessHourRule & {
+  /** 12-hour display text, e.g. "9:00 AM – 9:00 PM" or "Open 24 hours". */
+  label: string;
 };
 
 export type ShopPricing = {
@@ -50,6 +50,10 @@ export type ShopConfig = {
   orderAutomation: OrderAutomation;
   businessHours: BusinessHour[];
   openNow: boolean;
+  /** "Open until 9:00 PM", "Opens tomorrow at 9:00 AM", ... evaluated in shop time. */
+  openStatusLabel: string;
+  todayHoursLabel: string;
+  isOpen24x7: boolean;
 };
 
 function shopRef(shopId: string) {
@@ -87,22 +91,21 @@ function parseHours(value: unknown): BusinessHour[] {
     }
 
     const hour = entry as Record<string, unknown>;
-    if (
-      typeof hour.dayOfWeek !== "number" ||
-      typeof hour.opensAt !== "string" ||
-      typeof hour.closesAt !== "string"
-    ) {
+    const opensAt = typeof hour.opensAt === "string" ? parseTimeInput(hour.opensAt) : null;
+    const closesAt = typeof hour.closesAt === "string" ? parseTimeInput(hour.closesAt) : null;
+    if (typeof hour.dayOfWeek !== "number" || !opensAt || !closesAt) {
       return [];
     }
 
-    return [
-      {
-        dayOfWeek: hour.dayOfWeek,
-        opensAt: hour.opensAt,
-        closesAt: hour.closesAt,
-        isClosed: hour.isClosed === true,
-      },
-    ];
+    const rule: BusinessHourRule = {
+      dayOfWeek: hour.dayOfWeek,
+      opensAt,
+      closesAt,
+      isClosed: hour.isClosed === true,
+      // Shops saved before this flag existed read as regular hours.
+      isOpen24Hours: hour.isOpen24Hours === true && hour.isClosed !== true,
+    };
+    return [{ ...rule, label: describeBusinessHour(rule) }];
   });
 }
 
@@ -143,39 +146,8 @@ function readConfig(data: Record<string, unknown>): ShopConfig {
       cashRequiresOperatorAcceptance: automation.cashRequiresOperatorAcceptance !== false,
     },
     businessHours,
-    openNow: isShopOpen(businessHours, new Date()),
+    ...summarizeBusinessHours(businessHours, new Date()),
   };
-}
-
-function toMinutes(value: string) {
-  const [hours, minutes] = value.split(":");
-  return Number(hours) * 60 + Number(minutes);
-}
-
-export function isShopOpen(hours: BusinessHour[], instant: Date) {
-  if (hours.length === 0) {
-    return false;
-  }
-
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: TIME_ZONE,
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(instant);
-  const weekday = parts.find((part) => part.type === "weekday")?.value ?? "";
-  const hour = parts.find((part) => part.type === "hour")?.value ?? "00";
-  const minute = parts.find((part) => part.type === "minute")?.value ?? "00";
-  const dayOfWeek = WEEKDAYS.indexOf(weekday as (typeof WEEKDAYS)[number]);
-  const day = hours.find((entry) => entry.dayOfWeek === dayOfWeek);
-
-  if (!day || day.isClosed || dayOfWeek < 0) {
-    return false;
-  }
-
-  const now = toMinutes(`${hour}:${minute}`);
-  return now >= toMinutes(day.opensAt) && now < toMinutes(day.closesAt);
 }
 
 async function requireShopData(shopId: string) {

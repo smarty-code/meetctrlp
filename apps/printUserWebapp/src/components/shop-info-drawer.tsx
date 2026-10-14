@@ -107,16 +107,31 @@ export function ShopInfoDrawer({ isOpen, onClose, shop }: ShopInfoDrawerProps) {
               </div>
             </div>
 
-            {/* Shop Opening Time */}
-            {shop.openTime && shop.closeTime && (
-              <div className="flex items-center gap-2 border-t border-graphite/10 pt-3 text-caption text-charcoal">
-                <Clock className="size-4 shrink-0 text-ash" />
-                <span>
-                  Opening Hours:{" "}
-                  <strong className="font-bold text-midnight">
-                    {shop.openTime} – {shop.closeTime}
-                  </strong>
-                </span>
+            {/* Shop Opening Time, synced from the hours the shop saved */}
+            {shop.hoursToday && (
+              <div className="space-y-2 border-t border-graphite/10 pt-3 text-caption text-charcoal">
+                <div className="flex items-start gap-2">
+                  <Clock className="mt-0.5 size-4 shrink-0 text-ash" />
+                  <div className="min-w-0 flex-1">
+                    <span>
+                      Today:{" "}
+                      <strong className="font-bold text-midnight">{shop.hoursToday}</strong>
+                    </span>
+                    {shop.openStatusLabel && (
+                      <p className="font-medium text-ash">{shop.openStatusLabel}</p>
+                    )}
+                  </div>
+                </div>
+                {shop.weeklyHours && shop.weeklyHours.length > 0 && (
+                  <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 pl-6">
+                    {shop.weeklyHours.map((entry) => (
+                      <React.Fragment key={entry.day}>
+                        <dt className="font-medium text-ash">{entry.day}</dt>
+                        <dd className="text-right font-bold text-midnight">{entry.label}</dd>
+                      </React.Fragment>
+                    ))}
+                  </dl>
+                )}
               </div>
             )}
           </div>

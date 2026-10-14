@@ -3,6 +3,10 @@ export const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 export const MAX_GUEST_FILES = 10;
 export const MAX_FILE_BYTES = 50 * 1024 * 1024;
 export const PRESIGN_TTL_SECONDS = 900;
+/** An upload intent that never completed within this window is treated as abandoned. */
+export const ABANDONED_UPLOAD_MS = (PRESIGN_TTL_SECONDS + 300) * 1000;
+/** Skip re-extending a guest session that was extended within this window. */
+export const SESSION_TOUCH_INTERVAL_MS = 60 * 1000;
 
 export const SUPPORTED_MIME_TYPES = [
   "application/pdf",
@@ -163,6 +167,33 @@ export function isSessionExpired(expiresAt: Date | string | null | undefined, no
   }
   const expiry = expiresAt instanceof Date ? expiresAt : new Date(expiresAt);
   return Number.isNaN(expiry.getTime()) || expiry.getTime() <= now.getTime();
+}
+
+export function shouldTouchSession(expiresAt: string | null | undefined, now = new Date()) {
+  if (!expiresAt) {
+    return true;
+  }
+  const expiry = new Date(expiresAt).getTime();
+  if (Number.isNaN(expiry)) {
+    return true;
+  }
+  return expiry - now.getTime() < SESSION_TTL_MS - SESSION_TOUCH_INTERVAL_MS;
+}
+
+/** Upload intents that failed, or never completed, and should no longer hold a cart slot. */
+export function isAbandonedUpload(
+  document: { status: string; createdAt: string | null },
+  now = new Date(),
+) {
+  if (document.status === "FAILED") {
+    return true;
+  }
+  if (document.status !== "UPLOADING") {
+    return false;
+  }
+  // Intents written before createdAt was recorded can never be aged out otherwise.
+  const createdAt = document.createdAt ? new Date(document.createdAt).getTime() : Number.NaN;
+  return Number.isNaN(createdAt) || now.getTime() - createdAt > ABANDONED_UPLOAD_MS;
 }
 
 export function sessionCookieOptions(isProduction: boolean) {

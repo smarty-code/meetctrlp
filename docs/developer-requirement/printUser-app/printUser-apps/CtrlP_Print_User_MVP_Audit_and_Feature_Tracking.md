@@ -85,6 +85,27 @@ The Print User Web App is engineered with a strict 5-layer architecture to ensur
    - Combined the order received state (Screen 06 prompt) and ongoing tracking states into the unified `/order-status` route.
    - Added a bottom developer testing bar (`TrackingSimulatorBar`) allowing instant manual transition through all 8 lifecycle states (Order Placed, Shop Accepted, Printing, Ready for Pickup, Completed, Rejected, Cancelled, Failed).
 
+5. **Multi-file upload and cart sync (14 Oct 2026):**
+   - **Discrepancy:** choosing several files usually left only one in the order. Causes:
+     - Files from earlier orders stayed in the guest cart and used up the 10-file limit.
+     - Unfinished uploads kept their slots.
+     - Compressed PDFs were rejected as having no pages.
+     - Customize sometimes showed an old saved list.
+     - Review-page deletes and copy changes never reached the server.
+   - **Resolution:**
+     - The server cart (`GET /api/v1/public/session`) is now the single source of truth on the upload, customize, and review pages.
+     - Placing an order clears its documents from the cart, and failed or abandoned uploads are cleaned up.
+     - Uploads go through one helper (`src/lib/guest-upload.ts`): 3 at a time, one retry, and gallery photos (HEIC/WebP/…) converted to JPEG.
+     - Continue waits for uploads to finish, and review edits are saved before payment.
+     - Details: [`apps/server/docs/print-user.md`](../../../../apps/server/docs/print-user.md) and [`apps/printUserWebapp/README.md`](../../../../apps/printUserWebapp/README.md).
+
+6. **Shop hours in 12-hour form (14 Oct 2026):**
+   - **Discrepancy:** hours showed as raw 24-hour text (`09:00 – 21:00`), and "today" came from the phone's clock.
+   - **Resolution:**
+     - The server sends ready-made text computed in shop time: today's hours, a status such as **Open until 9:00 PM**, and a 12-hour label per day.
+     - The shop info drawer shows today, the status, and the full week. The home pill and review card use the same text.
+     - Late-night hours and 24-hour days display correctly.
+
 ---
 
 ## 4. Feature Tracking Checklist
@@ -92,9 +113,10 @@ The Print User Web App is engineered with a strict 5-layer architecture to ensur
 ### Screen 01: Upload Documents (`/`)
 - [x] Scan QR / Shop resolution (defaults to `mockShop`, supports URL parameters).
 - [x] Multi-file selection via native mobile file picker and drag-and-drop.
-- [x] Client-side MIME validation (.pdf, .jpg, .jpeg, .png, .doc, .docx, .ppt, .pptx).
-- [x] File size validation (max 50MB per file with error badge).
-- [x] Realistic upload progress simulation with individual file retry and remove.
+- [x] Client-side type validation (PDF, JPEG, PNG by MIME type, extension, or file signature). Word and PowerPoint show "not supported yet"; other gallery images are converted to JPEG when the browser can decode them.
+- [x] File size validation (max 50MB per file with error badge) and the 10-documents-per-order limit before uploading.
+- [x] Real uploads to storage with per-file progress, 3 at a time, one automatic retry, and individual file retry and remove.
+- [x] Files already in the server cart are listed after a reload or when coming back from Customize.
 - [x] Persistent IndexedDB file caching via `file-store.ts`.
 - [x] "Shop Info" trigger opening secondary Screen 06 modal.
 - [x] Floating bottom bar triggering transition to Screen 02.
@@ -109,13 +131,14 @@ The Print User Web App is engineered with a strict 5-layer architecture to ensur
 - [x] Expression validation against total document page count.
 - [x] "Apply this setting to all files" action with toast notification.
 - [x] Live price and page count calculation in sticky summary bar.
-- [x] Add more files action without leaving the customize screen.
+- [x] Add more files action without leaving the customize screen (parallel uploads; Continue waits until they finish).
+- [x] Settings for every document saved in one request on Continue.
 
 ### Screen 03: Review Order (`/review`)
 - [x] Compact shop summary card with location and order context.
 - [x] Itemized document cards showing preview thumbnail, file name, copies, pages, color, and line price.
-- [x] Quick stepper to update copies with instant subtotal and total recalculation.
-- [x] Document removal with automatic total recalculation.
+- [x] Quick stepper to update copies, saved to the server and re-quoted.
+- [x] Document removal, deleted from the server cart and re-quoted.
 - [x] Click-to-edit returning to Screen 02 with `selectedId` focused.
 - [x] Authoritative price refresh simulation (detects price changes and shows alert banner).
 - [x] Empty state handling when all documents are removed.
@@ -151,6 +174,7 @@ The Print User Web App is engineered with a strict 5-layer architecture to ensur
 ### Screen 06: Shop Information Drawer
 - [x] Triggered from Screen 01 without interrupting the flow.
 - [x] Displays shop name, full address, operating hours, turnaround time, supported printing options, and formats.
+- [x] Hours in 12-hour form as the shop saved them: today's hours, live status (e.g. "Opens tomorrow at 9:00 AM"), and the full week, including "Open 24 hours" and late-night days.
 - [x] Keyboard accessibility (ESC to close) and backdrop tap to dismiss.
 
 ---

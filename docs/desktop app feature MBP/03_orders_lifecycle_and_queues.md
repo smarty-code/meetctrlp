@@ -329,3 +329,32 @@ Restart the server. Close and reopen the desktop app. Save a B&W A4 rate of at l
 | 8 | Receive a third order. `POST /api/v1/shops/{shopId}/orders/{orderId}/cancel` with `{ "idempotencyKey": "cancel-test-0001", "currentStatus": "SUBMITTED" }`, then click Accept | Accept shows **Order was cancelled by customer before acceptance.** The order is not accepted. |
 | 9 | Change the B&W rate, then receive another test order | The new order uses the new rate. The earlier order totals stay the same. |
 | 10 | Call accept again on an order that is already accepted, with a new idempotency key | Returns 409 `ORDER_STATUS_CONFLICT`. |
+
+### Follow-up: orders with several documents (14 Oct 2026)
+
+An order has one print job per document, stored under `shops/{shopId}/orders/{orderId}/printJobs/{jobId}`. The order moves to `READY` once every document has a `COMPLETED` job. Before this fix, usually only the first document of a multi-document order printed.
+
+#### Fixed
+
+- **Dispatch during printing:** the first job the agent claims moves the order to `PRINTING`. Dispatch used to require `SHOP_ACCEPTED`, so every later document failed with 409 `ORDER_NOT_ACCEPTED`. Auto-dispatch logged that error and skipped the document. Dispatch now works while the order is `SHOP_ACCEPTED` or `PRINTING`.
+- **Start printing button:** Order details shows **Start printing** for every document without a job while the order is `SHOP_ACCEPTED` or `PRINTING`. It used to disappear once the order became `PRINTING`.
+- **Out-of-order reports:** a job may go from `DISPATCHING` straight to `COMPLETED`. The agent sends status reports without waiting, so a fast job's `COMPLETED` can arrive before its `PRINTING`.
+- **Clearing the cart:** placing a customer order now removes its documents from the guest cart. Earlier documents used to stay in the cart, filled the 10-document limit, and were sent again with the next order.
+
+Agent-side fixes are in [`Order_to_Print_Execution_Runbook.md`](../developer-requirement/desktop-app/Order_to_Print_Execution_Runbook.md). The customer upload rules are in [`apps/server/docs/print-user.md`](../../apps/server/docs/print-user.md).
+
+#### Known gaps
+
+- **Ready too early:** **Mark ready for pickup** checks only the jobs that exist. If a document never got a job, the operator can still mark the order ready. The server's `ready` transition only checks that the order is `PRINTING`.
+- **Reassign:** reassigning a failed job changes `printerId` only. `agentId`, `printerName`, and `printerSystemName` stay the same, so the job still prints on the original printer.
+
+#### Test cases
+
+Use one enabled online printer with auto-dispatch on.
+
+| # | Do this | It passes when |
+| --- | --- | --- |
+| 1 | Place a customer order with 5 documents and accept it | 5 jobs appear, one per document, and all 5 print. The order reaches `READY` without operator action. |
+| 2 | Turn auto-dispatch off, accept a 3-document order, and click **Start printing** on the first document | After the order becomes `PRINTING`, the other two documents still show **Start printing**, and both dispatch. |
+| 3 | Place a second order from the same customer session | The new order contains only the newly uploaded documents. |
+| 4 | Print a one-page image order | The job ends `COMPLETED`, not stuck at `PRINTING`. |

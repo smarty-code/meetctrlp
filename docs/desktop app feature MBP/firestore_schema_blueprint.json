@@ -56,9 +56,10 @@
               "type": "object",
               "properties": {
                 "dayOfWeek": { "type": "integer", "minimum": 0, "maximum": 6 },
-                "opensAt": { "type": "string" },
-                "closesAt": { "type": "string" },
-                "isClosed": { "type": "boolean" }
+                "opensAt": { "type": "string", "description": "24-hour HH:mm, Asia/Kolkata; shown in 12-hour form" },
+                "closesAt": { "type": "string", "description": "24-hour HH:mm; earlier than opensAt means the shop closes after midnight" },
+                "isClosed": { "type": "boolean" },
+                "isOpen24Hours": { "type": "boolean", "description": "Open all day; opensAt/closesAt are kept but ignored" }
               }
             }
           },

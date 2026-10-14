@@ -335,7 +335,7 @@ Phase 04, 27 Sep 2026.
 - PDF rendering uses the PDFium wrapper Docnet.Core. The desktop still has no Firebase SDK.
 - `shreddedAt` is written as a normal timestamp. Firestore does not allow a server timestamp inside an array element.
 - A corrupt or non-PDF upload is rejected. A hash or page-count mismatch blocks preview.
-- Page count on the server is read from the PDF page dictionary. The desktop counts pages again with PDFium and stops if the two counts differ.
+- Page count on the server comes from the Pages tree that the Catalog points to, including pages stored in compressed object streams (see the follow-up below). The desktop counts pages again with PDFium and stops if the two counts differ.
 - The single-page text print path from the previous test is unchanged. PDF preview and shredding apply to orders created with the documents upload.
 
 ### Test cases
@@ -352,3 +352,25 @@ Restart the server and the desktop app. Save a page rate first. Use two small PD
 | 6 | Open the download URL with no signature | The response is 401. |
 | 7 | Accept the order and start printing so it becomes ready | The cache file under `%LOCALAPPDATA%\MeetCtrlP\Cache\Orders\{orderId}\` is gone. The document `shreddedAt` is set. `accessLogs` has `SHREDDED`. Preview is no longer offered. |
 | 8 | Upload two PDFs with different page counts | The order details list both filenames, sizes, and page counts. Preview of each checks its own page count. |
+
+### Follow-up: page count for compressed PDFs (14 Oct 2026)
+
+#### Fixed
+
+- **The bug:** the server counted pages by searching the raw bytes for `/Type /Page`. PDF 1.5+ writers often store page objects inside compressed (FlateDecode) object streams, where that search finds nothing. Those PDFs got a page count of 0 and were rejected with **PDF has no pages or is corrupted**. Acrobat, Word, pdf-lib, qpdf, and many phone scanner apps write files this way.
+- **The fix:** `countPdfPages` (`apps/server/src/modules/documents/pdf-page-count.ts`) unpacks object streams with Node's `zlib` and reads `/Count` from the Pages tree that the Catalog points to.
+  - When an object is defined more than once, the later definition wins, so incrementally edited PDFs count correctly.
+  - If there is no Catalog, it falls back to counting page objects.
+- **Where it applies:** both the shop document upload (`POST /api/v1/shops/{shopId}/orders/documents`) and the customer upload (`POST /api/v1/public/session/documents/{docId}/complete`) use it through `inspectDocument`.
+
+#### Decisions
+
+- **No new dependency:** no PDF library was added. Only uncompressed and FlateDecode object streams are read, which is what PDF writers produce in practice.
+- **Desktop cross-check:** the desktop still recounts pages with PDFium before preview, so a wrong server count is caught there.
+
+#### Test cases
+
+| # | Do this | It passes when |
+| --- | --- | --- |
+| 1 | `pnpm --filter server test` | The `countPdfPages` tests pass: an uncompressed PDF, PDFs whose pages are in an object stream, an incrementally updated PDF, and a PDF with no pages. |
+| 2 | Upload a PDF saved from Acrobat or a scanner app | It is accepted, and the page count matches the PDF viewer. |

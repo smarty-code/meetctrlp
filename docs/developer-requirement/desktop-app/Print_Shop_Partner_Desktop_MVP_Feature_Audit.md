@@ -19,6 +19,8 @@ All **6 primary screens** and all **46 functional requirements (FR-01 through FR
 
 - **45 Functional Requirements:** Fully **Done** and operating end-to-end.
 - **1 Functional Requirement (FR-21 Print Progress):** **Partial by design** (tracks all lifecycle transitions and spooler job IDs; per-page physical driver polling is driver-dependent and omitted to prevent Windows driver hangs).
+> **Addendum, 14 Oct 2026:** a review of multi-document orders found that usually only the first document of an order printed. Several issues in the server, the desktop app, and the agent caused this, and they are fixed. The same review reclassified **FR-26** and **FR-28** as **Partial**, so the count is now **43 Done, 3 Partial**. See [§7 Post-audit fixes](#7-post-audit-fixes-14-oct-2026).
+
 - **Architecture Note:** The product uses **Tauri 2 (React UI) + C# (.NET 8) sidecar daemon** communicating over authenticated length-prefixed named pipes (JSON-RPC 2.0). Older PRD references to C#/WPF prototypes represent historical drafts superseded by `docs/arc/PRINT_SHOP_DESKTOP.md`.
 
 ---
@@ -32,7 +34,7 @@ All **6 primary screens** and all **46 functional requirements (FR-01 through FR
 | **Screen 3** | **Order Details** | Single order operational view: Order metadata, payment status/amount, document list (filename, size, page count, copies, color, paper size, page selection), document availability & integrity validation, temporary preview, printer capability validation & readiness, Accept/Reject, Start printing dispatch, print job status, cash collection, ready for pickup, handover completion. No separate print prep screen. | **100% Implemented**<br>• Header actions adapt to order status.<br>• Print readiness calculation against enabled shop printers.<br>• Secure download ticket retrieval, SHA-256 verification, and temporary browser preview with auto-revoked blob URL.<br>• Audits `DOWNLOADED` and `PREVIEWED` accesses.<br>• Start printing triggers auto-routing and job dispatch.<br>• Shows remote shred status (`shreddedAt`).<br>• Cash collection recording and handover completion gates.<br>• Failed job reassign action per document. | UI: [OrderDetailsScreen.tsx](file:///Users/amitpramanik/structura-mac/meetctrlp/apps/print-shop/src/screens/OrderDetailsScreen.tsx)<br>Preview & Access: [App.tsx](file:///Users/amitpramanik/structura-mac/meetctrlp/apps/print-shop/src/App.tsx#L714-L740)<br>API Client: [cloud.ts](file:///Users/amitpramanik/structura-mac/meetctrlp/apps/print-shop/src/lib/cloud.ts#L403-L430) |
 | **Screen 4** | **Print Queue** | Dedicated physical print execution workspace: Queued, printing, failed, and completed jobs; order ID, document name, printer, configuration, progress, start time, failure reason; Retry, printer reassignment, Cancel, print job recovery, status synchronization. Details in slide-over drawer/modal. | **100% Implemented**<br>• Merges local SQLite WAL queue and cloud-assigned jobs into unified list.<br>• Slide-over `QueueDrawer` for job details, timeline, error diagnostics, and lease conflict alerts.<br>• Failed jobs offer retry and printer reassignment.<br>• Non-terminal local jobs can be cancelled.<br>• *Note on Pause/Resume:* Intentionally omitted because Windows GDI spooling cannot be safely paused without risk of driver deadlocks. | UI: [PrintQueueScreen.tsx](file:///Users/amitpramanik/structura-mac/meetctrlp/apps/print-shop/src/screens/PrintQueueScreen.tsx)<br>Queue Merge: [dashboard.ts](file:///Users/amitpramanik/structura-mac/meetctrlp/apps/print-shop/src/lib/dashboard.ts#L123-L157)<br>Agent Worker: [PrintQueueWorker.cs](file:///Users/amitpramanik/structura-mac/meetctrlp/apps/print-agent/src/Ctrlp.PrintAgent.Core/Jobs/PrintQueueWorker.cs) |
 | **Screen 5** | **Printers** | Printer infrastructure management: Discovery, connection status (Online, Offline, Busy, Error), capability detection (B&W, Color, A4, A3, Duplex), shop default printer, routing preferences, enable/disable, offer configuration, test print, local print agent status. Details in contextual panel/drawer. | **100% Implemented**<br>• Enumerates local queues via winspool + Print Schema/GDI.<br>• Cards show driver, port, spooler jobs, and capability badges.<br>• "Queue test page" generates a 1-page test PDF routed through standard GDI executor.<br>• Rediscover syncs hardware inventory to Firestore.<br>• Slide-over `PrinterDrawer` allows toggling Enabled, Offered Color, Offered A3 (bounded by hardware), and setting Shop Default. | UI: [PrintersScreen.tsx](file:///Users/amitpramanik/structura-mac/meetctrlp/apps/print-shop/src/screens/PrintersScreen.tsx)<br>Catalog: [WindowsPrintCatalog.cs](file:///Users/amitpramanik/structura-mac/meetctrlp/apps/print-agent/src/Ctrlp.PrintAgent.Windows/Printing/WindowsPrintCatalog.cs)<br>Tauri Handler: [App.tsx](file:///Users/amitpramanik/structura-mac/meetctrlp/apps/print-shop/src/App.tsx#L588-L622) |
-| **Screen 6** | **Shop & Settings** | Configuration and administration: Shop profile (name, contact, address), Pricing configuration (B&W, Color, Paper size in rupees/paise; zero hardcoded prices), Business hours (7 days), Capabilities (Color/A3 constrained by enabled printer offers), Device registration & diagnostics (hostname, deviceId, agent status, named pipe, uptime, versions, heartbeat timestamp), Agent log export, Order automation toggles. | **100% Implemented**<br>• Profile editor for contact and multi-line structured address.<br>• Rate editor in rupees, persisted in paise with minimum rate validation.<br>• 7-day business hours schedule with open/closed toggles.<br>• Color/A3 capability toggles strictly gated by enabled printer offers.<br>• Device diagnostics card with live heartbeat and version telemetry.<br>• Export agent log action saving sanitized log file.<br>• Automation toggles for auto-accepting paid online orders and auto-dispatching. | UI: [SettingsScreen.tsx](file:///Users/amitpramanik/structura-mac/meetctrlp/apps/print-shop/src/screens/SettingsScreen.tsx)<br>Store/API: [cloud.ts](file:///Users/amitpramanik/structura-mac/meetctrlp/apps/print-shop/src/lib/cloud.ts#L91-L157) |
+| **Screen 6** | **Shop & Settings** | Configuration and administration: Shop profile (name, contact, address), Pricing configuration (B&W, Color, Paper size in rupees/paise; zero hardcoded prices), Business hours (7 days), Capabilities (Color/A3 constrained by enabled printer offers), Device registration & diagnostics (hostname, deviceId, agent status, named pipe, uptime, versions, heartbeat timestamp), Agent log export, Order automation toggles. | **100% Implemented**<br>• Profile editor for contact and multi-line structured address.<br>• Rate editor in rupees, persisted in paise with minimum rate validation.<br>• 7-day business hours with 12-hour time dropdowns, per-day Open and 24 hours switches, closing after midnight, and an "Open 24 hours, every day" switch.<br>• Color/A3 capability toggles strictly gated by enabled printer offers.<br>• Device diagnostics card with live heartbeat and version telemetry.<br>• Export agent log action saving sanitized log file.<br>• Automation toggles for auto-accepting paid online orders and auto-dispatching. | UI: [SettingsScreen.tsx](file:///Users/amitpramanik/structura-mac/meetctrlp/apps/print-shop/src/screens/SettingsScreen.tsx)<br>Store/API: [cloud.ts](file:///Users/amitpramanik/structura-mac/meetctrlp/apps/print-shop/src/lib/cloud.ts#L91-L157) |
 
 ---
 
@@ -65,9 +67,9 @@ All **6 primary screens** and all **46 functional requirements (FR-01 through FR
 | **FR-23** | Capture print failure | **Done** | Captures failure reason and error code in SQLite and cloud job record; triggers in-app notification in UI. |
 | **FR-24** | Retry failed print job | **Done** | `retryJob` (local) and `retryOrderPrintJob` (cloud) in [App.tsx](file:///Users/amitpramanik/structura-mac/meetctrlp/apps/print-shop/src/App.tsx#L767-L806) requeue failed jobs with idempotency keys. |
 | **FR-25** | Printer unavailable handling | **Done** | Pre-flight validation checks printer online state; rejects routing if queue is paused, offline, or in error. |
-| **FR-26** | Printer reassignment | **Done** | Failed jobs can be reassigned to any other compatible enabled printer directly from Order Details or Print Queue drawer. |
+| **FR-26** | Printer reassignment | **Partial** (see §7) | Failed jobs can be reassigned from Order Details or the Print Queue drawer. The server updates only `printerId`; `agentId`, `printerName`, and `printerSystemName` keep the original printer, so the job still prints there. |
 | **FR-27** | Cash payment recording | **Done** | `recordCashPayment` in [cloud.ts](file:///Users/amitpramanik/structura-mac/meetctrlp/apps/print-shop/src/lib/cloud.ts#L317-L328) records cash tendered when order is in `READY` status. |
-| **FR-28** | Ready for pickup state | **Done** | `transitionShopOrder(..., "ready")` in [cloud.ts](file:///Users/amitpramanik/structura-mac/meetctrlp/apps/print-shop/src/lib/cloud.ts#L283-L295) transitions order to `READY` when all documents have finished printing. |
+| **FR-28** | Ready for pickup state | **Partial** (see §7) | The server moves the order to `READY` automatically once every document has a `COMPLETED` job. The manual `transitionShopOrder(..., "ready")` in [cloud.ts](file:///Users/amitpramanik/structura-mac/meetctrlp/apps/print-shop/src/lib/cloud.ts#L283-L295) only requires `PRINTING`, and the button ignores documents that have no job. |
 | **FR-29** | Customer collects / Order complete | **Done** | `transitionShopOrder(..., "complete")` completes order handover. Strictly gated if cash payment is pending. |
 | **FR-30** | Completed order history | **Done** | Displayed under the "Completed" tab in OrdersScreen and reflected in Dashboard today KPIs. |
 | **FR-31** | Pricing configuration updated | **Done** | Stored in Firestore `/pricing` in paise; UI provides rupee conversion in [SettingsScreen.tsx](file:///Users/amitpramanik/structura-mac/meetctrlp/apps/print-shop/src/screens/SettingsScreen.tsx#L167-L198). Zero hardcoded pricing. |
@@ -135,3 +137,34 @@ While all PRD P0 functional requirements are satisfied, the following items repr
 - **Reliability:** SQLite WAL persistent job journal, atomic lease claims, idempotent server mutations, session recovery via Windows Credential Manager.
 
 **Conclusion:** The MeetCtrlP Print Shop Partner Desktop MVP codebase is **complete and ready for pilot deployment** against the PRD requirements.
+
+> Superseded in part by §7: FR-26 and FR-28 need the follow-ups listed there before the pilot relies on reassign or manual ready.
+
+---
+
+## 7. Post-audit fixes (14 Oct 2026)
+
+A customer order with several files usually printed only one of them. The causes ran through the whole pipeline.
+
+| Area | Problem | Fix |
+| --- | --- | --- |
+| Server dispatch | The first job the agent claimed moved the order to `PRINTING`. Dispatch required `SHOP_ACCEPTED`, so later documents got 409 `ORDER_NOT_ACCEPTED`, and auto-dispatch skipped them silently. | Dispatch is allowed while `SHOP_ACCEPTED` or `PRINTING`. |
+| Order details (FR-17) | **Start printing** was hidden once the order was `PRINTING`. | Shown for every document without a job while `SHOP_ACCEPTED` or `PRINTING`. |
+| Agent staging | One failing job threw out of the poll loop, so its siblings were skipped. The claimed job stayed in `DISPATCHING` with no way to retry it. | Each job is staged in its own try/catch. A failure after the claim is reported `FAILED` (`AGENT_STAGING_FAILED`). |
+| Agent retry (FR-24) | Claim and stage keys were fixed per job id, so a cloud retry replayed the first attempt and the job stayed `QUEUED`. | Keys include `retryCount`. |
+| Agent reports | A `PRINTING` report could mark the job acknowledged. If `COMPLETED` was then rejected or lost, it was never re-sent, and printed jobs stayed `PRINTING`. | Only a final report acknowledges a job. The server also accepts `DISPATCHING → COMPLETED`. |
+| Customer cart | Documents from a placed order stayed in the guest cart, used up the 10-file limit, and were sent again with the next order. | Checkout removes submitted documents. Abandoned or failed uploads no longer count toward the limit. |
+| PDF intake | The server counted 0 pages in PDFs whose pages are stored in compressed object streams, and rejected them. | New page counter reads object streams (`pdf-page-count.ts`). |
+
+Still open:
+
+- **FR-28:** gate manual ready on every document having a completed job.
+- **FR-26:** make reassign update the agent and Windows printer name.
+
+The progress tracker lists both under Left to build.
+
+Details:
+
+- [`Order_to_Print_Execution_Runbook.md`](./Order_to_Print_Execution_Runbook.md)
+- [`docs/desktop app feature MBP/03_orders_lifecycle_and_queues.md`](../../desktop%20app%20feature%20MBP/03_orders_lifecycle_and_queues.md)
+- [`apps/server/docs/print-user.md`](../../../apps/server/docs/print-user.md)

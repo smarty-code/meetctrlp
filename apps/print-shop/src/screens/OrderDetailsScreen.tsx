@@ -121,7 +121,7 @@ export function OrderDetailsScreen({
                 >
                   Validate & preview
                 </Button>
-                {order.status === "SHOP_ACCEPTED" && documentJobs.length === 0 ? (
+                {(order.status === "SHOP_ACCEPTED" || order.status === "PRINTING") && documentJobs.length === 0 ? (
                   <Button
                     size="sm"
                     className="rounded-[12px]"

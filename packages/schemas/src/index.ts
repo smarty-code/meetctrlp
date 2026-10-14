@@ -41,10 +41,12 @@ export {
   type RejectOrderRequestInput,
 } from "./orders";
 export {
+  printUserBatchConfigurationSchema,
   printUserMockConfirmRequestSchema,
   printUserPrintConfigurationSchema,
   printUserSubmitOrderRequestSchema,
   printUserUploadIntentRequestSchema,
+  type PrintUserBatchConfigurationInput,
   type PrintUserMockConfirmRequestInput,
   type PrintUserPrintConfigurationInput,
   type PrintUserSubmitOrderRequestInput,
@@ -67,6 +69,22 @@ export {
   type UpdateShopPricingRequestInput,
   type UpdateShopProfileRequestInput,
 } from "./shop-config";
+export {
+  SHOP_TIME_ZONE,
+  businessHourProblem,
+  closesNextDay,
+  describeBusinessHour,
+  describeOpenStatus,
+  formatTime12h,
+  isOpenAt,
+  minutesToTime,
+  parseTimeInput,
+  shopClock,
+  summarizeBusinessHours,
+  timeToMinutes,
+  weekdayName,
+  type BusinessHourRule,
+} from "./business-hours";
 export {
   deviceHeartbeatRequestSchema,
   deviceOfflineRequestSchema,

@@ -53,7 +53,8 @@ export const customizeCopy = {
 } as const
 
 export const customizeConfig = {
-  acceptedFileTypes: ".pdf,.jpg,.jpeg,.png",
+  // image/* opens the phone gallery; non-JPEG/PNG photos are converted before upload.
+  acceptedFileTypes: ".pdf,.jpg,.jpeg,.png,application/pdf,image/*",
   maxCopies: 20,
   pricePerPage: { bw: 3, color: 10 } as const,
   defaultPageCount: 3,

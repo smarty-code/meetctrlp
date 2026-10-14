@@ -47,11 +47,19 @@ Shop settings, for the signed-in shop only:
 
 | Method | Path | Body |
 | --- | --- | --- |
-| GET | `/api/v1/shops/{shopId}/pricing` | pricing, capabilities, business hours, `openNow` |
+| GET | `/api/v1/shops/{shopId}/pricing` | pricing, capabilities, business hours (each with a 12-hour `label`), `openNow`, `openStatusLabel`, `todayHoursLabel`, `isOpen24x7` |
 | PUT | `/api/v1/shops/{shopId}/pricing` | `{ bwA4PricePaise, colorA4PricePaise, colorA3PricePaise }` from 50 to 10000 |
 | PUT | `/api/v1/shops/{shopId}/capabilities` | `{ colorPrinting, a3Printing }` |
-| PUT | `/api/v1/shops/{shopId}/hours` | `{ businessHours: [{ dayOfWeek, opensAt, closesAt, isClosed }] }` seven days |
+| PUT | `/api/v1/shops/{shopId}/hours` | `{ businessHours: [{ dayOfWeek, opensAt, closesAt, isClosed, isOpen24Hours? }] }` seven days |
 | POST | `/api/v1/shops/{shopId}/pricing/quote` | `{ billablePages, copies, colorMode, paperSize }` |
+
+Hours rules:
+
+- **Time format:** `opensAt` and `closesAt` accept `"9:30 PM"` or `"21:30"`. They are stored as 24-hour `HH:mm` in India time (Asia/Kolkata).
+- **Past midnight:** a closing time earlier than the opening time means the shop closes after midnight. For example, `18:00`–`02:00` is open until 2:00 AM the next morning.
+- **24 hours:** `isOpen24Hours: true` keeps the day open around the clock. The times are kept but ignored. The flag is optional so older desktop builds can still save hours.
+- **Closed days:** a closed day always drops the 24-hour flag.
+- **Rejected:** only a day whose opening and closing times are the same, with 400 `opening and closing time can't be the same. Turn on Open 24 hours instead.`
 
 Device register returns `{ deviceId, heartbeatIntervalSeconds: 30, status: "ONLINE" }`. The agent document is `shops/{shopId}/agents/{agentId}` in Firestore. The same PC and shop always map to the same `deviceId`. Heartbeat only updates liveness and telemetry. Agents with `lastSeenAt` older than 90 seconds are marked `OFFLINE` on the next heartbeat from that shop.
 

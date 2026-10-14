@@ -56,9 +56,10 @@
               "type": "object",
               "properties": {
                 "dayOfWeek": { "type": "integer", "minimum": 0, "maximum": 6 },
-                "opensAt": { "type": "string" },
-                "closesAt": { "type": "string" },
-                "isClosed": { "type": "boolean" }
+                "opensAt": { "type": "string", "description": "24-hour HH:mm, Asia/Kolkata; shown in 12-hour form" },
+                "closesAt": { "type": "string", "description": "24-hour HH:mm; earlier than opensAt means the shop closes after midnight" },
+                "isClosed": { "type": "boolean" },
+                "isOpen24Hours": { "type": "boolean", "description": "Open all day; opensAt/closesAt are kept but ignored" }
               }
             }
           },
@@ -329,6 +330,7 @@
           "ipAddress": { "type": "string", "description": "Client IP used to resume the session" },
           "documents": {
             "type": "array",
+            "description": "The guest cart: at most 10 live documents. Submitted documents are removed when the order is placed; FAILED and abandoned UPLOADING intents are pruned on the next upload.",
             "items": {
               "type": "object",
               "required": ["id", "originalFilename", "storageKey", "mimeType", "fileSizeBytes", "status"],
@@ -351,11 +353,12 @@
                     "billablePages": { "type": "integer" },
                     "orientation": { "type": "string", "enum": ["PORTRAIT", "LANDSCAPE"] }
                   }
-                }
+                },
+                "createdAt": { "type": ["string", "null"], "description": "ISO time the upload intent was created; an UPLOADING intent older than 20 minutes is abandoned" }
               }
             }
           },
-          "activeOrderId": { "type": ["string", "null"] },
+          "activeOrderId": { "type": ["string", "null"], "description": "Most recent order placed from this session" },
           "createdAt": { "type": "string", "format": "timestamp" },
           "lastSeenAt": { "type": "string", "format": "timestamp" },
           "expiresAt": { "type": "string", "format": "timestamp" }

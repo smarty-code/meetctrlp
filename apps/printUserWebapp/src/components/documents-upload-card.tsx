@@ -2,6 +2,7 @@
 
 import React, { useRef } from "react"
 import { UploadedFileItem } from "../types/upload"
+import { customizeConfig } from "../data/customize-repository"
 import { DocumentCollageIllustration } from "./illustrations/document-collage-illustration"
 import { Button } from "@ctrlp/ui/button"
 import {
@@ -80,7 +81,7 @@ export const DocumentsUploadCard: React.FC<DocumentsUploadCardProps> = ({
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".pdf,.jpg,.jpeg,.png"
+          accept={customizeConfig.acceptedFileTypes}
           className="hidden"
           onChange={handleInputChange}
           disabled={!isAvailable}
@@ -172,14 +173,16 @@ export const DocumentsUploadCard: React.FC<DocumentsUploadCardProps> = ({
                         Retry
                       </button>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => onRemoveFile(item.id)}
-                      aria-label={`Remove ${item.name}`}
-                      className="ml-0.5 flex size-8 items-center justify-center rounded-lg text-ash transition-colors hover:bg-graphite/10 hover:text-midnight"
-                    >
-                      <X className="size-4" />
-                    </button>
+                    {item.status !== "uploading" && (
+                      <button
+                        type="button"
+                        onClick={() => onRemoveFile(item.id)}
+                        aria-label={`Remove ${item.name}`}
+                        className="ml-0.5 flex size-8 items-center justify-center rounded-lg text-ash transition-colors hover:bg-graphite/10 hover:text-midnight"
+                      >
+                        <X className="size-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}

@@ -6,6 +6,7 @@ import { AuthServiceError } from "@/src/modules/auth/auth.errors";
 import {
   SESSION_TTL_MS,
   isSessionExpired,
+  shouldTouchSession,
 } from "@/src/modules/print-user/print-user.helpers";
 import { printUsersCollection, timestampToIso } from "@/src/modules/print-user/print-user-shop.service";
 import type { GuestDocument, PrintUserSession } from "@/src/modules/print-user/print-user.types";
@@ -53,6 +54,7 @@ function parseDocuments(value: unknown): GuestDocument[] {
           billablePages: typeof config.billablePages === "number" ? config.billablePages : 1,
           orientation: config.orientation === "LANDSCAPE" ? "LANDSCAPE" : "PORTRAIT",
         },
+        createdAt: typeof document.createdAt === "string" ? document.createdAt : null,
       } satisfies GuestDocument,
     ];
   });
@@ -185,7 +187,9 @@ export async function requireValidPrintUserSession(printUserId: string, ipAddres
   if (isSessionExpired(session.expiresAt)) {
     throw new AuthServiceError(401, "guest session expired");
   }
-  return touchSession(session);
+  // Every guest API call lands here; writing the session doc each time contends with the
+  // document transactions below when several files upload in parallel.
+  return shouldTouchSession(session.expiresAt) ? touchSession(session) : session;
 }
 
 export async function savePrintUserDocuments(printUserId: string, documents: GuestDocument[]) {
@@ -226,16 +230,37 @@ export async function mutatePrintUserDocuments<T>(
     );
 
     return result;
-  });
+  }, { maxAttempts: 10 });
 }
 
-export async function setPrintUserActiveOrder(printUserId: string, orderId: string) {
-  await printUsersCollection().doc(printUserId).set(
-    {
-      activeOrderId: orderId,
-      lastSeenAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    },
-    { merge: true },
-  );
+/**
+ * Records the placed order and removes its documents from the guest cart in one write, so the
+ * next order in this session starts empty and the per-order file limit is not consumed by files
+ * that were already submitted.
+ */
+export async function checkoutPrintUserDocuments(
+  printUserId: string,
+  orderId: string,
+  submittedDocumentIds: string[],
+) {
+  const ref = printUsersCollection().doc(printUserId);
+  const submitted = new Set(submittedDocumentIds);
+
+  await getFirebaseFirestore().runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists) {
+      throw new AuthServiceError(401, "guest session not found");
+    }
+
+    transaction.set(
+      ref,
+      {
+        documents: toSession(snapshot).documents.filter((entry) => !submitted.has(entry.id)),
+        activeOrderId: orderId,
+        lastSeenAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+  }, { maxAttempts: 10 });
 }

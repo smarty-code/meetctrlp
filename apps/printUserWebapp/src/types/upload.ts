@@ -9,8 +9,11 @@ export interface ShopContext {
   statusMessage?: string
   estimatedMinutes: number
   startingPriceA4: number
-  openTime?: string
-  closeTime?: string
+  /** Today's hours in 12-hour form, as set by the shop (e.g. "9:00 AM – 9:00 PM"). */
+  hoursToday?: string
+  /** e.g. "Open until 9:00 PM" or "Opens tomorrow at 9:00 AM". */
+  openStatusLabel?: string
+  weeklyHours?: Array<{ day: string; label: string }>
   phone?: string
   mapUrl?: string
   services?: string[]
@@ -29,7 +32,8 @@ export interface ShopContext {
 
 export interface UploadedFileItem {
   id: string
-  file: File
+  /** Absent for documents restored from the server cart rather than picked in this visit. */
+  file?: File
   name: string
   size: number
   type: string

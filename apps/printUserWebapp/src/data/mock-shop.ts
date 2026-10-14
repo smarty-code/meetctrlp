@@ -8,8 +8,8 @@ export const mockShop: ShopContext = {
   statusMessage: "We're ready to print!",
   estimatedMinutes: 10,
   startingPriceA4: 3,
-  openTime: "08:00 AM",
-  closeTime: "09:00 PM",
+  hoursToday: "8:00 AM – 9:00 PM",
+  openStatusLabel: "Open until 9:00 PM",
   phone: "+91 98765 43210",
   mapUrl: "https://maps.google.com/?q=North+Campus",
   services: [

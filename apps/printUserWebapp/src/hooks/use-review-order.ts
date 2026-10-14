@@ -26,6 +26,8 @@ import {
 } from "../data/payment-repository"
 import { PAYMENT_COPY } from "../data/payment-constants"
 import { useShopSession } from "../components/shop-session-provider"
+import { deleteGuestDocument, quoteGuestSession, saveDocumentConfiguration } from "../lib/cloud"
+import { quoteToPricing, toApiColor, toApiOrientation, toApiPaper } from "../lib/print-user-map"
 
 export function useReviewOrder() {
   const router = useRouter()
@@ -164,6 +166,36 @@ export function useReviewOrder() {
     [draft, router, routes.customize]
   )
 
+  // Review edits must reach the server cart, which is what the order is built from. Writes are
+  // chained so rapid +/- taps land in order, and submit waits for the chain to drain.
+  const syncQueueRef = useRef<Promise<void>>(Promise.resolve())
+  // Submit awaits the sync queue, then reads the draft from here: its closure would be stale.
+  const draftRef = useRef<OrderDraft | null>(draft)
+  useEffect(() => {
+    draftRef.current = draft
+  }, [draft])
+
+  const syncWithServer = useCallback(
+    (write: () => Promise<unknown>) => {
+      syncQueueRef.current = syncQueueRef.current
+        .then(write)
+        .then(quoteGuestSession)
+        .then((quote) => {
+          if (!isMountedRef.current) return
+          const pricing = quoteToPricing(quote)
+          if (draftRef.current) draftRef.current = { ...draftRef.current, pricing }
+          setDraft((current) => (current ? { ...current, pricing } : current))
+        })
+        .catch((error) => {
+          console.error("Failed to sync review changes:", error)
+          if (!isMountedRef.current) return
+          setValidationError("Could not save your change. Reloading your order.")
+          loadDraft()
+        })
+    },
+    [loadDraft]
+  )
+
   const handleUpdateCopies = useCallback(
     (documentId: string, newCopies: number) => {
       if (!draft) return
@@ -190,8 +222,23 @@ export function useReviewOrder() {
       }
       setDraft(updatedDraft)
       saveOrderDraft(updatedDraft)
+
+      const updated = updatedDocs.find((doc) => doc.id === documentId)
+      if (!updated) return
+      syncWithServer(() =>
+        saveDocumentConfiguration(documentId, {
+          colorMode: toApiColor(updated.configuration.colorMode),
+          copies: clampedCopies,
+          paperSize: toApiPaper(updated.configuration.paperSize),
+          orientation: toApiOrientation(updated.configuration.orientation),
+          pageSelection: {
+            mode: updated.configuration.pageSelection.mode,
+            expression: updated.configuration.pageSelection.expression,
+          },
+        })
+      )
     },
-    [draft]
+    [draft, syncWithServer]
   )
 
   const handleDeleteDocument = useCallback(
@@ -210,8 +257,9 @@ export function useReviewOrder() {
       }
       setDraft(updatedDraft)
       saveOrderDraft(updatedDraft)
+      syncWithServer(() => deleteGuestDocument(documentId))
     },
-    [draft]
+    [draft, syncWithServer]
   )
 
   const handleDismissPriceNotice = useCallback(() => {
@@ -226,7 +274,14 @@ export function useReviewOrder() {
   }, [])
 
   const handlePaymentSubmit = useCallback(async () => {
-    if (!draft || isSubmittingRef.current || isValidating) return
+    if (!draftRef.current || isSubmittingRef.current || isValidating) return
+
+    // Let pending copy/delete edits reach the server before prices are compared.
+    isSubmittingRef.current = true
+    await syncQueueRef.current
+    isSubmittingRef.current = false
+    const draft = draftRef.current
+    if (!draft || !isMountedRef.current) return
 
     setValidationError(null)
     setPaymentError(null)
@@ -340,7 +395,7 @@ export function useReviewOrder() {
         setIsSubmitting(false)
       }
     }
-  }, [draft, isValidating, selectedMethod, router, routes.orderStatus])
+  }, [isValidating, selectedMethod, router, routes.orderStatus])
 
   const canSubmit = useMemo(() => {
     if (

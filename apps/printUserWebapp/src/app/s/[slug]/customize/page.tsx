@@ -12,15 +12,26 @@ import { OrderSummaryBar } from "../../../../components/customize/order-summary-
 import { OrientationSelector } from "../../../../components/customize/orientation-selector"
 import { PaperSizeSelector } from "../../../../components/customize/paper-size-selector"
 import { useShopSession } from "../../../../components/shop-session-provider"
-import { cacheUploadedFile, restoreCachedFile } from "../../../../lib/file-store"
-import { paiseToRupees, toApiColor, toApiOrientation, toApiPaper } from "../../../../lib/print-user-map"
+import { restoreCachedFile } from "../../../../lib/file-store"
 import {
-  completeDocumentUpload,
-  createDocumentIntent,
+  guestDocumentsToConfigurable,
+  paiseToRupees,
+  toApiColor,
+  toApiOrientation,
+  toApiPaper,
+} from "../../../../lib/print-user-map"
+import {
   deleteGuestDocument,
-  saveDocumentConfiguration,
-  uploadToPresignedUrl,
+  fetchGuestSession,
+  saveDocumentConfigurations,
 } from "../../../../lib/cloud"
+import {
+  MAX_DOCUMENTS_PER_ORDER,
+  UPLOAD_CONCURRENCY,
+  runWithConcurrency,
+  uploadGuestFile,
+  validateSelectedFile,
+} from "../../../../lib/guest-upload"
 import {
   customizeConfig,
   customizeCopy,
@@ -82,9 +93,41 @@ export default function CustomizePage() {
   const [selectedId, setSelectedId] = useState(documents[0]?.id ?? "")
   const [previewPage, setPreviewPage] = useState(1)
   const [isUpdatingPrice, setIsUpdatingPrice] = useState(false)
+  const [pendingUploads, setPendingUploads] = useState(0)
   const [notification, setNotification] = useState<string | null>(null)
   const selectedDocument =
     documents.find((document) => document.id === selectedId) ?? documents[0]
+  const documentIdsKey = documents.map((document) => document.id).join(",")
+
+  // sessionStorage only gives a fast first paint; the server cart decides which documents exist.
+  // Local settings are kept for documents still in the cart, so unsaved edits survive navigation.
+  useEffect(() => {
+    let cancelled = false
+    void fetchGuestSession()
+      .then(({ session }) => {
+        if (cancelled) return
+        setDocuments((current) => {
+          const local = new Map(current.map((document) => [document.id, document]))
+          const next = guestDocumentsToConfigurable(session.documents, new Map()).map((serverDocument) => {
+            const existing = local.get(serverDocument.id)
+            return existing
+              ? {
+                  ...serverDocument,
+                  file: existing.file,
+                  previewUrl: existing.previewUrl,
+                  configuration: copyConfigurationToDocument(existing.configuration, serverDocument),
+                }
+              : serverDocument
+          })
+          persistDocuments(next)
+          return next
+        })
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -120,7 +163,7 @@ export default function CustomizePage() {
     return () => {
       isMounted = false
     }
-  }, [documents.length])
+  }, [documentIdsKey])
 
   const handlePageCountDetected = (docId: string, count: number) => {
     setDocuments((current) =>
@@ -142,25 +185,41 @@ export default function CustomizePage() {
 
   const handleAddFiles = (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return
+    const failures: string[] = []
+    const accepted: File[] = []
+    let remainingSlots = MAX_DOCUMENTS_PER_ORDER - documents.length - pendingUploads
+    for (const file of Array.from(fileList)) {
+      const invalid = validateSelectedFile(file)
+      if (invalid) {
+        failures.push(`${file.name}: ${invalid}`)
+      } else if (remainingSlots <= 0) {
+        failures.push(`${file.name}: up to ${MAX_DOCUMENTS_PER_ORDER} documents per order`)
+      } else {
+        remainingSlots -= 1
+        accepted.push(file)
+      }
+    }
+    if (accepted.length === 0) {
+      setNotification(failures.join(" · "))
+      return
+    }
+
+    setPendingUploads((count) => count + accepted.length)
+    setNotification(`Uploading ${accepted.length} document${accepted.length > 1 ? "s" : ""}…`)
     void (async () => {
-      for (const file of Array.from(fileList)) {
+      let uploaded = 0
+      await runWithConcurrency(accepted, UPLOAD_CONCURRENCY, async (source) => {
         try {
-          const intent = await createDocumentIntent({
-            originalFilename: file.name,
-            mimeType: file.type || "application/octet-stream",
-            fileSizeBytes: file.size,
-          })
-          await uploadToPresignedUrl(intent.uploadUrl, file, intent.document.mimeType, () => undefined)
-          const completed = await completeDocumentUpload(intent.document.id)
-          cacheUploadedFile(completed.id, file)
+          const { document } = await uploadGuestFile(source, () => undefined)
+          uploaded += 1
           const mapped = mapStoredFilesToDocuments(
             [
               {
-                id: completed.id,
-                name: completed.originalFilename,
-                size: completed.fileSizeBytes,
-                type: completed.mimeType,
-                pageCount: completed.pageCount ?? 1,
+                id: document.id,
+                name: document.originalFilename,
+                size: document.fileSizeBytes,
+                type: document.mimeType,
+                pageCount: document.pageCount ?? 1,
               },
             ],
             "added",
@@ -170,11 +229,18 @@ export default function CustomizePage() {
             persistDocuments(next)
             return next
           })
-          setSelectedId(completed.id)
+          setSelectedId(document.id)
         } catch (error) {
-          setNotification(error instanceof Error ? error.message : "Upload failed")
+          failures.push(`${source.name}: ${error instanceof Error ? error.message : "Upload failed"}`)
+        } finally {
+          setPendingUploads((count) => count - 1)
         }
-      }
+      })
+      setNotification(
+        failures.length > 0
+          ? `${uploaded} uploaded, ${failures.length} failed — ${failures.join(" · ")}`
+          : `${uploaded} document${uploaded > 1 ? "s" : ""} added`,
+      )
     })()
   }
 
@@ -226,25 +292,28 @@ export default function CustomizePage() {
     [bwPrice, colorPrice, documents],
   )
   const canContinue =
-    documents.length > 0 && documents.every((document) => document.status === "ready") && !isUpdatingPrice
+    documents.length > 0 &&
+    documents.every((document) => document.status === "ready") &&
+    !isUpdatingPrice &&
+    pendingUploads === 0
 
   const handleContinueToReview = async () => {
     if (!canContinue) return
     persistDocuments(documents)
     try {
-      await Promise.all(
-        documents.map((document) =>
-          saveDocumentConfiguration(document.id, {
-            colorMode: toApiColor(document.configuration.colorMode),
-            copies: document.configuration.copies,
-            paperSize: toApiPaper(document.configuration.paperSize),
-            orientation: toApiOrientation(document.configuration.orientation),
-            pageSelection: {
-              mode: document.configuration.pageSelection.mode,
-              expression: document.configuration.pageSelection.expression,
-            },
-          }),
-        ),
+      // One request, one transaction on the guest cart instead of one per document.
+      await saveDocumentConfigurations(
+        documents.map((document) => ({
+          documentId: document.id,
+          colorMode: toApiColor(document.configuration.colorMode),
+          copies: document.configuration.copies,
+          paperSize: toApiPaper(document.configuration.paperSize),
+          orientation: toApiOrientation(document.configuration.orientation),
+          pageSelection: {
+            mode: document.configuration.pageSelection.mode,
+            expression: document.configuration.pageSelection.expression,
+          },
+        })),
       )
       router.push(routes.review)
     } catch (error) {

@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState } from "react"
+import React, { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { MobileHeader } from "../../../components/mobile-header"
 import { HeroSection } from "../../../components/hero-section"
@@ -9,116 +9,118 @@ import { PromiseSection } from "../../../components/promise-section"
 import { FAQSection } from "../../../components/faq-section"
 import { BrandFooter } from "../../../components/brand-footer"
 import { FloatingOrderIndicator } from "../../../components/floating-order-indicator"
-import { cacheUploadedFile, getCachedFileUrl } from "../../../lib/file-store"
+import { cacheUploadedFile, getCachedFileUrl, restoreCachedFile } from "../../../lib/file-store"
 import { Info } from "lucide-react"
 import { ShopInfoDrawer } from "../../../components/shop-info-drawer"
 import { faqList } from "../../../data/mock-shop"
 import { UploadedFileItem } from "../../../types/upload"
 import { useShopSession } from "../../../components/shop-session-provider"
+import { deleteGuestDocument, fetchGuestSession } from "../../../lib/cloud"
 import {
-  completeDocumentUpload,
-  createDocumentIntent,
-  deleteGuestDocument,
-  uploadToPresignedUrl,
-} from "../../../lib/cloud"
-
-const ALLOWED_EXTENSIONS = ["pdf", "jpg", "jpeg", "png"]
-const MAX_FILE_SIZE = 50 * 1024 * 1024
-
-async function uploadOneFile(
-  file: File,
-  id: string,
-  onProgress: (percent: number) => void,
-) {
-  const intent = await createDocumentIntent({
-    originalFilename: file.name,
-    mimeType: file.type || "application/octet-stream",
-    fileSizeBytes: file.size,
-  })
-  await uploadToPresignedUrl(intent.uploadUrl, file, intent.document.mimeType, onProgress)
-  const completed = await completeDocumentUpload(intent.document.id)
-  cacheUploadedFile(completed.id, file)
-  return completed
-}
+  MAX_DOCUMENTS_PER_ORDER,
+  UPLOAD_CONCURRENCY,
+  runWithConcurrency,
+  uploadGuestFile,
+  validateSelectedFile,
+} from "../../../lib/guest-upload"
 
 export default function ShopUploadPage() {
   const router = useRouter()
   const { shop, routes } = useShopSession()
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFileItem[]>([])
-  const [isUploadingOverall, setIsUploadingOverall] = useState(false)
   const [notification, setNotification] = useState<string | null>(null)
   const [isShopInfoOpen, setIsShopInfoOpen] = useState(false)
+  const isUploadingOverall = uploadedFiles.some((file) => file.status === "uploading")
 
   const showToast = (msg: string) => {
     setNotification(msg)
     setTimeout(() => setNotification(null), 3000)
   }
 
+  // The server cart is the source of truth: show files already in it (e.g. after a reload or
+  // coming back from customize) so the list, the cap, and the order all agree.
+  useEffect(() => {
+    let cancelled = false
+    void fetchGuestSession()
+      .then(async ({ session }) => {
+        const ready = session.documents.filter((document) => document.status === "READY")
+        const restored = await Promise.all(
+          ready.map(async (document): Promise<UploadedFileItem> => {
+            const cached = await restoreCachedFile(document.id)
+            return {
+              id: document.id,
+              file: cached?.file,
+              name: document.originalFilename,
+              size: document.fileSizeBytes,
+              type: document.mimeType,
+              pageCount: document.pageCount ?? undefined,
+              progress: 100,
+              status: "success",
+              previewUrl: cached?.url,
+            }
+          }),
+        )
+        if (cancelled) return
+        setUploadedFiles((prev) => [
+          ...restored.filter((item) => !prev.some((file) => file.id === item.id)),
+          ...prev,
+        ])
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const updateFile = (id: string, patch: Partial<UploadedFileItem>) => {
+    setUploadedFiles((prev) => prev.map((file) => (file.id === id ? { ...file, ...patch } : file)))
+  }
+
   const runUpload = async (items: UploadedFileItem[]) => {
-    setIsUploadingOverall(true)
-    const outcomes = await Promise.all(
-      items.map(async (item) => {
-        try {
-          const completed = await uploadOneFile(item.file, item.id, (progress) => {
-            setUploadedFiles((prev) =>
-              prev.map((file) => (file.id === item.id ? { ...file, progress } : file)),
-            )
-          })
-          setUploadedFiles((prev) =>
-            prev.map((file) =>
-              file.id === item.id
-                ? {
-                    ...file,
-                    id: completed.id,
-                    progress: 100,
-                    status: "success",
-                    pageCount: completed.pageCount ?? undefined,
-                    type: completed.mimeType,
-                    previewUrl: getCachedFileUrl(completed.id) || file.previewUrl,
-                  }
-                : file,
-            ),
-          )
-          return true
-        } catch (error) {
-          setUploadedFiles((prev) =>
-            prev.map((file) =>
-              file.id === item.id
-                ? {
-                    ...file,
-                    status: "error",
-                    errorMessage: error instanceof Error ? error.message : "Upload failed",
-                  }
-                : file,
-            ),
-          )
-          return false
-        }
-      }),
-    )
-    setIsUploadingOverall(false)
-    return outcomes.filter(Boolean).length
+    let succeeded = 0
+    await runWithConcurrency(items, UPLOAD_CONCURRENCY, async (item) => {
+      if (!item.file) return
+      try {
+        const { document, file } = await uploadGuestFile(item.file, (progress) =>
+          updateFile(item.id, { progress }),
+        )
+        succeeded += 1
+        updateFile(item.id, {
+          id: document.id,
+          file,
+          name: document.originalFilename,
+          size: document.fileSizeBytes,
+          progress: 100,
+          status: "success",
+          errorMessage: undefined,
+          pageCount: document.pageCount ?? undefined,
+          type: document.mimeType,
+          previewUrl: getCachedFileUrl(document.id) || item.previewUrl,
+        })
+      } catch (error) {
+        updateFile(item.id, {
+          status: "error",
+          errorMessage: error instanceof Error ? error.message : "Upload failed",
+        })
+      }
+    })
+    return succeeded
   }
 
   const handleFilesSelected = (files: FileList | null) => {
     if (!files || files.length === 0) return
 
+    let remainingSlots =
+      MAX_DOCUMENTS_PER_ORDER - uploadedFiles.filter((file) => file.status !== "error").length
     const newItems: UploadedFileItem[] = Array.from(files).map((file, idx) => {
       const id = `file_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 7)}`
-      const previewUrl = cacheUploadedFile(id, file)
-      const ext = file.name.split(".").pop()?.toLowerCase() || ""
-      const isFormatValid = ALLOWED_EXTENSIONS.includes(ext)
-      const isSizeValid = file.size <= MAX_FILE_SIZE
-      let status: "uploading" | "error" = "uploading"
-      let errorMessage: string | undefined
-      if (!isFormatValid) {
-        status = "error"
-        errorMessage = ext.match(/docx?|pptx?/)
-          ? "Word and PowerPoint files are not supported yet"
-          : "Unsupported format"
-      } else if (!isSizeValid) {
-        errorMessage = "Exceeds 50MB limit"
-        status = "error"
+      let errorMessage = validateSelectedFile(file) ?? undefined
+      if (!errorMessage) {
+        if (remainingSlots > 0) {
+          remainingSlots -= 1
+        } else {
+          errorMessage = `Up to ${MAX_DOCUMENTS_PER_ORDER} documents per order`
+        }
       }
       return {
         id,
@@ -127,9 +129,8 @@ export default function ShopUploadPage() {
         size: file.size,
         type: file.type || "application/octet-stream",
         progress: 0,
-        status,
+        status: errorMessage ? "error" : "uploading",
         errorMessage,
-        previewUrl,
       }
     })
 
@@ -137,34 +138,49 @@ export default function ShopUploadPage() {
     const validNewItems = newItems.filter((item) => item.status === "uploading")
     if (validNewItems.length === 0) return
     void runUpload(validNewItems).then((succeeded) => {
-      if (succeeded > 0) {
-        showToast(`${succeeded} document${succeeded > 1 ? "s" : ""} uploaded`)
-      }
+      showToast(
+        succeeded < validNewItems.length
+          ? `${succeeded} of ${validNewItems.length} documents uploaded`
+          : `${succeeded} document${succeeded > 1 ? "s" : ""} uploaded`,
+      )
     })
   }
 
   const handleRemoveFile = (fileId: string) => {
     const target = uploadedFiles.find((file) => file.id === fileId)
+    // An in-flight upload would land in the cart after being hidden here; let it finish first.
+    if (!target || target.status === "uploading") return
     setUploadedFiles((prev) => prev.filter((file) => file.id !== fileId))
-    if (target?.status === "success") {
+    if (target.status === "success") {
       void deleteGuestDocument(fileId).catch(() => undefined)
     }
   }
 
   const handleRetryFile = (fileId: string) => {
     const target = uploadedFiles.find((file) => file.id === fileId)
-    if (!target) return
-    setUploadedFiles((prev) =>
-      prev.map((file) =>
-        file.id === fileId
-          ? { ...file, status: "uploading", progress: 0, errorMessage: undefined }
-          : file,
-      ),
-    )
-    void runUpload([{ ...target, status: "uploading", progress: 0 }])
+    if (!target?.file) return
+    const activeCount = uploadedFiles.filter(
+      (file) => file.status !== "error" && file.id !== fileId,
+    ).length
+    if (activeCount >= MAX_DOCUMENTS_PER_ORDER) {
+      showToast(`Up to ${MAX_DOCUMENTS_PER_ORDER} documents per order`)
+      return
+    }
+    const retried: UploadedFileItem = {
+      ...target,
+      status: "uploading",
+      progress: 0,
+      errorMessage: undefined,
+    }
+    updateFile(fileId, retried)
+    void runUpload([retried])
   }
 
   const handleContinueToConfig = () => {
+    if (isUploadingOverall) {
+      showToast("Wait for uploads to finish")
+      return
+    }
     const validFiles = uploadedFiles.filter((file) => file.status === "success")
     if (validFiles.length === 0) return
     validFiles.forEach((file) => {
@@ -187,6 +203,11 @@ export default function ShopUploadPage() {
   }
 
   const isAvailable = shop.status === "OPEN" || shop.status === "BUSY"
+  // The hours label only applies to a shop that is running; a paused shop is simply closed.
+  const hoursStatus =
+    isAvailable || shop.status === "CLOSED"
+      ? shop.openStatusLabel || (isAvailable ? "Open" : "Closed")
+      : "Closed"
   const hasUploadedFiles = uploadedFiles.some((file) => file.status === "success")
 
   return (
@@ -220,7 +241,7 @@ export default function ShopUploadPage() {
                 Printing at {shop.name}
               </span>
               <span className="hidden text-[11px] font-bold text-ash sm:inline-block">
-                • {isAvailable ? "Open" : "Closed"}
+                • {hoursStatus}
               </span>
             </div>
             <button

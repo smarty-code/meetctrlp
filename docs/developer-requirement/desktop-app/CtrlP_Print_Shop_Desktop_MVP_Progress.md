@@ -8,14 +8,14 @@
 
 When a leftover item ships, **move it into Built** and **delete it from Left to build**. When the leftover section is empty, the PRD loop for this stack is done.
 
-**Last reviewed:** 2025-09-29 (code vs [`Print Shop Partner Desktop MVP.md`](./Print%20Shop%20Partner%20Desktop%20MVP.md)).
+**Last reviewed:** 2026-10-14 (multi-document print jobs, agent cloud-sync fixes, shop hours).
 
 ### Snapshot
 
 | Area | Status |
 | --- | --- |
 | PRD Screens 1–6 (shop desktop) | **Shipped** with documented limits (queue pause/resume, duplex customer offer deferred per PRD out-of-scope) |
-| FR-01–FR-46 | **45 Done**, **1 Partial** (FR-21 per-page driver progress) |
+| FR-01–FR-46 | **43 Done**, **3 Partial** (FR-21 per-page driver progress, FR-26 reassign keeps the original printer, FR-28 ready does not check every document printed) |
 | P0 scope list (PRD § In Scope) | **Covered** on this stack except items explicitly deferred in the PRD or noted under polish below |
 | PRD §5 Tracking (PostHog) / Sentry | **Not started** in `apps/print-shop` |
 | Customer-facing checkout (`apps/printUserWebapp`) | **Separate product**; FR-46 is satisfied when server/Firestore order fields update (not re-validated here) |
@@ -46,6 +46,7 @@ Current stack: Windows Tauri 2 UI (`apps/print-shop`) + .NET 8 sidecar (`apps/pr
 - Session restore from Windows Credential Manager (`Ctrlp.PrintShop/refreshToken`).
 - Device register + 30s heartbeat; sign-out marks the agent offline and clears the refresh token.
 - Settings is editable on desktop: shop profile and structured address, pricing (paise stored, rupees UI), 7-day hours, Color/A3 capabilities constrained to enabled printer offers, automation, diagnostics, and agent log export.
+- Hours use 12-hour dropdowns (15-minute steps). Each day can be closed, open 24 hours, or open for set times, and a closing time can fall after midnight. An **Open 24 hours, every day** switch sets the whole week. The rules are shared with the server through `@ctrlp/schemas`, and the customer web app shows the server's text, so all three show the same hours.
 
 **FRs covered:** FR-01, FR-02, FR-03, FR-31, FR-32, FR-33, FR-44, FR-45.
 
@@ -79,8 +80,11 @@ Current stack: Windows Tauri 2 UI (`apps/print-shop`) + .NET 8 sidecar (`apps/pr
 - Order details displays payment, documents, page/copy/color/paper requirements, print-readiness against shop-offered printers, accept/reject, print-job state, reassign on FAILED, ready, and completion actions.
 - Short-lived document URLs are hash-checked before preview and audit `DOWNLOADED` / `PREVIEWED`. After a successful spool the assigned agent acknowledges shred; later downloads are rejected (`DOCUMENT_SHREDDED`).
 - Cash is collected only once the order is `READY`; tender/change and the collecting operator are recorded before pickup completion. Customer-visible order status remains the Firestore order document.
+- Multi-document orders get one job per document. Each document can be dispatched while the order is `SHOP_ACCEPTED` or `PRINTING`, so the agent claiming the first job no longer blocks the rest. The server moves the order to `READY` once every document has a completed job.
 
-**FRs covered:** FR-07, FR-08, FR-09, FR-10, FR-11, FR-12, FR-14, FR-15, FR-16, FR-17, FR-26, FR-28, FR-29, FR-30, FR-35/FR-36, FR-38 (mutations send `idempotencyKey` where the server stores one), FR-39 (lease conflicts surface as "another device claimed this job"), FR-40, FR-46.
+**FRs covered:** FR-07, FR-08, FR-09, FR-10, FR-11, FR-12, FR-14, FR-15, FR-16, FR-17, FR-26, FR-28, FR-29, FR-30, FR-35/FR-36, FR-38 (mutations send `idempotencyKey` where the server stores one), FR-39 (lease conflicts surface as "another device claimed this job"), FR-40, FR-46.  
+**Limit (FR-28):** the operator's **Mark ready** checks only existing jobs. A document that never got a job does not block it, and the server's `ready` transition only requires `PRINTING`.  
+**Limit (FR-26):** reassign changes `printerId` only. The job keeps its original agent and Windows printer name.
 
 ### Durable local queue (PRD Screen 4)
 
@@ -89,6 +93,10 @@ Current stack: Windows Tauri 2 UI (`apps/print-shop`) + .NET 8 sidecar (`apps/pr
 - The background worker is independent of RPC request handling. JSON-RPC job notifications update the Tauri queue UI live.
 - The per-user agent remains alive after the desktop window closes; a second launch reconnects to its stable pipe rather than running competing workers.
 - The cloud synchronizer uses a device-scoped credential, leases assigned jobs, stages PDF/PNG/JPEG under the agent data root, verifies hashes, reports lifecycle state, and acknowledges shred after spool.
+  - Each polled job is staged separately.
+  - A staging failure after a claim is reported `FAILED`.
+  - Claim and stage keys include `retryCount`, so cloud retries are picked up again.
+  - A local job is acknowledged only after its final report is accepted. See [`Order_to_Print_Execution_Runbook.md`](./Order_to_Print_Execution_Runbook.md).
 - PDF pages render through PDFium (`Docnet.Core`); PNG/JPEG render with GDI and all formats submit with `PrintDocument`, never raw `WritePrinter` bytes. The spooler ID is reported when observable.
 
 **FRs covered:** FR-18–FR-25, FR-26, FR-37, FR-38, FR-39, and secure cloud-to-agent handoff.
@@ -100,7 +108,12 @@ Current stack: Windows Tauri 2 UI (`apps/print-shop`) + .NET 8 sidecar (`apps/pr
 
 Delete each bullet when it ships.
 
-**MVP must-haves for this stack:** none remaining. The PRD Screen 1–6 and P0 FR table are implemented here unless marked partial or deferred below.
+**MVP must-haves for this stack:**
+
+- **FR-28 (remainder):** block **Mark ready for pickup**, in both the UI and the server's `ready` transition, until every document has a `COMPLETED` job.
+- **FR-26 (remainder):** reassign must also update `agentId`, `printerName`, and `printerSystemName` from the new printer. Without that, the agent prints on the original queue.
+
+Everything else in PRD Screens 1–6 and the P0 FR table is implemented here unless marked partial or deferred below.
 
 ### PRD polish and adjacent work (optional; not blocking “desktop MVP done”)
 
@@ -141,18 +154,18 @@ Duplex as a customer option, pages-per-sheet, orientation/scaling/collation/bind
 | FR-14 | Payment status | **Done** |
 | FR-15 | Accept | **Done** |
 | FR-16 | Reject | **Done** |
-| FR-17 | Create print jobs | **Done** (server dispatch + agent handoff) |
+| FR-17 | Create print jobs | **Done** (one job per document; dispatch allowed while `SHOP_ACCEPTED` or `PRINTING`) |
 | FR-18 | Local queue (real jobs) | **Done** (leased staging and durable SQLite execution) |
 | FR-19 | Route printer | **Done** (compatible enabled online route) |
 | FR-20 | Spool to printer | **Done** (PDF/JPEG/PNG through GDI driver path) |
 | FR-21 | Print progress | **Partial** (lifecycle events; no per-page driver progress) |
 | FR-22 | Print success | **Done** (spool submission; hardware confirmation remains driver-dependent) |
 | FR-23 | Print fail | **Done** (agent/server failure state) |
-| FR-24 | Retry | **Done** (local retry + server retry/reassign in queue and order details) |
+| FR-24 | Retry | **Done** (local retry + server retry in queue and order details; the agent re-claims retried jobs) |
 | FR-25 | Printer unavailable | **Done** (routing and executor reject unavailable queues) |
-| FR-26 | Reassign printer | **Done** (queue drawer and failed-job reassign) |
+| FR-26 | Reassign printer | **Partial** (UI and `printerId` update; agent and Windows printer name are not updated) |
 | FR-27 | Cash received | **Done** |
-| FR-28 | Ready for pickup | **Done** |
+| FR-28 | Ready for pickup | **Partial** (automatic `READY` waits for every document; manual ready does not) |
 | FR-29 | Complete order | **Done** |
 | FR-30 | History | **Done** |
 | FR-31 | Pricing config | **Done** |
@@ -180,10 +193,10 @@ Duplex as a customer option, pages-per-sheet, orientation/scaling/collation/bind
 | --- | --- | --- |
 | 1 Dashboard | KPIs, attention, recent orders, notifications | — |
 | 2 Orders | Streamed filters, search, date/payment filters, accept/reject, history | — |
-| 3 Order details | Preview/hash, readiness, dispatch, reassign, cash, pickup, shred | File size + customer type labels (optional polish) |
+| 3 Order details | Preview/hash, readiness, per-document dispatch, reassign, cash, pickup, shred | Ready gate for undispatched documents; reassign to another agent/queue; file size + customer type labels (optional polish) |
 | 4 Print queue | Unified local/cloud list, drawer, retry/reassign/cancel | Pause/resume unsupported |
 | 5 Printers | Discovery, caps, default, enable, offer color/A3, test page, preset display | Preset **editor** UI; duplex customer offer deferred |
-| 6 Settings | Profile, pricing, hours, capabilities, automation, diagnostics, log export | Notification **preferences** (in-app feed only) |
+| 6 Settings | Profile, pricing, 12-hour hours with 24-hour and past-midnight days, capabilities, automation, diagnostics, log export | Notification **preferences** (in-app feed only) |
 
 ---
 
@@ -202,5 +215,11 @@ Deferred product lines (not shop-desktop MVP): duplex customer option, finishing
 - Print-shop TypeScript checks and Vitest tests pass, including SSE event parsing, dashboard reducers, and order-filter tests.
 - Agent Release tests pass, including SQLite persistence / test-page enqueue / log export.
 - Agent Host Release build and Tauri Rust `cargo check` pass.
+- 2026-10-14:
+  - `@ctrlp/schemas` business-hours tests pass (10).
+  - Server tests pass (15), including PDF page counting and guest-cart helpers.
+  - Print-shop Vitest passes (24), including hours editor and validation.
+  - Agent tests pass (16), and the agent solution builds.
+  - Not run: a live multi-document order on a physical printer.
 
 Physical paper confirmation remains driver-dependent: spool acceptance is success for FR-20/FR-22.

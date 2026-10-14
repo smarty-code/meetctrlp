@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
+import { countPdfPages } from "@/src/modules/documents/pdf-page-count";
 import { isEncryptedPdf } from "@/src/modules/print-user/print-user.helpers";
 
 export function inspectDocument(bytes: Buffer, mimeType: "application/pdf" | "image/jpeg" | "image/png") {
@@ -24,7 +25,7 @@ export function inspectDocument(bytes: Buffer, mimeType: "application/pdf" | "im
     throw new AuthServiceError(400, "password-protected PDFs are not supported");
   }
 
-  const pageCount = bytes.toString("latin1").match(/\/Type\s*\/Page(?!s)/g)?.length ?? 0;
+  const pageCount = countPdfPages(bytes);
   if (pageCount < 1) {
     throw new AuthServiceError(400, "PDF has no pages or is corrupted");
   }
