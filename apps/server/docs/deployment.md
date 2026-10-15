@@ -36,7 +36,7 @@ Every check downloads the whole file from Railway into Google Cloud, so the time
 
 ## Desktop order stream on serverless
 
-`GET /api/v1/shops/{shopId}/orders/stream` is a long-lived SSE response. On App Hosting:
+`GET /api/v1/shops/{shopId}/orders/stream` is a long-lived SSE response. The [traffic plan](../../../docs/arc/DESKTOP_TRAFFIC_SCALING_PLAN.md) replaces it with Firestore listeners, which need no server capacity. Until then, on App Hosting:
 
 - **It's cut after 5 minutes.** The desktop app reconnects with backoff (0.5 s, doubling up to 10 s, in [`apps/print-shop/src/lib/cloud.ts`](../../print-shop/src/lib/cloud.ts)), so orders keep arriving.
 - **Reconnects cost reads.** Each reconnect sends a fresh `ORDERS_SNAPSHOT`, and today that re-reads the shop's order history (section 4.1 of the [traffic plan](../../../docs/arc/DESKTOP_TRAFFIC_SCALING_PLAN.md)). That's at least 12 snapshots an hour for each open desktop. The shop hub in section 7.4 of that plan removes most of this cost.
