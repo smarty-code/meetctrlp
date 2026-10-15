@@ -22,7 +22,7 @@ import { extendPrintUserSession } from "@/src/modules/print-user/print-user-sess
 export type { GuestPrincipal };
 
 export function readClientIp(request: Request) {
-  return clientIpFromHeaders(request.headers);
+  return clientIpFromHeaders(request.headers, process.env.CTRLP_PROXY_SECRET);
 }
 
 export async function readPrintUserCookie() {

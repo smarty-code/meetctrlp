@@ -2,7 +2,7 @@
 
 > **Status:** **Accepted**, version 2.2, 15 Oct 2026. The doorbell spike passed (7.1): the stream delivered every ring, with p95 latency of 77 ms, an idle cost of about 6.4 KB per PC-hour, and clean recovery at token expiry. Field checks on real shop networks are still running (implementation plan 3.3). **Implemented** on `fix/upload` (all three phases), not yet deployed or run against staging; see the implementation plan, section 13.
 > **History:** version 2.1 was revised after the minimized-window spike: a minimized WebView2 window doesn't deliver Firestore listener updates reliably, so nothing time-critical may run in the desktop's web view. Version 1 (server hub and SSE) is in git history (`ccadc8b`).
-> **Hosting:** Firebase App Hosting (serverless, on Cloud Run). See [`apps/server/docs/deployment.md`](../../apps/server/docs/deployment.md).
+> **Hosting:** the API runs on **Vercel** and the customer web app on Firebase App Hosting (changed 16 Oct 2026). The cost figures below were worked out for Cloud Run; Vercel's free tier and pricing differ, so recheck them with the cost check (implementation plan 12.2). See [`apps/server/docs/deployment.md`](../../apps/server/docs/deployment.md).
 > **Guides:** [developer guide](./traffic-scaling-v2/DEVELOPER_GUIDE.md) and [testing guide](./traffic-scaling-v2/TESTING_GUIDE.md).
 > **Implementation plan:** [`TRAFFIC_SCALING_V2_IMPLEMENTATION.md`](./TRAFFIC_SCALING_V2_IMPLEMENTATION.md) lists the file-level changes, contracts, work breakdown and tests.
 > **Scope:** `apps/server`, `apps/print-shop` (desktop UI), `apps/print-agent` (C# agent), and the customer web app `apps/printUserWebapp`.

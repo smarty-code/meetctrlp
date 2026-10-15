@@ -11,7 +11,7 @@ v1.<printUserId>.<shopId>.<expiresAtSeconds>.<ipTag>.<hmac>
 ```
 
 - `hmac` is an HMAC-SHA256 over the rest with `PRINT_USER_COOKIE_SECRET` ([`deployment.md`](./deployment.md#environment-variables)). Development without the variable uses a per-process secret, so a dev-server restart starts guests over.
-- `ipTag` is a short hash of the client IP. A cookie used from another network doesn't verify: cart routes return 401, and the next session start begins a new cart.
+- `ipTag` is a short hash of the client IP. Behind the web app's `/api` proxy the API reads the visitor's IP from `x-ctrlp-client-ip`, which it trusts only when `x-ctrlp-proxy-secret` matches `CTRLP_PROXY_SECRET` (Vercel overwrites `X-Forwarded-For` with the proxy's address). Otherwise it uses the first `X-Forwarded-For` entry. A cookie used from another network doesn't verify: cart routes return 401, and the next session start begins a new cart.
 - An expired, tampered or wrong-version cookie is treated the same way.
 - **Sliding expiry:** once the cookie is more than an hour old, the next request re-issues it with a fresh 12 hours and writes the session's new `expiresAt` (one write an hour at most). Cart writes set `expiresAt` too.
 - Routes that need the cart (`GET /public/session`, quote, order submit, uploads) read `printUsers/{printUserId}` once. Routes that don't (order tracking, mock confirm) don't read it at all.
@@ -72,7 +72,7 @@ Accepted types are PDF, JPEG, and PNG, up to 50 MB each. The server picks the ty
 | 500 | Storage or Firestore failed for a moment. | Retries up to 3 times. |
 | 429, 503, 504 | The hosting platform is scaling or timed out. | Retries up to 3 times. |
 
-On Firebase App Hosting this is the only upload step that runs on the server. See [`deployment.md`](./deployment.md#uploads-on-serverless) for cold starts, memory, and run settings.
+On Vercel this is the only upload step that runs on the server. See [`deployment.md`](./deployment.md#uploads) for cold starts, memory, and run settings.
 
 ## Cart rules
 

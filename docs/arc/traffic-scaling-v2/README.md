@@ -24,8 +24,8 @@ Shop PCs stop polling our server. Each PC's print agent keeps one cheap HTTPS co
 | P2-06 (desktop board, token from the agent) | Done and committed (`7fd1485`) | `fix/upload` |
 | P2-07, P3-01 to P3-03 (removals and docs, live tracking, signed cookie, guest trims, scale to zero) | Done and committed; staging cost and idle runs open | `fix/upload` |
 
-**Deploying:** follow [`apps/server/docs/deployment.md`](../../../apps/server/docs/deployment.md) (step by step, straight to `meetctrlp`) with the env blocks in [`docs/deploy/ENVIRONMENT.md`](../../deploy/ENVIRONMENT.md).
+**Deploying:** follow [`apps/server/docs/deployment.md`](../../../apps/server/docs/deployment.md) (step by step: the API on Vercel, the web app on Firebase App Hosting, the `meetctrlp` Firebase project) with the env blocks in [`docs/deploy/ENVIRONMENT.md`](../../deploy/ENVIRONMENT.md).
 
-**What's left** is ops and verification, not code: a staging project, deploying the indexes and rules, API key restrictions, budget alerts, the Cloud Scheduler job, the staging runs (3-hour agent run, end-to-end print, cost and idle checks), the field checks, and the manual cases in the testing guide. See developer guide section 8.
+**What's left** is ops and verification, not code: a staging project, deploying the indexes and rules, API key restrictions, budget alerts, the daily cron (Vercel Cron, set up by `apps/server/vercel.json` plus `CRON_SECRET`), the staging runs (3-hour agent run, end-to-end print, cost and idle checks), the field checks, and the manual cases in the testing guide. See developer guide section 8.
 
 **Urgent, separate from this work:** `apps/server/.env` and `.env.local` are tracked in git with the service-account key and S3 secret. Rotate both credentials and untrack the files. See developer guide section 8.

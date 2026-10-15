@@ -275,12 +275,13 @@ Needs a deployed backend ([`apps/server/docs/deployment.md`](../../../apps/serve
 
 | ID | Steps | Pass |
 | --- | --- | --- |
-| X1 | Check the API backend's run settings. | `minInstances: 0`; after 15 idle minutes, Cloud Run shows 0 instances. |
+| X1 | Check where things run. | The API answers on its Vercel URL with Fluid compute on and the function region next to Firestore; the web app's `apphosting.yaml` has `minInstances: 0`. |
 | X2 | **Idle check:** leave a shop PC open for 1 hour with no orders and its printers steady. | 0 API requests in the backend logs; 0 Firestore reads (Monitoring); doorbell download about 10 KB or less for the hour (Realtime Database → Usage). |
 | X3 | **Order script / cost check:** place 20 orders end to end (customer flow, printed by the agent) with counters on. | Reads, writes and requests per order within ±20% of design doc section 10.1. Sum the `request_ops` lines per order. |
 | X4 | `POST /api/v1/internal/maintenance/daily` without the header, then with a wrong one. | Both `401`. |
 | X5 | Call it with the right header after making an expired guest session with an uploaded file, and an order rejected 2 days ago. | 200 with counts. The session, its cart file and its Auth user are gone; the rejected order's files are deleted. A second run removes nothing new. |
-| X6 | Create the Cloud Scheduler job and run it once from the console. | Status "Success"; the log shows the clean-up counts. |
+| X6 | Vercel → Settings → Cron Jobs: the daily job is listed; press **Run**. Then call the route without `Authorization`. | The run's log shows `200` and the clean-up counts; the call without the header gets `401`. |
+| X8 | Set a wrong `CTRLP_PROXY_SECRET` on the web app (or remove it), roll out, and add a file to a cart. Then restore it. | With the wrong secret, cart calls fail with `401` after the first page; with the right one, the cart works across pages and two phones on different networks get separate carts. |
 | X7 | First request after an idle hour: upload a file and open the desktop board. | Both succeed; note the cold-start time (log `coldStart: true`). |
 
 ---
@@ -330,7 +331,7 @@ Copy this table into the PR or a test log, and fill in each row.
 | S1–S12 | | | | |
 | K1–K11 | | | | |
 | W1–W13 | | | | |
-| X1–X7 | | | | |
+| X1–X8 | | | | |
 | P1–P4 | | | | |
 | R1–R5 | | | | |
 

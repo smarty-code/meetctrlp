@@ -26,6 +26,20 @@ describe("print-user helpers", () => {
     assert.equal(clientIpFromHeaders(headers), "203.0.113.10");
   });
 
+  it("trusts the proxy's client IP only with the matching secret", () => {
+    const headers = new Headers({
+      "x-forwarded-for": "34.1.2.3",
+      "x-ctrlp-client-ip": "203.0.113.10",
+      "x-ctrlp-proxy-secret": "proxy-secret-value",
+    });
+    assert.equal(clientIpFromHeaders(headers, "proxy-secret-value"), "203.0.113.10");
+    assert.equal(clientIpFromHeaders(headers, "another-secret-value"), "34.1.2.3");
+    assert.equal(clientIpFromHeaders(headers), "34.1.2.3");
+
+    const unsigned = new Headers({ "x-forwarded-for": "34.1.2.3", "x-ctrlp-client-ip": "203.0.113.10" });
+    assert.equal(clientIpFromHeaders(unsigned, "proxy-secret-value"), "34.1.2.3");
+  });
+
   it("rejects office files and accepts printables", () => {
     assert.equal(
       officeFormatMessage("notes.docx"),

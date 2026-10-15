@@ -237,7 +237,7 @@ await uploadObject(
 
 ### Read an uploaded object safely
 
-A presigned `PUT` doesn't limit the body size, so check the size before downloading anything a client uploaded. On Firebase App Hosting an out-of-memory crash fails every request on the instance.
+A presigned `PUT` doesn't limit the body size, so check the size before downloading anything a client uploaded. On a serverless host (the API runs on Vercel) an out-of-memory crash fails every request on the instance.
 
 ```ts
 import { getObjectSize, isMissingObjectError, readObject } from "@ctrlp/firebase";

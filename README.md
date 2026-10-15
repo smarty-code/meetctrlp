@@ -164,8 +164,8 @@ Default `pnpm dev` at the root runs **only** the print-user web app. There is no
 | Path | Contents |
 | --- | --- |
 | [`apps/server/README.md`](apps/server/README.md) | Server layout, health endpoint |
-| [`apps/server/docs/deployment.md`](apps/server/docs/deployment.md) | Step-by-step deploy of the API and web app to Firebase App Hosting, rules and indexes, Cloud Scheduler, the desktop installer, and the test pass after a deploy |
-| [`docs/deploy/ENVIRONMENT.md`](docs/deploy/ENVIRONMENT.md) | Every env var for the API, web app and desktop, as copy-paste blocks (local files and `apphosting.yaml`), plus the secrets list |
+| [`apps/server/docs/deployment.md`](apps/server/docs/deployment.md) | Step-by-step deploy: the API on Vercel, the web app on Firebase App Hosting, rules and indexes, the daily cron, the desktop installer, and the test pass after a deploy |
+| [`docs/deploy/ENVIRONMENT.md`](docs/deploy/ENVIRONMENT.md) | Every env var for the API, web app and desktop, as copy-paste blocks (local files, the Vercel env, the web app's `apphosting.yaml`), plus the secrets list |
 | [`docs/arc/traffic-scaling-v2/README.md`](docs/arc/traffic-scaling-v2/README.md) | The doorbell design: developer and testing guides |
 | [`apps/printUserWebapp/README.md`](apps/printUserWebapp/README.md) | Customer app + `@ctrlp/ui` usage |
 | [`apps/print-shop/README.md`](apps/print-shop/README.md) | Desktop dev entry |
@@ -210,7 +210,7 @@ Default `pnpm dev` at the root runs **only** the print-user web app. There is no
 
 - **UI look and feel:** `docs/design-system/DESIGN copy.md`
 - **Shop-owner auth and device APIs:** `apps/server/docs/auth.md`
-- **Deploying (Firebase App Hosting):** `apps/server/docs/deployment.md`; env vars in `docs/deploy/ENVIRONMENT.md`
+- **Deploying (API on Vercel, web app on Firebase App Hosting):** `apps/server/docs/deployment.md`; env vars in `docs/deploy/ENVIRONMENT.md`
 - **Firebase package:** `packages/firebase/docs/`
 - **Agent coding rules:** `apps/print-agent/AGENTS.md`
 - **Print shop coding rules:** `apps/print-shop/AGENTS.md`

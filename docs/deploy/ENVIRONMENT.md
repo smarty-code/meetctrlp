@@ -1,15 +1,16 @@
 # Environment variables: copy-paste sheet
 
-Every variable each app reads, in blocks you can paste whole. Replace each `<…>` and nothing else. How to deploy is in [`apps/server/docs/deployment.md`](../../apps/server/docs/deployment.md).
+Every variable each app reads, in blocks you can paste whole. Replace each `<…>` and nothing else. How to deploy is in [`apps/server/docs/deployment.md`](../../apps/server/docs/deployment.md): the API runs on **Vercel**, the customer web app on **Firebase App Hosting**, and the desktop is an installer.
 
-**Never commit a filled-in `.env*` file.** Real values go in local, untracked files (`.env.local`, `.env.development.local`, `.env.production`) or in App Hosting secrets. The `apphosting.yaml` blocks below hold only plain values and secret **names**, so they're safe to commit.
+**Never commit a filled-in `.env*` file.** Real values go in local, untracked files (`.env.local`, `.env.production`), in Vercel's environment variables, or in App Hosting secrets. The `apphosting.yaml` block below holds only plain values and a secret **name**, so it's safe to commit.
 
 Values used below:
 
 | Placeholder | Where to get it |
 | --- | --- |
-| `<api-url>` | The API backend's URL from `apphosting:backends:create`, for example `https://ctrlp-api--meetctrlp.asia-southeast1.hosted.app` |
-| `<web-url>` | The web app backend's URL, for example `https://ctrlp-web--meetctrlp.asia-southeast1.hosted.app` |
+| `<api-url>` | The API's Vercel production URL, for example `https://ctrlp-api.vercel.app` (or your custom domain) |
+| `<web-url>` | The web app's App Hosting URL, for example `https://ctrlp-web--meetctrlp.asia-southeast1.hosted.app` |
+| `<random>` | A fresh random value: `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"` |
 | `<firebase-web-api-key>`, `<firebase-app-id>` | Firebase console → Project settings → General → Your apps → the Web app's config (`apiKey`, `appId`) |
 | `<s3-endpoint>`, `<s3-bucket>` | Railway → the bucket → Credentials |
 
@@ -46,7 +47,12 @@ DESKTOP_ORIGIN=
 # --- Secrets the server checks (optional locally) ---
 # Guest cookie signing, 32+ characters. Unset locally = a per-process secret (guests reset on restart).
 PRINT_USER_COOKIE_SECRET=
-# Header value for POST /api/v1/internal/maintenance/daily. Unset = the route always returns 401.
+# Shared with the web app's /api proxy: lets the API trust the visitor IP the proxy sends.
+# Optional locally (unset = use X-Forwarded-For); required on Vercel.
+CTRLP_PROXY_SECRET=
+# The daily clean-up accepts Authorization: Bearer <CRON_SECRET> (what Vercel Cron sends)...
+CRON_SECRET=
+# ...or x-ctrlp-maintenance-secret: <CTRLP_MAINTENANCE_SECRET> (any other scheduler, or by hand).
 CTRLP_MAINTENANCE_SECRET=
 # Header value for the payment-confirmed webhook.
 CTRLP_PAYMENT_WEBHOOK_SECRET=
@@ -67,120 +73,69 @@ ALLOW_MOCK_PAYMENTS=1
 
 Fallback if you can't use the base64 value: `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL` and `FIREBASE_PRIVATE_KEY` (with `\n` for line breaks) instead of `FIREBASE_SERVICE_ACCOUNT_BASE64`. `SERVICE_NAME` (default `ctrlp-server`) only changes the name in logs.
 
-### 1.2 App Hosting: `apps/server/apphosting.yaml` (whole file)
+### 1.2 Vercel: Production environment
 
-```yaml
-# Firebase App Hosting backend for apps/server (backend ctrlp-api, root directory apps/server).
-# Secrets are referenced by name; create them first (docs/deploy/ENVIRONMENT.md, "API secrets").
+Vercel project `ctrlp-api` → Settings → **Environment Variables** → paste this whole block into the **Key** field (Vercel splits it into one variable per line), fill in the values, choose **Production** (and Preview if you use preview deployments), and mark everything except the URLs and `ENABLE_EXPERIMENTAL_COREPACK` as **Sensitive**. Then redeploy: env changes apply to new deployments only.
 
-runConfig:
-  cpu: 1
-  # `complete` holds a whole upload (up to 50 MB) in memory while it counts pages.
-  memoryMiB: 1024
-  concurrency: 80
-  # Scale to zero: nothing holds a connection open. Set to 1 to avoid cold starts (always billed).
-  minInstances: 0
+```dotenv
+# --- Build ---
+# Use the pnpm version pinned in the root package.json (pnpm 11); Vercel's own pnpm stops at 10.
+ENABLE_EXPERIMENTAL_COREPACK=1
 
-env:
-  # --- Firebase ---
-  - variable: FIREBASE_SERVICE_ACCOUNT_BASE64
-    secret: FIREBASE_SERVICE_ACCOUNT_BASE64
-    availability:
-      - RUNTIME
-  - variable: FIREBASE_WEB_API_KEY
-    secret: FIREBASE_WEB_API_KEY
-    availability:
-      - RUNTIME
-  - variable: FIREBASE_DATABASE_URL
-    value: https://meetctrlp-default-rtdb.asia-southeast1.firebasedatabase.app
-    availability:
-      - RUNTIME
+# --- Firebase Admin ---
+FIREBASE_SERVICE_ACCOUNT_BASE64=<base64 of the NEW service-account JSON>
+FIREBASE_WEB_API_KEY=<firebase-web-api-key>
+FIREBASE_DATABASE_URL=https://meetctrlp-default-rtdb.asia-southeast1.firebasedatabase.app
 
-  # --- Storage (Railway S3) ---
-  - variable: S3_ENDPOINT
-    value: <s3-endpoint>
-    availability:
-      - RUNTIME
-  - variable: S3_BUCKET_NAME
-    value: <s3-bucket>
-    availability:
-      - RUNTIME
-  - variable: S3_REGION
-    value: auto
-    availability:
-      - RUNTIME
-  - variable: S3_ACCESS_KEY_ID
-    secret: S3_ACCESS_KEY_ID
-    availability:
-      - RUNTIME
-  - variable: S3_SECRET_ACCESS_KEY
-    secret: S3_SECRET_ACCESS_KEY
-    availability:
-      - RUNTIME
+# --- Storage: Railway S3 ---
+S3_ENDPOINT=<s3-endpoint>
+S3_BUCKET_NAME=<s3-bucket>
+S3_REGION=auto
+S3_ACCESS_KEY_ID=<NEW s3 access key id>
+S3_SECRET_ACCESS_KEY=<NEW s3 secret access key>
 
-  # --- URLs ---
-  - variable: PRINT_USER_ORIGIN
-    value: <web-url>
-    availability:
-      - RUNTIME
+# --- URLs ---
+PRINT_USER_ORIGIN=<web-url>
 
-  # --- Secrets the server checks ---
-  - variable: PRINT_USER_COOKIE_SECRET
-    secret: PRINT_USER_COOKIE_SECRET
-    availability:
-      - RUNTIME
-  - variable: CTRLP_MAINTENANCE_SECRET
-    secret: CTRLP_MAINTENANCE_SECRET
-    availability:
-      - RUNTIME
-  - variable: CTRLP_PAYMENT_WEBHOOK_SECRET
-    secret: CTRLP_PAYMENT_WEBHOOK_SECRET
-    availability:
-      - RUNTIME
-  - variable: PRINTER_INVENTORY_API_KEY
-    secret: PRINTER_INVENTORY_API_KEY
-    availability:
-      - RUNTIME
-
-  # --- Online payments without a gateway ---
-  # There's no payment gateway yet, so ONLINE orders can only be paid through the mock route.
-  # "1" lets any guest mark their own order paid. Leave it out to allow cash orders only.
-  # - variable: ALLOW_MOCK_PAYMENTS
-  #   value: "1"
-  #   availability:
-  #     - RUNTIME
-
-  # --- Cost investigation (turn on for the staging cost check, then remove) ---
-  # - variable: FIRESTORE_OP_COUNTERS
-  #   value: "1"
-  #   availability:
-  #     - RUNTIME
+# --- Secrets ---
+# Guest cookie signing. Required in production. Changing it signs every guest out.
+PRINT_USER_COOKIE_SECRET=<random>
+# Must equal CTRLP_PROXY_SECRET on the web app (App Hosting secret).
+CTRLP_PROXY_SECRET=<random>
+# Vercel Cron sends Authorization: Bearer <CRON_SECRET> to the daily clean-up.
+CRON_SECRET=<random>
+# Header value for the payment-confirmed webhook (x-ctrlp-payment-secret).
+CTRLP_PAYMENT_WEBHOOK_SECRET=<random>
+# Header value for the printer inventory upload (x-printer-inventory-key).
+PRINTER_INVENTORY_API_KEY=<random>
 ```
 
-### API secrets
+Optional lines to add to the same block:
 
-Create each with hidden input (the value never goes into history or a file):
+```dotenv
+# There's no payment gateway yet, so ONLINE orders can only be paid through the mock route.
+# 1 lets any guest mark their own order paid. Leave it out to allow cash orders only.
+ALLOW_MOCK_PAYMENTS=1
+# Log a request_ops line per request (Firestore reads/writes, rings). Turn on for the cost check, then remove.
+FIRESTORE_OP_COUNTERS=1
+# Only if another scheduler (not Vercel Cron) calls the clean-up with a header.
+CTRLP_MAINTENANCE_SECRET=<random>
+```
+
+Or with the Vercel CLI, one variable at a time (the value is read from the prompt, not your history):
 
 ```bash
-pnpm exec firebase apphosting:secrets:set <NAME> --project meetctrlp
+pnpm dlx vercel env add PRINT_USER_COOKIE_SECRET production
 ```
 
-| Secret | Value | How to produce it |
-| --- | --- | --- |
-| `FIREBASE_SERVICE_ACCOUNT_BASE64` | The new service-account key (step 0 of the deploy guide), base64 | PowerShell: `[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\key.json")) \| Set-Clipboard`, then paste at the prompt. Delete the JSON file afterwards. |
-| `FIREBASE_WEB_API_KEY` | The Web app's `apiKey` | Firebase console → Project settings |
-| `S3_ACCESS_KEY_ID` | New Railway key ID | Railway → bucket → Credentials |
-| `S3_SECRET_ACCESS_KEY` | New Railway secret | Same |
-| `PRINT_USER_COOKIE_SECRET` | 32+ random characters | `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"` |
-| `CTRLP_MAINTENANCE_SECRET` | Random | Same command. Cloud Scheduler sends it (deploy guide step 9). |
-| `CTRLP_PAYMENT_WEBHOOK_SECRET` | Random | Same command. Whoever calls the payment webhook sends it as `x-ctrlp-payment-secret`. |
-| `PRINTER_INVENTORY_API_KEY` | Random | Same command. Sent as `x-printer-inventory-key` to `POST /api/printers/inventory`. |
+### API secrets: how to produce each value
 
-Then let the backend read them (once per secret, after the backend exists):
-
-```bash
-pnpm exec firebase apphosting:secrets:grantaccess FIREBASE_SERVICE_ACCOUNT_BASE64,FIREBASE_WEB_API_KEY,S3_ACCESS_KEY_ID,S3_SECRET_ACCESS_KEY,PRINT_USER_COOKIE_SECRET,CTRLP_MAINTENANCE_SECRET,CTRLP_PAYMENT_WEBHOOK_SECRET,PRINTER_INVENTORY_API_KEY --backend ctrlp-api --project meetctrlp
-```
+| Variable | Value |
+| --- | --- |
+| `FIREBASE_SERVICE_ACCOUNT_BASE64` | The new service-account key (deploy guide step 0), base64. PowerShell: `[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\key.json")) \| Set-Clipboard`, then paste. Delete the JSON file afterwards. |
+| `FIREBASE_WEB_API_KEY` | The Web app's `apiKey` (Firebase console → Project settings). |
+| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | The new Railway key (Railway → bucket → Credentials). |
+| `PRINT_USER_COOKIE_SECRET`, `CTRLP_PROXY_SECRET`, `CRON_SECRET`, `CTRLP_PAYMENT_WEBHOOK_SECRET`, `PRINTER_INVENTORY_API_KEY` | A separate `<random>` each. Save `CTRLP_PROXY_SECRET` for the web app (section 2.2). |
 
 ### Every API variable
 
@@ -193,7 +148,10 @@ pnpm exec firebase apphosting:secrets:grantaccess FIREBASE_SERVICE_ACCOUNT_BASE6
 | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | secret | yes | |
 | `PRINT_USER_ORIGIN` | plain | yes | The web app's URL (QR codes, customer links, CORS). Comma-separate to add a custom domain. |
 | `PRINT_USER_COOKIE_SECRET` | secret | **yes in production** | Without it every guest request fails with `503 authentication is not configured`. Changing it signs every guest out. |
-| `CTRLP_MAINTENANCE_SECRET` | secret | for the clean-up | Unset: the maintenance route always returns 401. |
+| `CTRLP_PROXY_SECRET` | secret | **yes behind the web app on Vercel** | Lets the API trust the visitor IP the web app's proxy sends. Must match the web app's. Missing or different: guest carts fail with 401. |
+| `CRON_SECRET` | secret | for the Vercel cron | Vercel Cron sends it as `Authorization: Bearer …` to the daily clean-up. Unset: the cron gets 401. |
+| `CTRLP_MAINTENANCE_SECRET` | secret | no | Lets another scheduler, or you, call the clean-up with `x-ctrlp-maintenance-secret`. |
+| `ENABLE_EXPERIMENTAL_COREPACK` | plain | yes on Vercel | `1`: build with the repo's pinned pnpm 11. |
 | `CTRLP_PAYMENT_WEBHOOK_SECRET` | secret | for the webhook | Unset: the payment webhook rejects every call. |
 | `PRINTER_INVENTORY_API_KEY` | secret | for inventory uploads | Unset: `POST /api/printers/inventory` is refused. |
 | `DESKTOP_ORIGIN` | plain | no | Extra CORS origins. |
@@ -219,11 +177,22 @@ NEXT_PUBLIC_FIREBASE_API_KEY=<firebase-web-api-key>
 NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=meetctrlp.firebaseapp.com
 NEXT_PUBLIC_FIREBASE_PROJECT_ID=meetctrlp
 NEXT_PUBLIC_FIREBASE_APP_ID=<firebase-app-id>
+
+# Server-only. Same value as the API's CTRLP_PROXY_SECRET. Optional locally.
+CTRLP_PROXY_SECRET=
 ```
 
 ### 2.2 App Hosting: `apps/printUserWebapp/apphosting.yaml` (whole file)
 
-`NEXT_PUBLIC_*` values are built into the app, so they need `BUILD`; the `/api` proxy also reads the API URL at runtime.
+`NEXT_PUBLIC_*` values are built into the app, so they need `BUILD`; the `/api` proxy also reads the API URL at runtime. Create the proxy secret first, with the **same value** as the API's `CTRLP_PROXY_SECRET`:
+
+```bash
+pnpm exec firebase apphosting:secrets:set CTRLP_PROXY_SECRET --project meetctrlp
+```
+
+```bash
+pnpm exec firebase apphosting:secrets:grantaccess CTRLP_PROXY_SECRET --backend ctrlp-web --project meetctrlp
+```
 
 ```yaml
 # Firebase App Hosting backend for apps/printUserWebapp (backend ctrlp-web, root directory apps/printUserWebapp).
@@ -260,6 +229,11 @@ env:
     availability:
       - BUILD
       - RUNTIME
+  # Server-only: signs the visitor IP the /api proxy sends to the API (Vercel overwrites X-Forwarded-For).
+  - variable: CTRLP_PROXY_SECRET
+    secret: CTRLP_PROXY_SECRET
+    availability:
+      - RUNTIME
 ```
 
 The Firebase web `apiKey` and `appId` are public by design (every visitor's browser gets them), so a plain value is fine. Restrict the key instead (deploy guide step 10).
@@ -268,6 +242,7 @@ The Firebase web `apiKey` and `appId` are public by design (every visitor's brow
 | --- | --- |
 | `NEXT_PUBLIC_API_BASE_URL` | The API URL. A change needs a new rollout. |
 | `NEXT_PUBLIC_FIREBASE_API_KEY`, `_AUTH_DOMAIN`, `_PROJECT_ID`, `_APP_ID` | Live tracking. Without them the tracking page reads once and shows Refresh. |
+| `CTRLP_PROXY_SECRET` | Secret, runtime only. Same value as the API's. Without it, guests behind the proxy get 401 on cart calls. |
 
 ---
 

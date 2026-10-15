@@ -1,3 +1,5 @@
+import { timingSafeEqual } from "node:crypto";
+
 export const PRINT_USER_COOKIE = "ctrlp_print_user";
 export const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 export const MAX_GUEST_FILES = 10;
@@ -24,7 +26,33 @@ export function shopCustomerUrl(slug: string) {
   return `${printUserOrigin()}/s/${encodeURIComponent(slug)}`;
 }
 
-export function clientIpFromHeaders(headers: { get(name: string): string | null }): string {
+/** Set by the web app's /api proxy: the visitor's IP, trusted only with the matching proxy secret. */
+export const PROXY_CLIENT_IP_HEADER = "x-ctrlp-client-ip";
+export const PROXY_SECRET_HEADER = "x-ctrlp-proxy-secret";
+
+function sameSecret(expected: string, supplied: string) {
+  const left = Buffer.from(expected);
+  const right = Buffer.from(supplied);
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+/**
+ * The caller's IP. Behind the web app's proxy the platform's own X-Forwarded-For names the proxy,
+ * not the visitor (Vercel overwrites the header), so the proxy sends the visitor's IP separately
+ * with a shared secret. Without a matching secret that header is ignored.
+ */
+export function clientIpFromHeaders(
+  headers: { get(name: string): string | null },
+  proxySecret?: string,
+): string {
+  const suppliedSecret = headers.get(PROXY_SECRET_HEADER);
+  if (proxySecret && suppliedSecret && sameSecret(proxySecret, suppliedSecret)) {
+    const proxied = headers.get(PROXY_CLIENT_IP_HEADER)?.trim();
+    if (proxied) {
+      return proxied;
+    }
+  }
+
   const forwarded = headers.get("x-forwarded-for");
   if (forwarded) {
     const first = forwarded.split(",")[0]?.trim();

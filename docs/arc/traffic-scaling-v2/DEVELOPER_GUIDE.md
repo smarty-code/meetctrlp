@@ -56,7 +56,7 @@ Five rules hold everywhere:
 | Devices | `src/modules/devices/device.service.ts` | `registerShopDevice`, `touchAgentActivity` (`lastActiveAt`, at most every 10 minutes), `markDeviceOffline` (the agent and its printers). No heartbeat. |
 | Board, history, search | `src/modules/orders/board.service.ts`, `board-model.ts` | `getBoard(since)`: the full board, or changes since a cursor (5 s overlap, cap 200, cursors older than a day get the full board). `listOrderHistory` and `searchOrders`: paged, newest first, shop-time dates (Asia/Kolkata). |
 | Shop config cache | `src/modules/shops/shop-config.service.ts` → `getShopConfigByShopId` | 60 s per-instance cache; `invalidateShopConfig` on settings writes. |
-| Maintenance | `src/modules/maintenance/maintenance.service.ts`, `app/api/v1/internal/maintenance/daily/route.ts` | Daily clean-up from Cloud Scheduler (header `x-ctrlp-maintenance-secret`): old tracking copies, expired guest sessions (files and Auth users), files of rejected and cancelled orders. |
+| Maintenance | `src/modules/maintenance/maintenance.service.ts`, `app/api/v1/internal/maintenance/daily/route.ts` | Daily clean-up from Vercel Cron (`GET` with `Authorization: Bearer <CRON_SECRET>`, scheduled in `apps/server/vercel.json`), or any scheduler with the `x-ctrlp-maintenance-secret` header: old tracking copies, expired guest sessions (files and Auth users), files of rejected and cancelled orders. |
 | Guest cookie | `src/modules/print-user/print-user-cookie.ts` | Pure: `signGuestCookie`, `verifyGuestCookie`, `ipTag`, `shouldReissueCookie`, `cookieSecret`. Format `v1.<printUserId>.<shopId>.<expSec>.<ipTag>.<hmac>`. |
 | Guest requests | `src/modules/print-user/print-user-http.ts`, `print-user-session.service.ts`, `print-user.service.ts` | `requirePrintUserSession` reads the guest from the cookie with no Firestore read; `slideSession` re-issues it hourly; `loadGuestSession` reads the cart only where it's needed; `getGuestOrderTracking` returns the tracking copy. |
 | Guest token | `app/api/v1/public/shops/[slug]/session/route.ts` | Returns `firebaseToken` (a custom token, uid = `printUserId`). |
@@ -253,7 +253,7 @@ Merging: `work` = any; `last` = the most important event (paid > submitted > que
 
 ### 6.2 Environment
 
-Copy-paste blocks for every app (local files and `apphosting.yaml`) are in [`docs/deploy/ENVIRONMENT.md`](../../deploy/ENVIRONMENT.md). The variables this design adds:
+Copy-paste blocks for every app (local files, the API's Vercel env, the web app's `apphosting.yaml`) are in [`docs/deploy/ENVIRONMENT.md`](../../deploy/ENVIRONMENT.md). The variables this design adds:
 
 Server, `apps/server`. Set real values outside git; see section 8.
 
@@ -262,7 +262,8 @@ Server, `apps/server`. Set real values outside git; see section 8.
 | `FIREBASE_SERVICE_ACCOUNT_BASE64`, `FIREBASE_WEB_API_KEY` | Everything | As before |
 | `FIREBASE_DATABASE_URL` | Doorbell rings | `https://meetctrlp-default-rtdb.asia-southeast1.firebasedatabase.app`, or `http://127.0.0.1:9000?ns=<project>-default-rtdb` for the emulator. Unset = rings skipped (`ring_skipped` logged once). |
 | `PRINT_USER_COOKIE_SECRET` | Guest cookies | 32+ random characters. Optional locally: without it, `next dev` uses a per-process secret, so guests start over after a restart. **Required in production.** |
-| `CTRLP_MAINTENANCE_SECRET` | The daily clean-up route | Optional locally. |
+| `CRON_SECRET`, `CTRLP_MAINTENANCE_SECRET` | The daily clean-up route | Optional locally. `CRON_SECRET` is what Vercel Cron sends. |
+| `CTRLP_PROXY_SECRET` | Guest IP behind the web app's proxy | Same value in the API and the web app. Required on Vercel, which overwrites `X-Forwarded-For`; optional locally. |
 | `ALLOW_MOCK_PAYMENTS=1` | Online payment in the web app | Put it in `apps/server/.env.development.local` (read only by `next dev`). **Never in production.** |
 | `FIRESTORE_OP_COUNTERS=1` | Cost logging | Optional; logs `request_ops` per request. |
 
@@ -290,7 +291,7 @@ Firebase emulators (Auth 9099, Firestore 8080, Database 9000):
 pnpm firebase:emulators
 ```
 
-Run the daily clean-up by hand (with `CTRLP_MAINTENANCE_SECRET` set in the server's env and in your shell):
+Run the daily clean-up by hand (with `CTRLP_MAINTENANCE_SECRET` set in the server's env and in your shell; Vercel Cron instead sends `Authorization: Bearer <CRON_SECRET>`):
 
 ```bash
 curl -s -X POST http://localhost:3000/api/v1/internal/maintenance/daily -H "x-ctrlp-maintenance-secret: $CTRLP_MAINTENANCE_SECRET"

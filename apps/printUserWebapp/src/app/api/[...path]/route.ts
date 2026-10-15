@@ -1,4 +1,7 @@
 const TARGET = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000").replace(/\/$/, "")
+// Server-only. Lets the API trust x-ctrlp-client-ip: hosts like Vercel overwrite X-Forwarded-For
+// with the caller's address, which here would be this proxy, not the visitor.
+const PROXY_SECRET = process.env.CTRLP_PROXY_SECRET
 
 type RouteContext = { params: Promise<{ path: string[] }> }
 
@@ -12,6 +15,13 @@ async function proxy(request: Request, context: RouteContext) {
   const forwarded =
     request.headers.get("x-forwarded-for") ?? request.headers.get("x-real-ip") ?? "127.0.0.1"
   headers.set("x-forwarded-for", forwarded)
+  // Never pass on a visitor's own copy of these headers.
+  headers.delete("x-ctrlp-client-ip")
+  headers.delete("x-ctrlp-proxy-secret")
+  if (PROXY_SECRET) {
+    headers.set("x-ctrlp-client-ip", forwarded.split(",")[0]?.trim() || "127.0.0.1")
+    headers.set("x-ctrlp-proxy-secret", PROXY_SECRET)
+  }
 
   const body =
     request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer()
