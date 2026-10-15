@@ -31,7 +31,7 @@ The deployed rules and indexes are in this package, wired up by the repo-root `f
 | `firestore.rules` | Clients can only `get` their own `orderTracking/{orderId}`; everything else is server-only |
 | `database.rules.json` | A shop user can read only `/doorbell/{shopId}` for their own `shopId` claim; no client writes |
 | `firestore.indexes.json` | Composite indexes for agent `sync`, the board, history and search |
-| `test/rules.test.ts` | Rules tests: `pnpm firebase:rules:test` from the repo root (needs Java 11+ for the emulators) |
+| `test/rules.test.ts` | Rules tests: `pnpm firebase:rules:test` from the repo root (needs JDK 21+ for the emulators; runs under the `demo-ctrlp-rules` project, never a real one) |
 
 Deploy indexes first and wait for them to build, then the rules: `pnpm firebase:deploy:indexes`, then `pnpm firebase:deploy:rules`. Background: `docs/arc/TRAFFIC_SCALING_V2_IMPLEMENTATION.md` section 7.
 
