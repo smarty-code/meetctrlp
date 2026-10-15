@@ -1,4 +1,5 @@
 import {
+  ApiError,
   completeDocumentUpload,
   createDocumentIntent,
   deleteGuestDocument,
@@ -12,6 +13,8 @@ export const MAX_DOCUMENTS_PER_ORDER = 10
 export const MAX_FILE_SIZE = 50 * 1024 * 1024
 /** Parallel uploads per batch; more than this mostly competes for a phone's uplink. */
 export const UPLOAD_CONCURRENCY = 3
+/** Tries for the server-side file check, which a serverless host can drop while scaling. */
+const COMPLETE_ATTEMPTS = 3
 
 type PrintableMime = GuestDocumentDto["mimeType"]
 
@@ -117,6 +120,28 @@ async function putWithRetry(uploadUrl: string, file: File, mimeType: string, onP
   }
 }
 
+/** A dropped connection, timeout, rate limit, or server error, as opposed to a file the server rejected. */
+function isTransientFailure(error: unknown) {
+  if (!(error instanceof ApiError)) return true
+  return error.status === 408 || error.status === 429 || error.status >= 500
+}
+
+/**
+ * `complete` is idempotent: a document that is already READY is returned as is. So a cold start,
+ * a 429/5xx while instances scale, or a lost response is retried instead of discarding an upload
+ * that already reached storage. A 400 means the file itself is unusable and is not retried.
+ */
+async function completeWithRetry(docId: string) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await completeDocumentUpload(docId)
+    } catch (error) {
+      if (attempt >= COMPLETE_ATTEMPTS || !isTransientFailure(error)) throw error
+      await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** (attempt - 1)))
+    }
+  }
+}
+
 /**
  * Uploads one file into the guest cart: intent -> storage PUT -> server inspection.
  * On failure the server-side intent is discarded so it does not hold a cart slot.
@@ -133,7 +158,7 @@ export async function uploadGuestFile(
   })
   try {
     await putWithRetry(intent.uploadUrl, file, intent.document.mimeType, onProgress)
-    const document = await completeDocumentUpload(intent.document.id)
+    const document = await completeWithRetry(intent.document.id)
     cacheUploadedFile(document.id, file)
     return { document, file }
   } catch (error) {

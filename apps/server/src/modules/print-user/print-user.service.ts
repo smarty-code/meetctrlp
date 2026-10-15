@@ -1,6 +1,8 @@
 import {
   createPresignedUploadUrl,
   deleteObject,
+  getObjectSize,
+  isMissingObjectError,
   readObject,
 } from "@ctrlp/firebase";
 import type {
@@ -149,11 +151,35 @@ export async function completeGuestDocument(session: PrintUserSession, docId: st
     return document;
   }
 
+  // A missing object is the client's to fix (400). Any other storage failure is rethrown as a 500,
+  // which the web app retries, so a transient outage does not throw away a finished upload.
+  const missingUpload = (error: unknown) => {
+    if (isMissingObjectError(error)) {
+      return new AuthServiceError(400, "upload was not found. Retry the file upload.");
+    }
+    return error;
+  };
+
+  // Check the size before downloading. A presigned PUT does not cap the body, and buffering an
+  // oversized object would exhaust the memory of a serverless instance and every request on it.
+  let storedBytes: number;
+  try {
+    storedBytes = await getObjectSize(document.storageKey);
+  } catch (error) {
+    throw missingUpload(error);
+  }
+  if (storedBytes > MAX_FILE_BYTES) {
+    await removeGuestDocument(session.id, document).catch(() => undefined);
+    throw new AuthServiceError(400, "file exceeds the 50MB limit");
+  }
+
   let bytes: Buffer;
   try {
-    bytes = Buffer.from(await readObject(document.storageKey));
-  } catch {
-    throw new AuthServiceError(400, "upload was not found. Retry the file upload.");
+    const body = await readObject(document.storageKey);
+    // A view over the downloaded bytes, not a copy, so a 50 MB file costs 50 MB of memory, not 100.
+    bytes = Buffer.from(body.buffer, body.byteOffset, body.byteLength);
+  } catch (error) {
+    throw missingUpload(error);
   }
 
   let inspected: ReturnType<typeof inspectDocument>;

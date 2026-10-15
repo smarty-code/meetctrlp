@@ -58,7 +58,7 @@ The Print User Web App is engineered with a strict 5-layer architecture to ensur
 
 | # | Screen / Route | Planned Spec Features | Implemented State | Modifications / Gap Resolutions |
 |---|---|---|---|---|
-| **01** | **Upload Documents** (`/`) | • QR shop context<br>• Multi-file upload<br>• Supported formats (.pdf, .jpg, .png, .doc, .docx, .ppt, .pptx)<br>• File validation & size limit<br>• Upload progress & retry<br>• Shop Info trigger | ✅ **100% Complete** | • Added Hero section with live shop open/closed sticker.<br>• Added "We Promise" trust pillar card.<br>• Added FAQ accordion and brand footer.<br>• Added client-side 50MB and extension validation. |
+| **01** | **Upload Documents** (`/`) | • QR shop context<br>• Multi-file upload<br>• Supported formats (.pdf, .jpg, .png, .doc, .docx, .ppt, .pptx)<br>• File validation & size limit<br>• Upload progress & retry<br>• Shop Info trigger | ✅ **100% Complete** | • Added Hero section with live shop open/closed sticker.<br>• Added "We Promise" trust pillar card.<br>• Added FAQ accordion and brand footer.<br>• Added client-side 50MB and extension validation.<br>• Moves on to Customize by itself once every file is uploaded (no Continue bar).<br>• Upload button doubles as a combined progress bar. |
 | **02** | **Customize Prints** (`/customize`) | • Document selector & carousel<br>• Canvas PDF/Image preview<br>• Copies stepper<br>• Color mode (B&W vs Color)<br>• Paper size (A4)<br>• Page selection ("all" vs "selected" e.g., `1,3,5-8`)<br>• Apply to all files<br>• *Explicitly exclude orientation/duplex* | ✅ **100% Complete** | • Replaced initial `OrientationSelector` with `PageSelectionControl`.<br>• Connected `parsePageSelection` with validation against page count.<br>• Updated dynamic price & page calculation.<br>• Touch-swipe carousel and real PDF canvas rendering. |
 | **03** | **Review Order** (`/review`) | • Shop identity summary<br>• Itemized document review list<br>• Filename & specs display<br>• Thumbnail preview<br>• Copies quick adjustment<br>• Delete item with price update<br>• Authoritative price refresh simulation<br>• Edit document navigation | ✅ **100% Complete** | • Restored document filename to card headline.<br>• Added interactive stepper & delete button directly in review list.<br>• Synchronizes draft with Screen 02 via `selectedId` query parameter.<br>• Simulated authoritative price change banner. |
 | **04** | **Payment** (`/payment`) | • Order ID & shop summary<br>• Prominent payable amount<br>• UPI / Online payment<br>• Cash at shop option<br>• Payment states (Pending, Processing, Verified, Failed)<br>• Duplicate payment prevention | ✅ **100% Complete** | • Full state machine simulation with retry.<br>• Clear counter collection messaging for Cash-at-Shop.<br>• Stores submitted order into session storage for tracking.<br>• Full shop address display with MapPin icon (no truncation).<br>• Fixed/sticky mobile footer CTA with safe-area support.<br>• Removed redundant "Amount to pay" from order card to consolidate with footer. |
@@ -71,7 +71,7 @@ The Print User Web App is engineered with a strict 5-layer architecture to ensur
 
 1. **Screen 01 UX Enhancements:**
    - Instead of a bare upload box, the landing page includes a trust-building Hero banner, shop availability indicator ("Printing at XYZ • Open"), "We Promise" guarantees (Zero Privacy Leaks, Instant Pickup, Crisp Prints), and an interactive FAQ accordion.
-   - Added a floating bottom order indicator that tracks uploaded file count and triggers the configuration transition.
+   - Added a floating bottom order indicator that tracks uploaded file count and triggers the configuration transition. Removed on 15 Oct 2026; see item 7.
 
 2. **Screen 02 Scope Alignment (Executed):**
    - **Discrepancy:** The initial implementation included an `OrientationSelector` (Portrait vs Landscape), which was explicitly excluded in Section 6 and Section 17 of the MVP specification. Meanwhile, `PageSelectionControl` was not mounted in the main page.
@@ -106,6 +106,22 @@ The Print User Web App is engineered with a strict 5-layer architecture to ensur
      - The shop info drawer shows today, the status, and the full week. The home pill and review card use the same text.
      - Late-night hours and 24-hour days display correctly.
 
+7. **Upload page flow and serverless hosting (15 Oct 2026):**
+   - **Discrepancy:**
+     - After uploading, the shopper had to find and tap the blue **PRINT ORDER** bar to continue.
+     - The file list scrolled inside a fixed-height box, hiding some files.
+     - The upload button showed only a spinner, with no sense of how much was left.
+     - The server will run on Firebase App Hosting (serverless). Cold starts, instance memory, and dropped requests could make the server's file check slow or fail, which would discard uploads that had already reached storage.
+   - **Resolution:**
+     - The page moves on to Customize by itself once every file is uploaded, and the floating bar is gone.
+     - An outlined **Continue with N documents** button appears only when moving on by itself can't happen: the shopper came back from Customize, or some uploads failed.
+     - The file list grows with the files.
+     - The upload button fills as a progress bar with one size-weighted percentage for all files and a wavy, flat leading edge. It reads **Checking documents…** during the server check.
+     - The web app retries the server check up to 3 times on dropped connections, 408, 429, and 5xx.
+     - The server reads a file's size before downloading it and doesn't copy the download.
+     - Run settings live in `apps/server/apphosting.yaml`: 1 GiB memory, one warm instance.
+     - Details: [`apps/printUserWebapp/README.md`](../../../../apps/printUserWebapp/README.md#upload-page) and [`apps/server/docs/deployment.md`](../../../../apps/server/docs/deployment.md).
+
 ---
 
 ## 4. Feature Tracking Checklist
@@ -116,10 +132,13 @@ The Print User Web App is engineered with a strict 5-layer architecture to ensur
 - [x] Client-side type validation (PDF, JPEG, PNG by MIME type, extension, or file signature). Word and PowerPoint show "not supported yet"; other gallery images are converted to JPEG when the browser can decode them.
 - [x] File size validation (max 50MB per file with error badge) and the 10-documents-per-order limit before uploading.
 - [x] Real uploads to storage with per-file progress, 3 at a time, one automatic retry, and individual file retry and remove.
+- [x] Server file check retried up to 3 times on serverless cold starts, scaling errors, and dropped connections.
+- [x] Upload button doubles as a progress bar: one size-weighted percentage for all files, **Checking documents…** during the server check.
+- [x] File list grows with the number of files (no fixed-height scroll box).
 - [x] Files already in the server cart are listed after a reload or when coming back from Customize.
 - [x] Persistent IndexedDB file caching via `file-store.ts`.
 - [x] "Shop Info" trigger opening secondary Screen 06 modal.
-- [x] Floating bottom bar triggering transition to Screen 02.
+- [x] Moves on to Screen 02 by itself once every file is uploaded. An outlined Continue button shows only when coming back from Screen 02 or after failed uploads.
 
 ### Screen 02: Customize Prints (`/customize`)
 - [x] Dynamic document carousel with position indicator (e.g., `1 / 3`).
@@ -191,5 +210,6 @@ Before production deployment with physical hardware, the following backend contr
    - Handle provider callbacks (Razorpay/Cashfree/PhonePe UPI) to mark order as `PAID`.
 4. **WebSocket Status Gateway (`WS /api/orders/:id/tracking`):**
    - Connect `use-order-tracking.ts` to live WebSocket events emitted by the Shop Partner Desktop App.
+   - The server runs on Firebase App Hosting, which ends every request after 5 minutes. A live connection must reconnect on its own. The current polling works as is. See [`apps/server/docs/deployment.md`](../../../../apps/server/docs/deployment.md).
 5. **Shop Partner Agent Bridge:**
    - Transmit structured print job payload (`{ documentUrl, colorMode, copies, paperSize, pages }`) to the Tauri desktop print agent.

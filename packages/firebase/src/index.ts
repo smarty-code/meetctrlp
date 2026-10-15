@@ -27,7 +27,9 @@ export {
   createPresignedDownloadUrl,
   createPresignedUploadUrl,
   deleteObject,
+  getObjectSize,
   getS3StorageClient,
+  isMissingObjectError,
   readObject,
   uploadObject,
 } from "./storage";

@@ -1,6 +1,7 @@
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -88,6 +89,29 @@ export async function readObject(key: string): Promise<Uint8Array> {
   }
 
   return response.Body.transformToByteArray();
+}
+
+/** The stored object's size in bytes, read without downloading it. */
+export async function getObjectSize(key: string) {
+  const { client, config } = getClientAndConfig();
+  const response = await client.send(
+    new HeadObjectCommand({
+      Bucket: config.bucketName,
+      Key: requireObjectKey(key),
+    }),
+  );
+
+  return response.ContentLength ?? 0;
+}
+
+/** True when a storage call failed because the object does not exist, not because storage was unreachable. */
+export function isMissingObjectError(error: unknown) {
+  const record = error as { name?: string; $metadata?: { httpStatusCode?: number } } | null;
+  return (
+    record?.$metadata?.httpStatusCode === 404 ||
+    record?.name === "NotFound" ||
+    record?.name === "NoSuchKey"
+  );
 }
 
 export async function uploadObject(

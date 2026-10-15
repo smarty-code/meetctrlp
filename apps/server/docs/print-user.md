@@ -26,15 +26,27 @@ All JSON. Errors: `{ "error": "message" }`.
 ## Uploading one file
 
 1. `POST .../documents` adds an `UPLOADING` document to the cart and returns a presigned storage URL that lasts 15 minutes.
-2. The browser `PUT`s the file straight to storage with the returned `document.mimeType` as `Content-Type`.
-3. `POST .../documents/{docId}/complete` reads the object back, checks the file signature, counts pages, and stores the SHA-256. The document becomes `READY`.
+2. The browser `PUT`s the file straight to storage with the returned `document.mimeType` as `Content-Type`. The file never passes through the server.
+3. `POST .../documents/{docId}/complete` checks the file and makes the document `READY`:
+   1. It reads the stored object's size without downloading it. A file over 50 MB is removed and gets a 400, because a presigned `PUT` doesn't limit the body size.
+   2. It downloads the object, checks the file signature, counts pages, and stores the SHA-256.
 
 Accepted types are PDF, JPEG, and PNG, up to 50 MB each. The server picks the type from `mimeType`, then from the file extension.
+
+`complete` is idempotent: calling it again for a `READY` document returns that document. Its errors tell the client whether to retry:
+
+| Status | Meaning | Web app |
+| --- | --- | --- |
+| 400 | The object is missing, or the file is unusable (it's also removed). | Shows the error. No retry. |
+| 500 | Storage or Firestore failed for a moment. | Retries up to 3 times. |
+| 429, 503, 504 | The hosting platform is scaling or timed out. | Retries up to 3 times. |
+
+On Firebase App Hosting this is the only upload step that runs on the server. See [`deployment.md`](./deployment.md#uploads-on-serverless) for cold starts, memory, and run settings.
 
 ## Cart rules
 
 - A cart holds at most 10 live documents. `FAILED` documents and `UPLOADING` intents older than 20 minutes do not count. The next upload removes them and their storage objects.
-- When `complete` finds the file unreadable, it removes the document and its storage object, then returns 400. Unreadable means not a real PDF, JPEG, or PNG, a password-protected PDF, a PDF with no pages, or a file over 50 MB.
+- When `complete` finds the file unreadable, it removes the document and its storage object, then returns 400. Unreadable means not a real PDF, JPEG, or PNG, a password-protected PDF, a PDF with no pages, or a file over 50 MB. The size is checked before the file is downloaded.
 - When presigning fails, the new intent is removed.
 - Placing an order removes the submitted documents from the cart and records the order in `activeOrderId`. The next order in the same session starts empty.
 - A submit retried with the same `idempotencyKey` returns the original order, even though the cart is already empty. It also clears the cart if the first attempt failed before doing so.

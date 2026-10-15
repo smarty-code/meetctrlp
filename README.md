@@ -164,6 +164,7 @@ Default `pnpm dev` at the root runs **only** the print-user web app. There is no
 | Path | Contents |
 | --- | --- |
 | [`apps/server/README.md`](apps/server/README.md) | Server layout, health endpoint |
+| [`apps/server/docs/deployment.md`](apps/server/docs/deployment.md) | Production hosting on Firebase App Hosting (serverless): run settings, env vars, what changes on serverless |
 | [`apps/printUserWebapp/README.md`](apps/printUserWebapp/README.md) | Customer app + `@ctrlp/ui` usage |
 | [`apps/print-shop/README.md`](apps/print-shop/README.md) | Desktop dev entry |
 | [`apps/print-agent/README.md`](apps/print-agent/README.md) | Agent dev entry |
@@ -207,6 +208,7 @@ Default `pnpm dev` at the root runs **only** the print-user web app. There is no
 
 - **UI look and feel:** `docs/design-system/DESIGN copy.md`
 - **Shop-owner auth and device APIs:** `apps/server/docs/auth.md`
+- **Deploying (Firebase App Hosting):** `apps/server/docs/deployment.md`
 - **Firebase package:** `packages/firebase/docs/`
 - **Agent coding rules:** `apps/print-agent/AGENTS.md`
 - **Print shop coding rules:** `apps/print-shop/AGENTS.md`

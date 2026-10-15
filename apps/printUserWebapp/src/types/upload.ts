@@ -42,6 +42,8 @@ export interface UploadedFileItem {
   status: "uploading" | "success" | "error"
   errorMessage?: string
   previewUrl?: string
+  /** The upload round this file was sent in; the upload button reports the active round's combined progress. */
+  uploadRound?: number
 }
 
 export type ColorMode = "color" | "bw"

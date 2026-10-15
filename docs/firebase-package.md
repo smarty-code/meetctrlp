@@ -68,7 +68,10 @@ import {
   getFirebaseApp,
   getFirebaseAuth,
   getFirebaseFirestore,
+  getObjectSize,
   getS3StorageClient,
+  isMissingObjectError,
+  readObject,
   uploadObject,
 } from "@ctrlp/firebase";
 ```
@@ -230,6 +233,27 @@ await uploadObject(
   JSON.stringify({ generatedAt: new Date().toISOString() }),
   "application/json",
 );
+```
+
+### Read an uploaded object safely
+
+A presigned `PUT` doesn't limit the body size, so check the size before downloading anything a client uploaded. On Firebase App Hosting an out-of-memory crash fails every request on the instance.
+
+```ts
+import { getObjectSize, isMissingObjectError, readObject } from "@ctrlp/firebase";
+
+try {
+  if ((await getObjectSize(objectKey)) > MAX_BYTES) {
+    throw new Error("file too large"); // reject before downloading
+  }
+  const body = await readObject(objectKey);
+  const bytes = Buffer.from(body.buffer, body.byteOffset, body.byteLength); // no copy
+} catch (error) {
+  if (isMissingObjectError(error)) {
+    // the client never finished the upload: a 400, not worth retrying
+  }
+  throw error; // storage unreachable: let the caller retry
+}
 ```
 
 ### Delete an object

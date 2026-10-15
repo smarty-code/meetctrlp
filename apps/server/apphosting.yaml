@@ -1,0 +1,14 @@
+# Firebase App Hosting backend for apps/server. Set the backend's root directory to `apps/server`.
+# Environment variables and secrets are set up separately: see docs/deployment.md.
+
+runConfig:
+  cpu: 1
+  # Checking an upload (`complete`) holds the whole file, up to 50 MB, in memory while it counts
+  # pages. The default 512 MiB leaves little room beside Next.js once a few large PDFs overlap.
+  # Raise to 2048 if Cloud Run logs show out-of-memory restarts.
+  memoryMiB: 1024
+  # Each open desktop order stream (SSE) holds one of these slots for up to 5 minutes.
+  concurrency: 80
+  # One warm instance, so the first upload or desktop reconnect after a quiet period does not wait
+  # for a cold start. This bills an always-on instance; set to 0 to scale to zero instead.
+  minInstances: 1

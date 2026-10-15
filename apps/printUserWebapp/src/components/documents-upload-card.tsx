@@ -12,6 +12,7 @@ import {
   X,
   RefreshCw,
   Loader2,
+  ChevronRight,
 } from "lucide-react"
 
 interface DocumentsUploadCardProps {
@@ -22,7 +23,19 @@ interface DocumentsUploadCardProps {
   onRemoveFile: (fileId: string) => void
   onRetryFile: (fileId: string) => void
   isUploadingOverall?: boolean
+  /** Every file is uploaded and the page is about to move on to customize. */
+  isUploadComplete?: boolean
+  /** All bytes are in storage; the server is still checking the files and counting pages. */
+  isCheckingUploads?: boolean
+  /** Combined percentage for the files in the current upload round. */
+  uploadProgress?: number
+  uploadingCount?: number
+  canContinue?: boolean
+  onContinue?: () => void
 }
+
+/** A vertical sine edge, two periods per half so a -50% translate loops seamlessly. */
+const WAVE_PATH = "M0 0H5Q9 2.5 5 5T5 10T5 15T5 20T5 25T5 30T5 35T5 40H0Z"
 
 export const DocumentsUploadCard: React.FC<DocumentsUploadCardProps> = ({
   isAvailable = true,
@@ -32,11 +45,19 @@ export const DocumentsUploadCard: React.FC<DocumentsUploadCardProps> = ({
   onRemoveFile,
   onRetryFile,
   isUploadingOverall = false,
+  isUploadComplete = false,
+  isCheckingUploads = false,
+  uploadProgress = 0,
+  uploadingCount = 0,
+  canContinue = false,
+  onContinue,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const showProgress = isUploadingOverall || isUploadComplete
+  const uploadedCount = uploadedFiles.filter((file) => file.status === "success").length
 
   const handleButtonClick = () => {
-    if (!isAvailable || isUploadingOverall) return
+    if (!isAvailable || showProgress) return
     fileInputRef.current?.click()
   }
 
@@ -92,15 +113,59 @@ export const DocumentsUploadCard: React.FC<DocumentsUploadCardProps> = ({
           <Button
             type="button"
             onClick={handleButtonClick}
-            disabled={!isAvailable || isUploadingOverall}
+            disabled={!isAvailable || showProgress}
             size="default"
-            className="h-12 w-full rounded-xl text-[15px] font-bold sm:h-13 sm:text-[16px] md:h-14 md:text-[17px]"
+            className={`relative h-12 w-full overflow-hidden rounded-xl text-[15px] font-bold sm:h-13 sm:text-[16px] md:h-14 md:text-[17px] ${
+              showProgress ? "bg-eel-light hover:bg-eel-light disabled:opacity-100" : ""
+            }`}
           >
-            {isUploadingOverall ? (
-              <span className="flex items-center gap-2">
-                <Loader2 className="size-5 animate-spin" />
-                <span>Uploading documents...</span>
-              </span>
+            {showProgress ? (
+              <>
+                {/* The button itself fills up: flat green over the pale track, liquid leading edge */}
+                <span
+                  role="progressbar"
+                  aria-label="Upload progress"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={uploadProgress}
+                  className="absolute inset-y-0 left-0 bg-primary transition-[width] duration-500 ease-out motion-reduce:transition-none"
+                  style={{ width: `${uploadProgress}%` }}
+                >
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 10 40"
+                    preserveAspectRatio="none"
+                    className="animate-uploadWaveSlow absolute top-0 left-full h-[200%] w-4 fill-primary opacity-50"
+                  >
+                    <path d={WAVE_PATH} />
+                  </svg>
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 10 40"
+                    preserveAspectRatio="none"
+                    className="animate-uploadWave absolute top-0 left-full h-[200%] w-2.5 fill-primary"
+                  >
+                    <path d={WAVE_PATH} />
+                  </svg>
+                </span>
+                <span className="relative flex w-full items-center justify-between gap-3 text-midnight">
+                  <span className="flex min-w-0 items-center gap-2">
+                    {isUploadComplete ? (
+                      <CheckCircle2 className="size-5 stroke-[2.5]" />
+                    ) : (
+                      <Loader2 className="size-5 animate-spin" />
+                    )}
+                    <span className="truncate">
+                      {isUploadComplete
+                        ? "All uploaded"
+                        : isCheckingUploads
+                          ? "Checking documents…"
+                          : `Uploading ${uploadingCount} document${uploadingCount === 1 ? "" : "s"}`}
+                    </span>
+                  </span>
+                  <span className="tabular-nums">{uploadProgress}%</span>
+                </span>
+              </>
             ) : (
               <span className="flex items-center gap-2">
                 <Upload className="size-5 stroke-[2.5]" />
@@ -122,7 +187,7 @@ export const DocumentsUploadCard: React.FC<DocumentsUploadCardProps> = ({
               <span>Status</span>
             </div>
 
-            <div className="flex max-h-64 flex-col gap-2.5 overflow-y-auto pr-0.5">
+            <div className="flex flex-col gap-2.5">
               {uploadedFiles.map((item) => (
                 <div
                   key={item.id}
@@ -187,6 +252,20 @@ export const DocumentsUploadCard: React.FC<DocumentsUploadCardProps> = ({
                 </div>
               ))}
             </div>
+
+            {canContinue && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onContinue}
+                className="mt-1 h-12 w-full rounded-xl border-2 text-[15px] font-bold"
+              >
+                <span>
+                  Continue with {uploadedCount} document{uploadedCount === 1 ? "" : "s"}
+                </span>
+                <ChevronRight className="size-5 stroke-[2.5]" />
+              </Button>
+            )}
           </div>
         )}
       </div>

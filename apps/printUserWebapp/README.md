@@ -20,6 +20,8 @@ pnpm webapp:dev
 
 Ensure server `PRINT_USER_ORIGIN` matches your web app origin (e.g. `http://localhost:3002`).
 
+Production runs on Firebase App Hosting. `NEXT_PUBLIC_API_BASE_URL` is built into the app, so a change needs a new rollout. See [`apps/server/docs/deployment.md`](../server/docs/deployment.md).
+
 ## Layout
 
 ```text
@@ -37,12 +39,28 @@ The server cart (`GET /api/v1/public/session`) is the only source of truth for w
 
 - **Checks before uploading:** files are checked for type, size (50 MB), and the 10-document limit. Type is read from the MIME type or extension, or from the first bytes for gallery files that have neither.
 - **Gallery photos:** HEIC, WebP, GIF, AVIF, and BMP are converted to JPEG in the browser when it can decode them (longest edge 4000 px).
-- **Concurrency and retry:** up to 3 files upload at a time, and a failed storage `PUT` is retried once.
+- **Concurrency:** up to 3 files upload at a time.
+- **Retries:**
+  - A failed storage `PUT` is retried once.
+  - The server's file check (`complete`) is retried up to 3 times (after 1 s, then 2 s) on a dropped connection, 408, 429, or 5xx. The server is serverless, so these happen during cold starts and scaling. A 400 is final.
 - **Cleanup:** if an upload fails after the intent was created, the intent is deleted so it doesn't hold a cart slot.
+
+API errors are thrown as `ApiError` (from [`src/lib/cloud.ts`](src/lib/cloud.ts)), which carries the HTTP `status`.
+
+### Upload page
+
+[`src/app/s/[slug]/page.tsx`](src/app/s/[slug]/page.tsx) and [`src/components/documents-upload-card.tsx`](src/components/documents-upload-card.tsx):
+
+- **Moving on by itself:** when every file in the list is uploaded, the page goes to customize about 0.7 s later. There's no Continue button in this flow. If any file failed, the page stays so the shopper can retry or remove it. Once nothing has failed, it moves on.
+- **No bounce back:** a shopper who comes back from customize, with files already in the cart, is not sent forward again. An outlined **Continue with N documents** button appears instead. It also appears when some uploads failed and the shopper wants to go on without them.
+- **Progress button:** while uploading, the upload button becomes a progress bar. It shows **Uploading N documents** and one percentage for all files in the round, weighted by file size. A retry started mid-round joins that round, so the percentage doesn't restart.
+- **Last step:** the bar stops at 99% until the server has checked every file, and reads **Checking documents…** once all bytes are in storage. It shows **All uploaded** at 100% just before moving on.
+- **Animation:** the fill has a flat, wavy leading edge (keyframes `uploadWave` in [`src/app/globals.css`](src/app/globals.css)). It's off when the device asks for reduced motion.
+- **File list:** the list grows with the files instead of scrolling inside a fixed-height box (at most 10 files).
 
 Other behaviour to keep:
 
-- **Continue:** Continue is blocked while any upload is still running. A file that finishes later would be ordered without being shown.
+- **Continue on customize:** Continue is blocked while any upload is still running. A file that finishes later would be ordered without being shown.
 - **Saving settings:** customize saves all document settings with one batch `PUT`.
 - **Review edits:** copy changes and deletes on the review page are written to the server in order, then re-quoted. Pay waits for those writes before comparing prices.
 

@@ -8,7 +8,6 @@ import { DocumentsUploadCard } from "../../../components/documents-upload-card"
 import { PromiseSection } from "../../../components/promise-section"
 import { FAQSection } from "../../../components/faq-section"
 import { BrandFooter } from "../../../components/brand-footer"
-import { FloatingOrderIndicator } from "../../../components/floating-order-indicator"
 import { cacheUploadedFile, getCachedFileUrl, restoreCachedFile } from "../../../lib/file-store"
 import { Info } from "lucide-react"
 import { ShopInfoDrawer } from "../../../components/shop-info-drawer"
@@ -24,13 +23,76 @@ import {
   validateSelectedFile,
 } from "../../../lib/guest-upload"
 
+/** Long enough for the upload button to show a full bar before the page moves on. */
+const AUTO_CONTINUE_DELAY_MS = 700
+
+/** Hands the uploaded files to the customize page, which shows them before the server cart loads. */
+function stashUploadedFiles(files: UploadedFileItem[]) {
+  const validFiles = files.filter((file) => file.status === "success")
+  validFiles.forEach((file) => {
+    if (file.file) cacheUploadedFile(file.id, file.file)
+  })
+  window.sessionStorage.setItem(
+    "ctrlp-uploaded-files",
+    JSON.stringify(
+      validFiles.map(({ id, name, size, type, pageCount }) => ({
+        id,
+        name,
+        size,
+        type,
+        pageCount,
+        previewUrl: getCachedFileUrl(id) || undefined,
+      })),
+    ),
+  )
+}
+
 export default function ShopUploadPage() {
   const router = useRouter()
   const { shop, routes } = useShopSession()
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFileItem[]>([])
+  const [uploadRound, setUploadRound] = useState(0)
   const [notification, setNotification] = useState<string | null>(null)
   const [isShopInfoOpen, setIsShopInfoOpen] = useState(false)
   const isUploadingOverall = uploadedFiles.some((file) => file.status === "uploading")
+  const hasUploadedFiles = uploadedFiles.some((file) => file.status === "success")
+  // Once everything picked on this visit is in the cart, the order moves on by itself. Coming
+  // back from customize (no round yet) must not bounce the shopper straight forward again.
+  const isReadyToContinue =
+    uploadRound > 0 &&
+    !isUploadingOverall &&
+    uploadedFiles.length > 0 &&
+    uploadedFiles.every((file) => file.status === "success")
+
+  // Byte-weighted so one large PDF is not drowned out by a few small photos. Held below 100
+  // until the server accepts every file, since storage reaching 100% is not the last step.
+  const roundFiles = uploadedFiles.filter(
+    (file) => file.uploadRound === uploadRound && file.status !== "error",
+  )
+  const roundBytes = roundFiles.reduce((total, file) => total + file.size, 0)
+  const sentBytes = roundFiles.reduce(
+    (total, file) => total + (file.size * (file.status === "success" ? 100 : file.progress)) / 100,
+    0,
+  )
+  const uploadProgress = isReadyToContinue
+    ? 100
+    : roundBytes > 0
+      ? Math.min(99, Math.floor((sentBytes / roundBytes) * 100))
+      : 0
+  // Every byte is in storage and only the server's file check is left. On a serverless host that
+  // can include a cold start, so the button says what it is waiting for instead of sitting at 99%.
+  const isCheckingUploads =
+    isUploadingOverall &&
+    roundFiles.every((file) => file.status === "success" || file.progress >= 100)
+
+  useEffect(() => {
+    if (!isReadyToContinue) return
+    const timer = window.setTimeout(() => {
+      stashUploadedFiles(uploadedFiles)
+      router.push(routes.customize)
+    }, AUTO_CONTINUE_DELAY_MS)
+    return () => window.clearTimeout(timer)
+  }, [isReadyToContinue, uploadedFiles, router, routes.customize])
 
   const showToast = (msg: string) => {
     setNotification(msg)
@@ -107,12 +169,21 @@ export default function ShopUploadPage() {
     return succeeded
   }
 
+  // A new round starts whenever nothing is in flight; a retry sent mid-round joins it, so the
+  // button's combined percentage keeps counting up instead of restarting.
+  const startUploadRound = () => {
+    const round = isUploadingOverall ? uploadRound : uploadRound + 1
+    setUploadRound(round)
+    router.prefetch(routes.customize)
+    return round
+  }
+
   const handleFilesSelected = (files: FileList | null) => {
     if (!files || files.length === 0) return
 
     let remainingSlots =
       MAX_DOCUMENTS_PER_ORDER - uploadedFiles.filter((file) => file.status !== "error").length
-    const newItems: UploadedFileItem[] = Array.from(files).map((file, idx) => {
+    const picked: UploadedFileItem[] = Array.from(files).map((file, idx) => {
       const id = `file_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 7)}`
       let errorMessage = validateSelectedFile(file) ?? undefined
       if (!errorMessage) {
@@ -133,16 +204,19 @@ export default function ShopUploadPage() {
         errorMessage,
       }
     })
+    const round = picked.some((item) => item.status === "uploading")
+      ? startUploadRound()
+      : uploadRound
+    const newItems = picked.map((item) => ({ ...item, uploadRound: round }))
 
     setUploadedFiles((prev) => [...prev, ...newItems])
     const validNewItems = newItems.filter((item) => item.status === "uploading")
     if (validNewItems.length === 0) return
     void runUpload(validNewItems).then((succeeded) => {
-      showToast(
-        succeeded < validNewItems.length
-          ? `${succeeded} of ${validNewItems.length} documents uploaded`
-          : `${succeeded} document${succeeded > 1 ? "s" : ""} uploaded`,
-      )
+      // A fully uploaded round moves on to customize by itself; only a partial one needs a note.
+      if (succeeded < validNewItems.length) {
+        showToast(`${succeeded} of ${validNewItems.length} documents uploaded`)
+      }
     })
   }
 
@@ -171,34 +245,18 @@ export default function ShopUploadPage() {
       status: "uploading",
       progress: 0,
       errorMessage: undefined,
+      uploadRound: startUploadRound(),
     }
     updateFile(fileId, retried)
     void runUpload([retried])
   }
 
+  // For documents already in the cart that no upload round will carry forward: the shopper came
+  // back from customize, or some files failed and they want to go on without them.
+  const canContinue = hasUploadedFiles && !isUploadingOverall && !isReadyToContinue
   const handleContinueToConfig = () => {
-    if (isUploadingOverall) {
-      showToast("Wait for uploads to finish")
-      return
-    }
-    const validFiles = uploadedFiles.filter((file) => file.status === "success")
-    if (validFiles.length === 0) return
-    validFiles.forEach((file) => {
-      if (file.file) cacheUploadedFile(file.id, file.file)
-    })
-    window.sessionStorage.setItem(
-      "ctrlp-uploaded-files",
-      JSON.stringify(
-        validFiles.map(({ id, name, size, type, pageCount }) => ({
-          id,
-          name,
-          size,
-          type,
-          pageCount,
-          previewUrl: getCachedFileUrl(id) || undefined,
-        })),
-      ),
-    )
+    if (!canContinue) return
+    stashUploadedFiles(uploadedFiles)
     router.push(routes.customize)
   }
 
@@ -208,15 +266,10 @@ export default function ShopUploadPage() {
     isAvailable || shop.status === "CLOSED"
       ? shop.openStatusLabel || (isAvailable ? "Open" : "Closed")
       : "Closed"
-  const hasUploadedFiles = uploadedFiles.some((file) => file.status === "success")
 
   return (
     <div className="flex min-h-screen flex-col bg-paper selection:bg-macaw-blue selection:text-paper">
-      <main
-        className={`relative flex min-h-screen w-full flex-col bg-paper ${
-          hasUploadedFiles ? "pb-24 md:pb-12" : "pb-0"
-        }`}
-      >
+      <main className="relative flex min-h-screen w-full flex-col bg-paper">
         {notification && (
           <div className="animate-fadeIn fixed top-4 left-1/2 z-50 -translate-x-1/2 rounded-xl border border-graphite/30 bg-midnight px-4 py-2 text-caption font-bold text-paper shadow-lg transition-all">
             {notification}
@@ -263,11 +316,16 @@ export default function ShopUploadPage() {
           onRemoveFile={handleRemoveFile}
           onRetryFile={handleRetryFile}
           isUploadingOverall={isUploadingOverall}
+          isUploadComplete={isReadyToContinue}
+          isCheckingUploads={isCheckingUploads}
+          uploadProgress={uploadProgress}
+          uploadingCount={roundFiles.length}
+          canContinue={canContinue}
+          onContinue={handleContinueToConfig}
         />
         <PromiseSection />
         <FAQSection items={faqList} />
         <BrandFooter />
-        <FloatingOrderIndicator files={uploadedFiles} onContinue={handleContinueToConfig} />
         <ShopInfoDrawer
           isOpen={isShopInfoOpen}
           onClose={() => setIsShopInfoOpen(false)}

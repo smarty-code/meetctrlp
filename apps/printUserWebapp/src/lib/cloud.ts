@@ -149,6 +149,17 @@ export type GuestOrderDto = {
 
 type ErrorBody = { error?: string }
 
+/** A response the server (or the hosting platform in front of it) answered with an error status. */
+export class ApiError extends Error {
+  status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = "ApiError"
+    this.status = status
+  }
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   if (init.body && !headers.has("Content-Type")) {
@@ -162,7 +173,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   })
   const body = (await response.json().catch(() => ({}))) as T & ErrorBody
   if (!response.ok) {
-    throw new Error(body.error ?? `Request failed (${response.status})`)
+    throw new ApiError(body.error ?? `Request failed (${response.status})`, response.status)
   }
   return body
 }

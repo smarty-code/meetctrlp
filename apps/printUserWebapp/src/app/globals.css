@@ -35,3 +35,28 @@
 .animate-fadeIn {
   animation: fadeIn 0.2s ease-out forwards;
 }
+
+/* Liquid leading edge of the upload button's progress fill; the wave SVG is twice the button's height. */
+@keyframes uploadWave {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-50%);
+  }
+}
+
+.animate-uploadWave {
+  animation: uploadWave 1.4s linear infinite;
+}
+
+.animate-uploadWaveSlow {
+  animation: uploadWave 2.2s linear infinite reverse;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-uploadWave,
+  .animate-uploadWaveSlow {
+    animation: none;
+  }
+}
