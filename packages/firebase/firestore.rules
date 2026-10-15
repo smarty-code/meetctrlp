@@ -1,0 +1,19 @@
+rules_version = '2';
+
+// Clients never write anywhere. The server uses the Admin SDK, which bypasses these rules.
+// No rule reads another document, so rule checks cost no extra reads.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Customer-safe copy of a guest order. Guests sign in with a custom token whose uid is
+    // their printUserId (TRAFFIC_SCALING_V2_IMPLEMENTATION.md 4.2, 5.4).
+    match /orderTracking/{orderId} {
+      allow get: if request.auth != null
+        && resource.data.printUserId == request.auth.uid;
+    }
+
+    // Everything else is server-only.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

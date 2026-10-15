@@ -16,8 +16,9 @@ export async function POST(request: Request, context: RouteContext) {
     const { shopId, orderId } = await context.params;
     const body = await parseBody(request, orderTransitionRequestSchema);
     return runShopOrder(request, shopId, async (user) => {
-      const order = await acceptShopOrder(user, orderId, body);
-      if ((await getShopConfig(user)).orderAutomation.autoDispatchAcceptedOrders) {
+      const { order, accepted } = await acceptShopOrder(user, orderId, body);
+      // A replayed accept must not queue a second set of jobs.
+      if (accepted && (await getShopConfig(user)).orderAutomation.autoDispatchAcceptedOrders) {
         await queueIncomingOrder(user, orderId);
       }
       return order;

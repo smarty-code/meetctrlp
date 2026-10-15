@@ -1,4 +1,5 @@
 import { authErrorResponse } from "@/src/modules/auth/auth-http";
+import { systemPrincipal } from "@/src/modules/auth/principal";
 import { requireAgentCredential } from "@/src/modules/devices/device.service";
 import { listAgentPrintJobs } from "@/src/modules/printing/print-job.service";
 import { runShopOrder } from "@/src/modules/orders/order-http";
@@ -15,7 +16,7 @@ export async function GET(request: Request, context: RouteContext) {
     if (request.headers.has("x-ctrlp-agent-key")) {
       await requireAgentCredential(request, shopId, agentId);
       return Response.json(await listAgentPrintJobs(
-        { id: agentId, shopId } as never,
+        systemPrincipal(shopId, agentId),
         { agentId, limit: Number.isInteger(limit) ? limit : 10 },
       ));
     }

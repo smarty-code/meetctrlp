@@ -1,7 +1,7 @@
 import { jsonResponse, readJsonBody } from "@/src/lib/http";
 import { authErrorResponse } from "@/src/modules/auth/auth-http";
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
-import { readAuthorizedShopUser } from "@/src/modules/auth/require-request";
+import { readShopPrincipal } from "@/src/modules/auth/require-request";
 import { registerShopDevice } from "@/src/modules/devices/device.service";
 import { registerDeviceRequestSchema } from "@ctrlp/schemas";
 
@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
   try {
-    const user = await readAuthorizedShopUser(request);
+    const user = await readShopPrincipal(request);
     const parsed = registerDeviceRequestSchema.safeParse(await readJsonBody(request));
 
     if (!parsed.success) {

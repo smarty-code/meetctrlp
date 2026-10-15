@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 
 import { jsonResponse } from "@/src/lib/http";
+import { requestRoute, runInRequestContext } from "@/src/lib/request-context";
 import { authErrorResponse } from "@/src/modules/auth/auth-http";
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
 import {
@@ -37,10 +38,12 @@ export async function runPrintUser(
   request: Request,
   action: (session: PrintUserSession) => Promise<unknown>,
 ) {
-  try {
-    const session = await requirePrintUserSession(request);
-    return jsonResponse(await action(session));
-  } catch (error) {
-    return authErrorResponse(error);
-  }
+  return runInRequestContext(requestRoute(request), async () => {
+    try {
+      const session = await requirePrintUserSession(request);
+      return jsonResponse(await action(session));
+    } catch (error) {
+      return authErrorResponse(error);
+    }
+  });
 }

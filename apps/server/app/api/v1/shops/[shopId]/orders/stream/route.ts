@@ -1,4 +1,4 @@
-import { readAuthorizedShopUser } from "@/src/modules/auth/require-request";
+import { readShopPrincipal } from "@/src/modules/auth/require-request";
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
 import { authErrorResponse } from "@/src/modules/auth/auth-http";
 import { subscribeShopOrders } from "@/src/modules/orders/order.service";
@@ -11,7 +11,7 @@ type RouteContext = { params: Promise<{ shopId: string }> };
 export async function GET(request: Request, context: RouteContext) {
   try {
     const { shopId } = await context.params;
-    const user = await readAuthorizedShopUser(request);
+    const user = await readShopPrincipal(request);
 
     if (user.shopId !== shopId) {
       throw new AuthServiceError(403, "shop does not match this account");

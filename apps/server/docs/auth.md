@@ -26,6 +26,17 @@ Register, login, refresh, and `/me` use that Web API key for passwords. Firebase
 
 Registration writes `shops/{shopId}`, `shops/{shopId}/users/{userId}`, and `authLookups/{hash}` for the Firebase uid, phone, and email. Those lookup documents replace collection-group queries.
 
+## How requests are authorized
+
+Every shop route verifies the bearer ID token **locally** with Firebase Admin (`verifyIdToken`, cached Google keys) and reads the caller from the token's custom claims `{ shopId, shopUserId, role }`. There is no call to Google and no Firestore read per request. The result is a `ShopPrincipal { uid, shopId, shopUserId, role }` (`packages/types`).
+
+- **Claims are required.** Registration sets them and fails (rolling back the shop and the Firebase user) if it can't. The sign-up token is minted before the claims exist, so registration refreshes it and returns a token that carries them.
+- **Login repairs claims.** If a user's token lacks the expected claims (an older account, or a changed role), login sets them and returns a refreshed token.
+- **A token without claims** gets `401 CLAIMS_MISSING`. Sign in again.
+- **Deactivation** isn't immediate on ordinary routes: an ID token stays valid for up to an hour. `/api/auth/me` and sign-out check the user record or revocation.
+
+**Route audit (Oct 2026).** There are 55 route files under `app/api`: 37 use shop auth, 8 are guest routes, and 5 also accepted the agent-key header. From the principal, shop routes use only `shopId`; these also use `shopUserId` as the actor: accept, complete, collect cash, status changes, and device registration. No route uses `role` yet. Only `/api/auth/me` needs the user's name, email or phone, and it reads `shops/{shopId}/users/{shopUserId}` (1 read). The staff list and shop profile read their own documents by `shopId`.
+
 ## Endpoints
 
 All JSON. Errors: `{ "error": "message" }`.
@@ -35,8 +46,8 @@ All JSON. Errors: `{ "error": "message" }`.
 | POST | `/api/auth/register` | none | `{ name, shopName, password, email?, phone? }` — email or phone required. Creates a shop + OWNER. `201` |
 | POST | `/api/auth/login` | none | `{ identifier, password }` — identifier is email or phone |
 | POST | `/api/auth/refresh` | none | `{ refreshToken }` |
-| POST | `/api/auth/logout` | Bearer idToken | revokes Firebase refresh tokens |
-| GET | `/api/auth/me` | Bearer idToken | current ACTIVE shop user |
+| POST | `/api/auth/logout` | Bearer idToken | `{ allDevices? }` (body optional). Signs out this device only; refresh tokens are revoked only when `allDevices` is `true`, because one login often runs on several PCs. |
+| GET | `/api/auth/me` | Bearer idToken | current ACTIVE shop user (reads the user record) |
 | POST | `/api/v1/devices/register` | Bearer idToken | `{ deviceIdentifier, hostname, osVersion, appVersion, agentVersion }` |
 | POST | `/api/v1/devices/heartbeat` | Bearer idToken | `{ deviceId, memoryWorkingSetBytes?, spoolerJobCount?, onlinePrinterCount? }` |
 | POST | `/api/v1/devices/offline` | Bearer idToken | `{ deviceId }` |
@@ -90,7 +101,7 @@ The internal Firebase phone-mapping email (`*@phone.meetctrlp.app`) is never ret
 ## Status codes
 
 - `400` invalid body / phone / reserved email domain
-- `401` invalid credentials or missing/invalid bearer token
+- `401` invalid credentials, missing/invalid/expired bearer token, or `CLAIMS_MISSING` (sign in again)
 - `403` shop user not ACTIVE
 - `409` email or phone already exists
 - `429` Firebase rate limit
@@ -100,5 +111,6 @@ The internal Firebase phone-mapping email (`*@phone.meetctrlp.app`) is never ret
 
 - Routes: `app/api/auth/*/route.ts`
 - Service: `src/modules/auth/auth.service.ts`
-- Guard: `requireShopUser(idToken)` — verify the Firebase ID token, then load the ACTIVE user from `shops/{shopId}/users/{userId}`
+- Guard: `readShopPrincipal(request)` → `requireShopPrincipal(idToken)`: verify the ID token locally and read the custom claims; no Firestore reads
+- Claims helpers: `src/modules/auth/principal.ts` (tested in `principal.test.ts`)
 - Store: `src/modules/shops/firestore-shop-store.ts`

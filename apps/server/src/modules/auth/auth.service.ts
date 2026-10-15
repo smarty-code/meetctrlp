@@ -15,6 +15,7 @@ import type {
   LoginRequest,
   RefreshRequest,
   RegisterRequest,
+  ShopPrincipal,
 } from "@ctrlp/types";
 
 import {
@@ -23,10 +24,18 @@ import {
   mapFirebaseAuthError,
 } from "@/src/modules/auth/auth.errors";
 import {
+  claimsFor,
+  claimsMatch,
+  decodeJwtPayload,
+  principalFromClaims,
+} from "@/src/modules/auth/principal";
+import {
   createShopWithOwner,
+  deleteShopWithOwner,
   findShopUserByEmail,
   findShopUserByFirebaseUid,
   findShopUserByPhone,
+  getShopUser,
   touchLastLogin,
   type StoredShopUser,
 } from "@/src/modules/shops/firestore-shop-store";
@@ -159,6 +168,23 @@ async function signUpOrResume(input: {
   }
 }
 
+type SessionTokens = { idToken: string; refreshToken: string; expiresIn: number };
+
+/**
+ * Makes sure the session's ID token carries this user's claims. Tokens minted before the claims
+ * were set (or changed) don't, so set them and refresh the token.
+ */
+async function withClaims(user: StoredShopUser, session: SessionTokens): Promise<SessionTokens> {
+  const expected = claimsFor(user);
+
+  if (claimsMatch(decodeJwtPayload(session.idToken), expected)) {
+    return session;
+  }
+
+  await getFirebaseAuth().setCustomUserClaims(user.firebaseUid, expected);
+  return refreshIdToken(session.refreshToken);
+}
+
 async function requireActiveUser(firebaseUid: string) {
   const existing = await findShopUserByFirebaseUid(firebaseUid);
 
@@ -194,8 +220,10 @@ export async function registerShopOwner(
       : "an account with this phone already exists",
   });
 
+  let user: StoredShopUser | undefined;
+
   try {
-    const user = await createShopWithOwner({
+    user = await createShopWithOwner({
       name: input.name,
       shopName: input.shopName,
       email: identifiers.email,
@@ -203,18 +231,14 @@ export async function registerShopOwner(
       firebaseUid: session.localId,
     });
 
-    try {
-      await getFirebaseAuth().setCustomUserClaims(session.localId, {
-        shopId: user.shopId,
-        shopUserId: user.id,
-        role: user.role,
-      });
-    } catch (error) {
-      console.error("Failed to set Firebase custom claims", error);
+    // Claims are required: every API call authorizes from them. The sign-up token predates them,
+    // so withClaims also refreshes it.
+    return toSessionResponse(user, await withClaims(user, session));
+  } catch (error) {
+    if (user) {
+      await deleteShopWithOwner(user);
     }
 
-    return toSessionResponse(user, session);
-  } catch (error) {
     await deleteFirebaseUser(session.localId);
     rethrowMapped(error);
   }
@@ -239,7 +263,8 @@ export async function loginShopUser(
     throw new AuthServiceError(403, "account is not active");
   }
 
-  return toSessionResponse(await touchLastLogin(existing), session);
+  const tokens = await withClaims(existing, session).catch(rethrowMapped);
+  return toSessionResponse(await touchLastLogin(existing), tokens);
 }
 
 export async function refreshShopUserSession(
@@ -252,22 +277,58 @@ export async function refreshShopUserSession(
   return toSessionResponse(existing, session);
 }
 
-export async function logoutShopUser(idToken: string) {
-  const { localId } = await lookupIdToken(idToken).catch(() => {
-    throw new AuthServiceError(401, "unauthorized");
-  });
+/**
+ * Signing out doesn't revoke refresh tokens by default: one login often runs on several shop PCs,
+ * and revoking would sign every one of them out. `allDevices` revokes them all.
+ */
+export async function logoutShopUser(idToken: string, options: { allDevices?: boolean } = {}) {
+  const principal = await requireShopPrincipal(idToken, { checkRevoked: true });
+
+  if (!options.allDevices) {
+    return;
+  }
 
   try {
-    await getFirebaseAuth().revokeRefreshTokens(localId);
+    await getFirebaseAuth().revokeRefreshTokens(principal.uid);
   } catch (error) {
     console.error("Failed to revoke Firebase refresh tokens", error);
   }
 }
 
-export async function requireShopUser(idToken: string): Promise<AuthSessionUser> {
-  const { localId } = await lookupIdToken(idToken).catch(() => {
-    throw new AuthServiceError(401, "unauthorized");
-  });
+/**
+ * Verifies the ID token locally (cached Google keys, no network call) and reads the caller from its
+ * custom claims, with no Firestore reads. `checkRevoked` adds a call to Google; use it only on
+ * sign-out and staff management.
+ */
+export async function requireShopPrincipal(
+  idToken: string,
+  options: { checkRevoked?: boolean } = {},
+): Promise<ShopPrincipal> {
+  const decoded = await getFirebaseAuth()
+    .verifyIdToken(idToken, options.checkRevoked ?? false)
+    .catch((error: unknown) => {
+      throw mapFirebaseAdminError(error) ?? error;
+    });
+  const principal = principalFromClaims(decoded.uid, decoded);
 
-  return toSessionUser(await requireActiveUser(localId));
+  if (!principal) {
+    throw new AuthServiceError(401, "CLAIMS_MISSING");
+  }
+
+  return principal;
+}
+
+/** The full user record for `/api/auth/me` (1 read). */
+export async function getCurrentShopUser(principal: ShopPrincipal): Promise<AuthSessionUser> {
+  const user = await getShopUser(principal.shopId, principal.shopUserId);
+
+  if (!user || user.firebaseUid !== principal.uid) {
+    throw new AuthServiceError(401, "unauthorized");
+  }
+
+  if (user.status !== "ACTIVE") {
+    throw new AuthServiceError(403, "account is not active");
+  }
+
+  return toSessionUser(user);
 }

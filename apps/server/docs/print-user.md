@@ -9,7 +9,7 @@ All JSON. Errors: `{ "error": "message" }`.
 | Method | Path | Body | Returns |
 | --- | --- | --- | --- |
 | GET | `/api/v1/public/shops/{slug}` | — | `{ shop }` |
-| POST | `/api/v1/public/shops/{slug}/session` | — | `{ session, shop }`. Creates or resumes the session and sets the cookie. |
+| POST | `/api/v1/public/shops/{slug}/session` | — | `{ session, shop, firebaseToken }`. Creates or resumes the session and sets the cookie. `firebaseToken` is a Firebase custom token for uid = `printUserId`, used only by the tracking page to read its own `orderTracking` documents; it is `null` if signing failed. |
 | GET | `/api/v1/public/session` | — | `{ session }`, including the cart in `session.documents` |
 | POST | `/api/v1/public/session/documents` | `{ originalFilename, mimeType, fileSizeBytes }` | `{ document, uploadUrl, storageKey, expiresIn }` |
 | PUT | `/api/v1/public/session/documents` | `{ documents: [{ documentId, colorMode, copies, paperSize, orientation?, pageSelection }] }`, 1 to 10 entries | `{ documents }` |

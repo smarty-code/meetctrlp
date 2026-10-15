@@ -100,9 +100,11 @@ export {
   authSessionUserSchema,
   authTokensSchema,
   loginRequestSchema,
+  logoutRequestSchema,
   refreshRequestSchema,
   registerRequestSchema,
   type LoginRequestInput,
+  type LogoutRequestInput,
   type RefreshRequestInput,
   type RegisterRequestInput,
 } from "./auth";

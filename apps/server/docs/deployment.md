@@ -76,6 +76,9 @@ Every check downloads the whole file from Railway into Google Cloud, so the time
 | `DESKTOP_ORIGIN` | plain | Optional extra CORS origin |
 | `PRINTER_INVENTORY_API_KEY` | secret | Desktop agent printer inventory |
 | `CTRLP_PAYMENT_WEBHOOK_SECRET` | secret | Payment confirmation webhook |
+| `FIREBASE_DATABASE_URL` | plain | Realtime Database URL for the shop doorbell, for example `https://meetctrlp-default-rtdb.asia-southeast1.firebasedatabase.app`. Without it the server skips rings and logs `ring_skipped` once. |
+| `FIRESTORE_OP_COUNTERS` | plain | `1` logs one `request_ops` JSON line per API request: route, status, time, Firestore reads/writes/deletes, doorbell rings and ring failures. On in staging; leave unset in production unless investigating cost. |
+| `ALLOW_MOCK_PAYMENTS` | plain | `1` enables the guest mock payment route. Local development and staging only. Unset in production: without it, any guest could mark an order paid. |
 
 ### Web app (`apps/printUserWebapp`)
 
@@ -102,6 +105,29 @@ env:
 ```
 
 `apphosting.yaml` only lists run settings for now. Add the `env` entries once the secrets exist; a reference to a missing secret fails the rollout.
+
+## Cost alerts
+
+Set these up once per project (implementation plan 12.3). The thresholds keep a day's usage inside the free tier.
+
+**Budget:** Cloud Billing → Budgets & alerts → a monthly budget of about $5 with alerts at 50%, 90% and 100%.
+
+**Log-based metrics** for doorbell rings. The server logs `ring_failed` when a ring never reached the database and `ring_unknown` when it timed out but may have landed:
+
+```bash
+gcloud logging metrics create ring_failed --description="Doorbell rings that did not reach Realtime Database" --log-filter='jsonPayload.message="ring_failed"'
+gcloud logging metrics create ring_unknown --description="Doorbell rings that timed out" --log-filter='jsonPayload.message="ring_unknown"'
+```
+
+Then, in Cloud Monitoring → Alerting, create policies on:
+
+| Metric | Alert when |
+| --- | --- |
+| `logging.googleapis.com/user/ring_failed` | more than 10 in an hour |
+| Firestore document reads | more than 40,000 a day |
+| Firestore document writes | more than 16,000 a day |
+| Cloud Run request count (both backends) | more than 50,000 a day |
+| Realtime Database bytes sent | on pace for more than 7 GB a month |
 
 ## Not verified yet
 

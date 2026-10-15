@@ -1,4 +1,5 @@
 import { authErrorResponse } from "@/src/modules/auth/auth-http";
+import { systemPrincipal } from "@/src/modules/auth/principal";
 import { requireAgentCredential } from "@/src/modules/devices/device.service";
 import { confirmDocumentShredded } from "@/src/modules/documents/document.service";
 import { runShopOrder } from "@/src/modules/orders/order-http";
@@ -18,7 +19,7 @@ export async function POST(request: Request, context: RouteContext) {
       }
       await requireAgentCredential(request, shopId, agentId);
       return Response.json(
-        await confirmDocumentShredded({ id: agentId, shopId } as never, orderId, docId),
+        await confirmDocumentShredded(systemPrincipal(shopId, agentId), orderId, docId),
       );
     }
     return runShopOrder(request, shopId, (user) =>

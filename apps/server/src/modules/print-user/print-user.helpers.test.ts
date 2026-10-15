@@ -14,6 +14,7 @@ import {
   isSessionExpired,
   mapShopStatusToCustomer,
   mimeFromFilename,
+  mockPaymentsAllowed,
   normalizeMimeType,
   officeFormatMessage,
   parsePageSelection,
@@ -73,6 +74,13 @@ describe("print-user helpers", () => {
       canMockConfirmPayment({ printUserId: "g1", payment: { method: "ONLINE", status: "PAID" } }).ok,
       true,
     );
+  });
+
+  it("allows mock payments only when explicitly enabled", () => {
+    assert.equal(mockPaymentsAllowed({}), false);
+    assert.equal(mockPaymentsAllowed({ ALLOW_MOCK_PAYMENTS: "0" }), false);
+    assert.equal(mockPaymentsAllowed({ ALLOW_MOCK_PAYMENTS: "true" }), false);
+    assert.equal(mockPaymentsAllowed({ ALLOW_MOCK_PAYMENTS: "1" }), true);
   });
 
   it("maps shop availability for the customer UI", () => {

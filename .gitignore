@@ -58,3 +58,4 @@ apps/print-shop/src-tauri/target/
 apps/print-shop/src-tauri/gen/
 apps/print-shop/src-tauri/.sidecar-publish/
 apps/print-shop/src-tauri/binaries/*.exe
+spikes/doorbell/*

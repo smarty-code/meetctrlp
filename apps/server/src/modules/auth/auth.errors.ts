@@ -81,6 +81,10 @@ export function mapFirebaseAdminError(error: unknown): AuthServiceError | undefi
     return new AuthServiceError(401, "unauthorized");
   }
 
+  if (code === "auth/user-disabled") {
+    return new AuthServiceError(403, "account is not active");
+  }
+
   if (code === "8" || code === "RESOURCE_EXHAUSTED") {
     return new AuthServiceError(503, "the print service is busy, try again shortly");
   }

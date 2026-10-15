@@ -218,6 +218,11 @@ export function canSubmitGuestDocuments(
   return { ok: true };
 }
 
+/** Mock payment confirmation is a development aid. It must stay off wherever real orders are taken. */
+export function mockPaymentsAllowed(env: Record<string, string | undefined> = process.env) {
+  return env.ALLOW_MOCK_PAYMENTS === "1";
+}
+
 export function canMockConfirmPayment(order: {
   printUserId: string;
   payment: { method: string; status: string };

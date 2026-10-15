@@ -43,6 +43,11 @@ export const refreshRequestSchema = z.object({
   refreshToken: z.string().trim().min(1),
 });
 
+/** Body of `POST /api/auth/logout`. Refresh tokens are revoked only when `allDevices` is true. */
+export const logoutRequestSchema = z.object({
+  allDevices: z.boolean().optional(),
+});
+
 export const authTokensSchema = z.object({
   idToken: z.string().min(1),
   refreshToken: z.string().min(1),
@@ -76,3 +81,4 @@ export const authErrorResponseSchema = z.object({
 export type RegisterRequestInput = z.infer<typeof registerRequestSchema>;
 export type LoginRequestInput = z.infer<typeof loginRequestSchema>;
 export type RefreshRequestInput = z.infer<typeof refreshRequestSchema>;
+export type LogoutRequestInput = z.infer<typeof logoutRequestSchema>;

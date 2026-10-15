@@ -1,3 +1,5 @@
+import { createCustomToken } from "@ctrlp/firebase";
+
 import { jsonResponse } from "@/src/lib/http";
 import { authErrorResponse } from "@/src/modules/auth/auth-http";
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
@@ -10,6 +12,16 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ slug: string }> };
+
+/** Lets the tracking page read `orderTracking` live. Without it the page falls back to one-off fetches. */
+async function guestFirebaseToken(printUserId: string) {
+  try {
+    return await createCustomToken(printUserId);
+  } catch (error) {
+    console.error("Failed to sign a guest Firebase token", error);
+    return null;
+  }
+}
 
 export async function POST(request: Request, context: RouteContext) {
   try {
@@ -29,7 +41,7 @@ export async function POST(request: Request, context: RouteContext) {
       cookiePrintUserId: await readPrintUserCookie(),
     });
     await writePrintUserCookie(session.id);
-    return jsonResponse({ session, shop });
+    return jsonResponse({ session, shop, firebaseToken: await guestFirebaseToken(session.id) });
   } catch (error) {
     return authErrorResponse(error);
   }

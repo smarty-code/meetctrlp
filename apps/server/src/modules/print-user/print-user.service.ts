@@ -13,6 +13,7 @@ import type {
 } from "@ctrlp/schemas";
 
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
+import { systemPrincipal } from "@/src/modules/auth/principal";
 import { inspectDocument } from "@/src/modules/documents/inspect-document";
 import {
   confirmOnlinePayment,
@@ -28,6 +29,7 @@ import {
   PRESIGN_TTL_SECONDS,
   billablePages,
   canMockConfirmPayment,
+  mockPaymentsAllowed,
   canSubmitGuestDocuments,
   guestStorageKey,
   isAbandonedUpload,
@@ -437,6 +439,9 @@ export async function getGuestOrder(session: PrintUserSession, orderId: string) 
 }
 
 export async function mockConfirmGuestPayment(session: PrintUserSession, orderId: string, idempotencyKey: string) {
+  if (!mockPaymentsAllowed()) {
+    throw new AuthServiceError(404, "not found");
+  }
   const order = await getGuestOrder(session, orderId);
   const allowed = canMockConfirmPayment(order);
   if (!allowed.ok && allowed.reason !== "ORDER_NOT_ONLINE") {
@@ -454,7 +459,7 @@ export async function mockConfirmGuestPayment(session: PrintUserSession, orderId
   if (result.autoAccepted) {
     const config = await getShopConfigByShopId(session.shopId);
     if (config.orderAutomation.autoDispatchAcceptedOrders) {
-      await queueIncomingOrder({ id: "payment-provider", shopId: session.shopId } as never, orderId);
+      await queueIncomingOrder(systemPrincipal(session.shopId, "payment-provider"), orderId);
     }
   }
 

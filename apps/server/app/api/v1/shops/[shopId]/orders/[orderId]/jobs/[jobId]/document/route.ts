@@ -1,4 +1,5 @@
 import { authErrorResponse } from "@/src/modules/auth/auth-http";
+import { systemPrincipal } from "@/src/modules/auth/principal";
 import { requireAgentCredential } from "@/src/modules/devices/device.service";
 import { createDocumentDownloadUrl } from "@/src/modules/documents/document.service";
 import { getFirebaseFirestore } from "@ctrlp/firebase/firestore";
@@ -21,7 +22,7 @@ export async function GET(request: Request, context: RouteContext) {
       return Response.json({ error: "PRINT_JOB_NOT_LEASED" }, { status: 409 });
     }
     return Response.json(await createDocumentDownloadUrl(
-      { id: agentId, shopId } as never,
+      systemPrincipal(shopId, agentId),
       orderId,
       String(job.get("documentId")),
       new URL(request.url).origin,

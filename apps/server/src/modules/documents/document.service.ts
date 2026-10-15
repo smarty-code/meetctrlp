@@ -5,7 +5,7 @@ import path from "node:path";
 import { createPresignedDownloadUrl, uploadObject } from "@ctrlp/firebase";
 import { getFirebaseWebApiKey } from "@ctrlp/firebase/config";
 import { FieldValue, getFirebaseFirestore } from "@ctrlp/firebase/firestore";
-import type { AuthSessionUser } from "@ctrlp/types";
+import type { ShopPrincipal } from "@ctrlp/types";
 
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
 import { inspectDocument } from "@/src/modules/documents/inspect-document";
@@ -91,7 +91,7 @@ function findDocument(order: OrderDto, docId: string) {
 }
 
 export async function createPdfOrder(
-  user: AuthSessionUser,
+  user: ShopPrincipal,
   files: Array<{
     filename: string;
     bytes: Buffer;
@@ -158,7 +158,7 @@ export async function createPdfOrder(
 }
 
 export async function createDocumentDownloadUrl(
-  user: AuthSessionUser,
+  user: ShopPrincipal,
   orderId: string,
   docId: string,
   origin: string,
@@ -226,7 +226,7 @@ export async function readDocumentContent(shopId: string, orderId: string, docId
 }
 
 export async function recordDocumentAccess(
-  user: AuthSessionUser,
+  user: ShopPrincipal,
   orderId: string,
   docId: string,
   _accessType: AccessType,
@@ -237,7 +237,7 @@ export async function recordDocumentAccess(
 }
 
 export async function confirmDocumentShredded(
-  user: AuthSessionUser,
+  user: ShopPrincipal,
   orderId: string,
   docId: string,
 ) {

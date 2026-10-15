@@ -6,7 +6,7 @@ import type {
   DeviceOfflineRequestInput,
   RegisterDeviceRequestInput,
 } from "@ctrlp/schemas";
-import type { AuthSessionUser } from "@ctrlp/types";
+import type { ShopPrincipal } from "@ctrlp/types";
 
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
 
@@ -78,7 +78,7 @@ async function markStaleAgentsOffline(shopId: string, currentAgentId: string) {
 }
 
 export async function registerShopDevice(
-  user: AuthSessionUser,
+  user: ShopPrincipal,
   input: RegisterDeviceRequestInput,
 ) {
   const agentId = agentIdFor(user.shopId, input.deviceIdentifier);
@@ -103,7 +103,7 @@ export async function registerShopDevice(
       agentVersion: input.agentVersion,
       status: "ONLINE",
       heartbeatIntervalSeconds: HEARTBEAT_INTERVAL_SECONDS,
-      registeredByUserId: user.id,
+      registeredByUserId: user.shopUserId,
       ...(issuedCredential ? { apiKeyHash: hashAgentCredential(issuedCredential) } : {}),
       lastSeenAt: now,
       updatedAt: now,
@@ -126,7 +126,7 @@ export async function registerShopDevice(
 }
 
 export async function recordDeviceHeartbeat(
-  user: AuthSessionUser,
+  user: ShopPrincipal,
   input: DeviceHeartbeatRequestInput,
 ) {
   const reference = agentRef(user.shopId, input.deviceId);
@@ -169,7 +169,7 @@ export async function recordDeviceHeartbeat(
 }
 
 export async function markDeviceOffline(
-  user: AuthSessionUser,
+  user: ShopPrincipal,
   input: DeviceOfflineRequestInput,
 ) {
   const reference = agentRef(user.shopId, input.deviceId);

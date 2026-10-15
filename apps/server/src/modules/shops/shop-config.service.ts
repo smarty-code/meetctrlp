@@ -10,7 +10,7 @@ import {
   type UpdateShopHoursRequestInput,
   type UpdateShopPricingRequestInput,
 } from "@ctrlp/schemas";
-import type { AuthSessionUser } from "@ctrlp/types";
+import type { ShopPrincipal } from "@ctrlp/types";
 
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
 
@@ -164,12 +164,12 @@ export async function getShopConfigByShopId(shopId: string) {
   return readConfig(await requireShopData(shopId));
 }
 
-export async function getShopConfig(user: AuthSessionUser) {
+export async function getShopConfig(user: ShopPrincipal) {
   return getShopConfigByShopId(user.shopId);
 }
 
 export async function updateShopPricing(
-  user: AuthSessionUser,
+  user: ShopPrincipal,
   rates: UpdateShopPricingRequestInput,
 ) {
   const reference = shopRef(user.shopId);
@@ -197,7 +197,7 @@ export async function updateShopPricing(
 }
 
 export async function updateShopCapabilities(
-  user: AuthSessionUser,
+  user: ShopPrincipal,
   input: UpdateShopCapabilitiesRequestInput,
 ) {
   const reference = shopRef(user.shopId);
@@ -222,7 +222,7 @@ export async function updateShopCapabilities(
 }
 
 export async function updateOrderAutomation(
-  user: AuthSessionUser,
+  user: ShopPrincipal,
   input: UpdateOrderAutomationRequestInput,
 ) {
   const reference = shopRef(user.shopId);
@@ -238,7 +238,7 @@ export async function updateOrderAutomation(
 }
 
 export async function updateShopHours(
-  user: AuthSessionUser,
+  user: ShopPrincipal,
   input: UpdateShopHoursRequestInput,
 ) {
   const reference = shopRef(user.shopId);
@@ -321,6 +321,6 @@ export function quoteDocumentPrint(config: ShopConfig, input: PriceQuoteRequestI
   };
 }
 
-export async function quoteShopDocument(user: AuthSessionUser, input: PriceQuoteRequestInput) {
+export async function quoteShopDocument(user: ShopPrincipal, input: PriceQuoteRequestInput) {
   return quoteDocumentPrint(await getShopConfig(user), input);
 }

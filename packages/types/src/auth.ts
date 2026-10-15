@@ -15,6 +15,15 @@ export type ShopUser = {
 
 export type AuthSessionUser = ShopUser;
 
+/** Who is calling the API, read from the verified ID token's custom claims (no Firestore reads). */
+export type ShopPrincipal = {
+  /** Firebase Auth uid. */
+  uid: string;
+  shopId: string;
+  shopUserId: string;
+  role: ShopUserRole;
+};
+
 export type AuthTokens = {
   idToken: string;
   refreshToken: string;

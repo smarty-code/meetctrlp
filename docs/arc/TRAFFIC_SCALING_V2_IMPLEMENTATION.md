@@ -3,6 +3,7 @@
 > **Status:** Final, revision 3, 15 Oct 2026. **Approved for implementation.** No production code has been written yet.
 > **Revision 3:** the doorbell spike passed (3.2). This revision records its results and folds in what it found: a new polling-fallback rule and a 65 s watchdog (10.3), ring timeouts treated as "unknown" (6.9), and no second token refresh on `auth_revoked` (10.2). It also fixes problems found by re-reading the plan against the code; see the revision 3 rows in section 16. Field checks on shop networks are still open. They run alongside Phase 1 as P0-03 and must pass before the agent reaches shops, but they don't block coding.
 > **Revision 2:** the minimized-window test failed. A minimized WebView2 window doesn't deliver Firestore listener updates reliably. Everything time-critical now runs in the agent, which listens to a Realtime Database "doorbell" over its documented REST stream. The desktop window has no Firebase SDK.
+> **Guides:** [developer guide](./traffic-scaling-v2/DEVELOPER_GUIDE.md) and [testing guide](./traffic-scaling-v2/TESTING_GUIDE.md).
 > **Design:** [`DESKTOP_TRAFFIC_SCALING_PLAN.md`](./DESKTOP_TRAFFIC_SCALING_PLAN.md) (version 2.1) explains *why*. This document covers *what changes where, in what order, and how we know it works*.
 > **Components:** `apps/server`, `apps/print-shop` (Tauri UI and Rust bridge), `apps/print-agent` (C#), `apps/printUserWebapp`, `packages/firebase`, `packages/schemas`, `packages/types`, Firebase project config.
 > **Baseline:** current `main`. File and line references were taken on 15 Oct 2026 and will drift.
@@ -149,6 +150,8 @@ It ran against project `meetctrlp` with the Realtime Database instance `meetctrl
 | Short network drop | Reconnect within 30 s of the network returning | **Found a bug in the plan's fallback rule** (finding 1 below). After the fix, a 40 s outage against the mock server reconnected within 4 s of the server returning. |
 | Long cut (40 min), sleep and resume | Reconnect within 30 s | **Open:** P0-03. |
 | Shop networks: broadband, mobile hotspot, antivirus HTTPS scanning, proxy | Events arrive unbuffered | **Open:** P0-03. The dev PC's broadband passed. |
+
+**Second run (78 minutes, same PC):** every testable row passed again. Commit → event p50 73 ms, p95 98 ms, worst 239 ms; 64 of 66 rings live, the other 2 never reached the database; token expiry at 60.0 minutes with a reconnect in 0.8 s; about 22 KB/h while ringing about 50 times an hour. The database also closed the stream on its own twice; the listener reconnected in 3.2 s and 0.3 s, as the reconnect rule expects.
 
 **What the spike changed in this plan:**
 
@@ -997,6 +1000,16 @@ Estimates are for one engineer who knows the code. Dependencies are by task ID.
 | P1-07 | Op counters and budget alerts (12.1, 12.3) | — | 0.5 d | Log lines in staging; alerts configured |
 | **Phase 1** | | | **6.35 d** | |
 
+**Phase 1 status (15 Oct 2026): code written, not deployed.** Server tests (35) and typechecks pass. What differs from the tasks above, and what's still open:
+
+- **P1-00:** done. The web app uses this route as its only online payment step (there's no gateway yet), so online payments now work only where `ALLOW_MOCK_PAYMENTS=1`. Locally it's set in `apps/server/.env.development.local`, which only `next dev` reads.
+- **P0-01 / P1-01 / P1-02:** `firebase.json`, `.firebaserc`, both rules files, the indexes, and the rules tests are in. **The rules tests haven't run:** the emulators need Java 11+, which the dev PC doesn't have. Not yet done: a staging project, API key restrictions, and deploying the indexes and rules.
+- **P1-03:** done as specified, plus one addition: **login repairs claims.** If a user's token lacks the expected claims (an account made before claims were required, or a changed role), login sets them and returns a refreshed token. Without this, existing dev accounts would get `CLAIMS_MISSING` on every call.
+- **P1-04:** done. If signing the token fails, the session response carries `firebaseToken: null` and the tracking page falls back to fetching.
+- **P1-05:** done, with one deliberate deviation: **server auto-accept on payment stays until P2-01.** Removing it before the agent's `sync` exists would leave paid orders waiting forever. Payment confirmation is already idempotent by state. The old agent paths (`claimPrintJob`, `updatePrintJob`) also go through `applyOrderChange` until P2 deletes them.
+- **P1-06:** done. Rings from one request are merged and sent once before the response, through a small per-request context (`src/lib/request-context.ts`) that the route runners open. Not exercised against the real database yet; the spike already proved the PATCH with a token of the same scopes.
+- **P1-07:** counters done (`FIRESTORE_OP_COUNTERS=1`). The alerts aren't configured; the steps are in `apps/server/docs/deployment.md` ("Cost alerts").
+
 ### Phase 2: agent-driven delivery
 
 | ID | Task | Depends on | Estimate | Done when |
@@ -1161,6 +1174,7 @@ A late report with the old lease → lease_mismatch → agent marks it rejected
 | **Rev 3:** local cancel isn't reported to the cloud except by the sweep | `jobs.cancel` handler | 10.5 |
 | **Rev 3:** the guest cookie is the raw `printUserId` | `print-user-http.ts` 25 | 6.8 (signed cookie, P3-02) |
 | **Rev 3:** local-storage download links are signed with the client-visible `FIREBASE_WEB_API_KEY` (local backend only) | `document.service.ts` 58 | Separate ticket: use a server-only secret |
+| **Security, found while building Phase 1:** `apps/server/.env` and `apps/server/.env.local` are tracked in git and hold the Firebase service-account private key and the S3 secret key. Next.js also loads both files in production builds. | `git ls-files apps/server` | Separate ticket, urgent: rotate both credentials, untrack the files, add `.env*` (except `.env.example`) to `apps/server/.gitignore`, and set the values only in App Hosting secrets. `apps/server/docs/auth.md` wrongly says `.env.local` is gitignored. |
 | Shredding marks `shreddedAt` but never deletes the storage object | `confirmDocumentShredded` | P2-01 |
 | Files of rejected or cancelled orders are never deleted | — | P2-01 (maintenance) |
 | `retryPrintJob` keeps the old lease and timestamps | `print-job.service.ts` about 869 | P2-01 |

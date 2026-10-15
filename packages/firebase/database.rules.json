@@ -1,0 +1,12 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "doorbell": {
+      "$shopId": {
+        ".read": "auth != null && auth.token.shopId === $shopId",
+        ".write": false
+      }
+    }
+  }
+}

@@ -1,23 +1,26 @@
 import { jsonResponse } from "@/src/lib/http";
+import { requestRoute, runInRequestContext } from "@/src/lib/request-context";
 import { authErrorResponse } from "@/src/modules/auth/auth-http";
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
-import { readAuthorizedShopUser } from "@/src/modules/auth/require-request";
-import type { AuthSessionUser } from "@ctrlp/types";
+import { readShopPrincipal } from "@/src/modules/auth/require-request";
+import type { ShopPrincipal } from "@ctrlp/types";
 
 export async function runShopOrder<T>(
   request: Request,
   shopId: string,
-  action: (user: AuthSessionUser) => Promise<T>,
+  action: (user: ShopPrincipal) => Promise<T>,
 ) {
-  try {
-    const user = await readAuthorizedShopUser(request);
+  return runInRequestContext(requestRoute(request), async () => {
+    try {
+      const user = await readShopPrincipal(request);
 
-    if (user.shopId !== shopId) {
-      throw new AuthServiceError(403, "shop does not match this account");
+      if (user.shopId !== shopId) {
+        throw new AuthServiceError(403, "shop does not match this account");
+      }
+
+      return jsonResponse(await action(user));
+    } catch (error) {
+      return authErrorResponse(error);
     }
-
-    return jsonResponse(await action(user));
-  } catch (error) {
-    return authErrorResponse(error);
-  }
+  });
 }

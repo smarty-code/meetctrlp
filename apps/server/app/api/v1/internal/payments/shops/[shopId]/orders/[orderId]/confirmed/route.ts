@@ -1,7 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
 
 import { jsonResponse } from "@/src/lib/http";
+import { requestRoute, runInRequestContext } from "@/src/lib/request-context";
 import { authErrorResponse } from "@/src/modules/auth/auth-http";
+import { systemPrincipal } from "@/src/modules/auth/principal";
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
 import { confirmOnlinePayment } from "@/src/modules/orders/order.service";
 import { queueIncomingOrder } from "@/src/modules/printing/print-job.service";
@@ -25,13 +27,17 @@ function requirePaymentWebhook(request: Request) {
 }
 
 export async function POST(request: Request, context: RouteContext) {
+  return runInRequestContext(requestRoute(request), () => confirm(request, context));
+}
+
+async function confirm(request: Request, context: RouteContext) {
   try {
     requirePaymentWebhook(request);
     const { shopId, orderId } = await context.params;
     const body = confirmOnlinePaymentRequestSchema.parse(await request.json());
     const result = await confirmOnlinePayment(shopId, orderId, body);
-    if (result.autoAccepted && (await getShopConfig({ id: "payment-provider", shopId } as never)).orderAutomation.autoDispatchAcceptedOrders) {
-      await queueIncomingOrder({ id: "payment-provider", shopId } as never, orderId);
+    if (result.autoAccepted && (await getShopConfig(systemPrincipal(shopId, "payment-provider"))).orderAutomation.autoDispatchAcceptedOrders) {
+      await queueIncomingOrder(systemPrincipal(shopId, "payment-provider"), orderId);
     }
     return jsonResponse(result.order);
   } catch (error) {

@@ -11,6 +11,7 @@ export {
 export {
   FIREBASE_PHONE_EMAIL_DOMAIN,
   FirebaseAuthRestError,
+  createCustomToken,
   getFirebaseAuth,
   isInternalPhoneEmail,
   looksLikeEmail,
@@ -23,6 +24,8 @@ export {
   type FirebasePasswordAuthResult,
 } from "./auth";
 export { getFirebaseFirestore } from "./firestore";
+export { onFirestoreOp, type FirestoreOp } from "./op-counters";
+export { getServiceAccessToken } from "./service-token";
 export {
   createPresignedDownloadUrl,
   createPresignedUploadUrl,

@@ -1,12 +1,12 @@
 import { FieldValue, getFirebaseFirestore } from "@ctrlp/firebase/firestore";
 import type { UpdateShopProfileRequestInput } from "@ctrlp/schemas";
-import type { AuthSessionUser } from "@ctrlp/types";
+import type { ShopPrincipal } from "@ctrlp/types";
 
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
 import { shopCustomerUrl } from "@/src/modules/print-user/print-user.helpers";
 import { getShop, listActiveStaff } from "@/src/modules/shops/firestore-shop-store";
 
-export async function getShopProfile(user: AuthSessionUser) {
+export async function getShopProfile(user: ShopPrincipal) {
   const shop = await getShop(user.shopId);
 
   if (!shop) {
@@ -28,7 +28,7 @@ export async function getShopProfile(user: AuthSessionUser) {
   };
 }
 
-export async function updateShopProfile(user: AuthSessionUser, input: UpdateShopProfileRequestInput) {
+export async function updateShopProfile(user: ShopPrincipal, input: UpdateShopProfileRequestInput) {
   const reference = getFirebaseFirestore().doc(`shops/${user.shopId}`);
   await getFirebaseFirestore().runTransaction(async (transaction) => {
     const snapshot = await transaction.get(reference);
@@ -53,7 +53,7 @@ export async function updateShopProfile(user: AuthSessionUser, input: UpdateShop
   return getShopProfile(user);
 }
 
-export async function listActiveShopStaff(user: AuthSessionUser) {
+export async function listActiveShopStaff(user: ShopPrincipal) {
   const staff = await listActiveStaff(user.shopId);
 
   return {

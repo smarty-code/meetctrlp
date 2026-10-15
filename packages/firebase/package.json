@@ -13,7 +13,8 @@
     "./storage": "./src/storage.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:rules": "node --experimental-strip-types --test test/rules.test.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.862.0",
@@ -21,6 +22,8 @@
     "firebase-admin": "^13.10.0"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "5.0.2",
+    "firebase": "12.19.0",
     "typescript": "^5"
   },
   "engines": {

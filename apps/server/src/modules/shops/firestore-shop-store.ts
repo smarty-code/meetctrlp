@@ -153,6 +153,30 @@ function isAlreadyExists(error: unknown) {
   return code === "6" || code === "already-exists" || code === "ALREADY_EXISTS";
 }
 
+function lookupsFor(user: { firebaseUid: string; phone: string | null; email: string | null }) {
+  const lookups: Array<[LookupKind, string]> = [["firebaseUid", user.firebaseUid]];
+
+  if (user.phone) {
+    lookups.push(["phone", user.phone]);
+  }
+
+  if (user.email) {
+    lookups.push(["email", user.email]);
+  }
+
+  return lookups;
+}
+
+export async function getShopUser(shopId: string, userId: string) {
+  const user = await getFirebaseFirestore().doc(`shops/${shopId}/users/${userId}`).get();
+
+  if (!user.exists) {
+    return undefined;
+  }
+
+  return parseShopUser(user.data() as Record<string, unknown>, user.id, shopId);
+}
+
 export function findShopUserByFirebaseUid(firebaseUid: string) {
   return findByLookup("firebaseUid", firebaseUid);
 }
@@ -234,17 +258,7 @@ export async function createShopWithOwner(input: {
       updatedAt: now,
     });
 
-    const lookups: Array<[LookupKind, string]> = [["firebaseUid", input.firebaseUid]];
-
-    if (input.phone) {
-      lookups.push(["phone", input.phone]);
-    }
-
-    if (input.email) {
-      lookups.push(["email", input.email]);
-    }
-
-    for (const [kind, value] of lookups) {
+    for (const [kind, value] of lookupsFor(input)) {
       batch.create(db.doc(`authLookups/${lookupDocId(kind, value)}`), {
         kind,
         value,
@@ -277,6 +291,25 @@ export async function createShopWithOwner(input: {
   }
 
   throw new AuthServiceError(500, "failed to create shop");
+}
+
+/** Undoes `createShopWithOwner` when a later registration step fails. Best effort. */
+export async function deleteShopWithOwner(user: StoredShopUser) {
+  const db = getFirebaseFirestore();
+  const batch = db.batch();
+
+  batch.delete(db.doc(`shops/${user.shopId}/users/${user.id}`));
+  batch.delete(db.doc(`shops/${user.shopId}`));
+
+  for (const [kind, value] of lookupsFor(user)) {
+    batch.delete(db.doc(`authLookups/${lookupDocId(kind, value)}`));
+  }
+
+  try {
+    await batch.commit();
+  } catch (error) {
+    console.error("Failed to roll back shop", user.shopId, error);
+  }
 }
 
 export async function touchLastLogin(user: StoredShopUser) {

@@ -3,5 +3,6 @@ export {
   logoutShopUser,
   refreshShopUserSession,
   registerShopOwner,
-  requireShopUser,
+  getCurrentShopUser,
+  requireShopPrincipal,
 } from "./auth.service";

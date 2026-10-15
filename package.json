@@ -33,6 +33,10 @@
     "desktop:test": "pnpm agent:test && pnpm shop:test",
     "desktop:typecheck": "pnpm shop:typecheck",
     "firebase:typecheck": "pnpm --filter @ctrlp/firebase typecheck",
+    "firebase:emulators": "firebase emulators:start --only auth,firestore,database",
+    "firebase:rules:test": "firebase emulators:exec --only firestore,database \"pnpm --filter @ctrlp/firebase test:rules\"",
+    "firebase:deploy:indexes": "firebase deploy --only firestore:indexes",
+    "firebase:deploy:rules": "firebase deploy --only firestore:rules,database",
     "types:typecheck": "pnpm --filter @ctrlp/types typecheck",
     "schemas:typecheck": "pnpm --filter @ctrlp/schemas typecheck",
     "@ctrlp/ui:typecheck": "pnpm --filter @ctrlp/ui typecheck",
@@ -62,6 +66,7 @@
   },
   "type": "module",
   "devDependencies": {
+    "firebase-tools": "15.32.1",
     "turbo": "^2.10.12"
   }
 }

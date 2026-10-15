@@ -9,7 +9,7 @@
     "lint": "eslint",
     "seed:print-order": "node ./scripts/seed-print-order.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test ./src/modules/print-user/print-user.helpers.test.ts ./src/modules/documents/pdf-page-count.test.ts"
+    "test": "node --experimental-strip-types --test ./src/modules/print-user/print-user.helpers.test.ts ./src/modules/documents/pdf-page-count.test.ts ./src/modules/auth/principal.test.ts ./src/modules/orders/order-model.test.ts ./src/modules/realtime/ring-model.test.ts"
   },
   "dependencies": {
     "@ctrlp/firebase": "workspace:*",

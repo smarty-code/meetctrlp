@@ -1,4 +1,5 @@
 import { authErrorResponse } from "@/src/modules/auth/auth-http";
+import { systemPrincipal } from "@/src/modules/auth/principal";
 import { requireAgentCredential } from "@/src/modules/devices/device.service";
 import { runShopOrder } from "@/src/modules/orders/order-http";
 import { updatePrintJob } from "@/src/modules/printing/print-job.service";
@@ -25,7 +26,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       if (!job.exists || job.get("agentId") !== agentId) {
         return Response.json({ error: "PRINT_JOB_AGENT_MISMATCH" }, { status: 403 });
       }
-      return Response.json(await updatePrintJob({ id: agentId, shopId } as never, orderId, jobId, body));
+      return Response.json(await updatePrintJob(systemPrincipal(shopId, agentId), orderId, jobId, body));
     }
     return runShopOrder(request, shopId, (user) => updatePrintJob(user, orderId, jobId, body));
   } catch (error) {

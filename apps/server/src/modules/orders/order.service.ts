@@ -2,7 +2,13 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { FieldValue, getFirebaseFirestore, type Timestamp } from "@ctrlp/firebase/firestore";
+import {
+  FieldValue,
+  getFirebaseFirestore,
+  type DocumentReference,
+  type Timestamp,
+  type Transaction,
+} from "@ctrlp/firebase/firestore";
 import type {
   CheckoutOrderRequestInput,
   ConfirmOnlinePaymentRequestInput,
@@ -10,23 +16,28 @@ import type {
   RecordCashPaymentRequestInput,
   RejectOrderRequestInput,
 } from "@ctrlp/schemas";
-import type { AuthSessionUser } from "@ctrlp/types";
+import type { ShopPrincipal } from "@ctrlp/types";
 
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
+import { systemPrincipal } from "@/src/modules/auth/principal";
+import {
+  EMPTY_LIFECYCLE,
+  LIFECYCLE_TIME_FIELD,
+  applyDottedUpdate,
+  buildSearchKeys,
+  canTransition,
+  decideTransition,
+  statusConflictReason,
+  touchesTrackingCopy,
+  trackingCopy,
+  type OrderChannel,
+  type OrderStatus,
+} from "@/src/modules/orders/order-model";
+import { ringShop } from "@/src/modules/realtime/doorbell";
 import { getShopConfig, getShopConfigByShopId, incrementShopStats, quoteDocumentPrint } from "@/src/modules/shops/shop-config.service";
 
 const FIRST_ORDER_SEQUENCE = 1041;
 
-type OrderStatus =
-  | "SUBMITTED"
-  | "SHOP_ACCEPTED"
-  | "PRINTING"
-  | "READY"
-  | "COMPLETED"
-  | "REJECTED"
-  | "CANCELLED";
-
-type TransitionAction = "accept" | "reject" | "printing" | "ready" | "complete" | "cancel";
 
 export type OrderDto = {
   id: string;
@@ -87,21 +98,16 @@ export type OrderDto = {
   };
   lifecycle: {
     submittedAt: string | null;
+    paidAt: string | null;
     acceptedAt: string | null;
     acceptedByUserId: string | null;
+    printingAt: string | null;
     readyAt: string | null;
     completedAt: string | null;
     completedByUserId: string | null;
+    rejectedAt: string | null;
+    cancelledAt: string | null;
   };
-  statusHistory: Array<{
-    id: string;
-    fromStatus: string | null;
-    toStatus: string;
-    changedByType: string;
-    changedByUserId: string | null;
-    reason: string | null;
-    changedAt: string | null;
-  }>;
   print: {
     originalFilename: string;
     contentType: string;
@@ -115,6 +121,60 @@ export type OrderDto = {
 
 function ordersCollection(shopId: string) {
   return getFirebaseFirestore().collection(`shops/${shopId}/orders`);
+}
+
+function trackingRef(orderId: string) {
+  return getFirebaseFirestore().doc(`orderTracking/${orderId}`);
+}
+
+type OrderChange = {
+  /** The status to move to. Omit to change fields only. */
+  status?: OrderStatus;
+  /** Other fields to set, with dotted paths (for example `payment.status`). */
+  fields?: Record<string, unknown>;
+};
+
+/**
+ * The single writer for order status and customer-visible fields (TRAFFIC_SCALING_V2 4.1), inside the
+ * caller's transaction. It checks the transition, stamps the matching `lifecycle.*At` and
+ * `updatedAt` with the server time, skips no-op writes, and keeps a guest order's tracking copy in
+ * step. `current` is the order data the transaction read.
+ */
+export function applyOrderChange(
+  transaction: Transaction,
+  orderRef: DocumentReference,
+  current: Record<string, unknown>,
+  change: OrderChange,
+) {
+  const from = String(current.status ?? "") as OrderStatus;
+  const update: Record<string, unknown> = { ...change.fields };
+
+  if (change.status && change.status !== from) {
+    if (!canTransition(from, change.status)) {
+      throw new AuthServiceError(409, statusConflictReason(from));
+    }
+    update.status = change.status;
+    const timeField = LIFECYCLE_TIME_FIELD[change.status];
+    if (timeField) {
+      update[`lifecycle.${timeField}`] = FieldValue.serverTimestamp();
+    }
+  }
+
+  if (Object.keys(update).length === 0) {
+    return { changed: false, from, to: from };
+  }
+
+  update.updatedAt = FieldValue.serverTimestamp();
+  transaction.update(orderRef, update);
+
+  if (current.channel === "PRINT_USER" && touchesTrackingCopy(update)) {
+    transaction.set(trackingRef(orderRef.id), {
+      ...trackingCopy(applyDottedUpdate(current, update)),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  }
+
+  return { changed: true, from, to: (update.status as OrderStatus | undefined) ?? from };
 }
 
 function timestampToIso(value: unknown) {
@@ -172,10 +232,7 @@ function printJobPath(shopId: string, orderId: string) {
   return path.join(process.cwd(), "data", "print-jobs", shopId, orderId);
 }
 
-function toOrderDto(
-  snapshot: { id: string; data: () => Record<string, unknown> | undefined },
-  history: OrderDto["statusHistory"] = [],
-): OrderDto {
+function toOrderDto(snapshot: { id: string; data: () => Record<string, unknown> | undefined }): OrderDto {
   const data = snapshot.data() ?? {};
   const amounts =
     data.amounts && typeof data.amounts === "object"
@@ -220,13 +277,16 @@ function toOrderDto(
     },
     lifecycle: {
       submittedAt: timestampToIso(lifecycle.submittedAt),
+      paidAt: timestampToIso(lifecycle.paidAt),
       acceptedAt: timestampToIso(lifecycle.acceptedAt),
       acceptedByUserId: textOrNull(lifecycle.acceptedByUserId),
+      printingAt: timestampToIso(lifecycle.printingAt),
       readyAt: timestampToIso(lifecycle.readyAt),
       completedAt: timestampToIso(lifecycle.completedAt),
       completedByUserId: textOrNull(lifecycle.completedByUserId),
+      rejectedAt: timestampToIso(lifecycle.rejectedAt),
+      cancelledAt: timestampToIso(lifecycle.cancelledAt),
     },
-    statusHistory: history,
     print: parsePrint(data.print),
     createdAt: timestampToIso(data.createdAt),
     updatedAt: timestampToIso(data.updatedAt),
@@ -237,41 +297,22 @@ function sortNewest(orders: OrderDto[]) {
   return [...orders].sort((left, right) => (right.createdAt ?? "").localeCompare(left.createdAt ?? ""));
 }
 
-async function readHistory(shopId: string, orderId: string) {
-  const snapshot = await ordersCollection(shopId).doc(orderId).collection("statusHistory").get();
-
-  return snapshot.docs
-    .map((document) => {
-      const data = document.data();
-      return {
-        id: document.id,
-        fromStatus: textOrNull(data.fromStatus),
-        toStatus: typeof data.toStatus === "string" ? data.toStatus : "",
-        changedByType: typeof data.changedByType === "string" ? data.changedByType : "SYSTEM",
-        changedByUserId: textOrNull(data.changedByUserId),
-        reason: textOrNull(data.reason),
-        changedAt: timestampToIso(data.changedAt),
-      };
-    })
-    .sort((left, right) => (left.changedAt ?? "").localeCompare(right.changedAt ?? ""));
-}
-
-export async function listShopOrders(user: AuthSessionUser) {
+export async function listShopOrders(user: ShopPrincipal) {
   const snapshot = await ordersCollection(user.shopId).get();
   return { orders: sortNewest(snapshot.docs.map((document) => toOrderDto(document))) };
 }
 
-export async function getShopOrder(user: AuthSessionUser, orderId: string) {
+export async function getShopOrder(user: ShopPrincipal, orderId: string) {
   const snapshot = await ordersCollection(user.shopId).doc(orderId).get();
 
   if (!snapshot.exists) {
     throw new AuthServiceError(404, "ORDER_NOT_FOUND");
   }
 
-  return toOrderDto(snapshot, await readHistory(user.shopId, orderId));
+  return toOrderDto(snapshot);
 }
 
-export async function createShopOrder(user: AuthSessionUser, input: CheckoutOrderRequestInput) {
+export async function createShopOrder(user: ShopPrincipal, input: CheckoutOrderRequestInput) {
   const config = await getShopConfig(user);
   const documents = input.documents.map((document) => {
     const quote = quoteDocumentPrint(config, {
@@ -313,9 +354,7 @@ export async function createShopOrder(user: AuthSessionUser, input: CheckoutOrde
   const db = getFirebaseFirestore();
   const shopRef = db.doc(`shops/${user.shopId}`);
   const orderId = randomUUID();
-  const historyId = randomUUID();
   const orderRef = ordersCollection(user.shopId).doc(orderId);
-  const historyRef = orderRef.collection("statusHistory").doc(historyId);
   const now = FieldValue.serverTimestamp();
 
   await db.runTransaction(async (transaction) => {
@@ -337,10 +376,11 @@ export async function createShopOrder(user: AuthSessionUser, input: CheckoutOrde
       orderSequence: sequence,
       updatedAt: now,
     });
-    transaction.set(orderRef, {
+    const order = {
       id: orderId,
       orderNumber,
       shopId: user.shopId,
+      channel: "SHOP" satisfies OrderChannel,
       printUserId: input.printUserId ?? `guest-${randomUUID()}`,
       customerPhone: input.customerPhone ?? null,
       status: "SUBMITTED",
@@ -361,29 +401,23 @@ export async function createShopOrder(user: AuthSessionUser, input: CheckoutOrde
         reason: null,
         category: null,
       },
-      lifecycle: {
-        submittedAt: now,
-        acceptedAt: null,
-        acceptedByUserId: null,
-        readyAt: null,
-        completedAt: null,
-        completedByUserId: null,
-      },
+      lifecycle: { ...EMPTY_LIFECYCLE, submittedAt: now },
+      completedDocumentIds: [],
+      searchKeys: buildSearchKeys({
+        orderNumber,
+        pickupCode,
+        customerPhone: input.customerPhone ?? null,
+        filenames: documents.map((line) => line.document.originalFilename),
+      }),
       createdAt: now,
       updatedAt: now,
-    });
-    transaction.set(historyRef, {
-      historyId,
-      fromStatus: null,
-      toStatus: "SUBMITTED",
-      changedByType: "PRINT_USER",
-      changedByUserId: null,
-      reason: null,
-      changedAt: now,
-    });
+    };
+    transaction.set(orderRef, order);
   });
 
-  return getShopOrder(user, orderId);
+  const created = await getShopOrder(user, orderId);
+  await ringShop(user.shopId, { work: false, event: "order_submitted", orderId, orderNumber: created.orderNumber });
+  return created;
 }
 
 export async function getShopOrderById(shopId: string, orderId: string) {
@@ -393,7 +427,7 @@ export async function getShopOrderById(shopId: string, orderId: string) {
     throw new AuthServiceError(404, "ORDER_NOT_FOUND");
   }
 
-  return toOrderDto(snapshot, await readHistory(shopId, orderId));
+  return toOrderDto(snapshot);
 }
 
 /** Returns the order a guest already placed with this idempotency key, if any. */
@@ -484,9 +518,7 @@ export async function createPrintUserOrder(input: {
   const shopRef = db.doc(`shops/${input.shopId}`);
   const keyRef = db.doc(`shops/${input.shopId}/idempotencyKeys/${input.idempotencyKey}`);
   const orderId = randomUUID();
-  const historyId = randomUUID();
   const orderRef = ordersCollection(input.shopId).doc(orderId);
-  const historyRef = orderRef.collection("statusHistory").doc(historyId);
   const now = FieldValue.serverTimestamp();
   let reusedOrderId: string | null = null;
 
@@ -518,10 +550,11 @@ export async function createPrintUserOrder(input: {
       orderSequence: sequence,
       updatedAt: now,
     });
-    transaction.set(orderRef, {
+    const order = {
       id: orderId,
       orderNumber,
       shopId: input.shopId,
+      channel: "PRINT_USER" satisfies OrderChannel,
       printUserId: input.printUserId,
       customerPhone: null,
       status: "SUBMITTED",
@@ -543,26 +576,19 @@ export async function createPrintUserOrder(input: {
         reason: null,
         category: null,
       },
-      lifecycle: {
-        submittedAt: now,
-        acceptedAt: null,
-        acceptedByUserId: null,
-        readyAt: null,
-        completedAt: null,
-        completedByUserId: null,
-      },
+      lifecycle: { ...EMPTY_LIFECYCLE, submittedAt: now },
+      completedDocumentIds: [],
+      searchKeys: buildSearchKeys({
+        orderNumber,
+        pickupCode,
+        customerPhone: null,
+        filenames: documents.map((line) => line.document.originalFilename),
+      }),
       createdAt: now,
       updatedAt: now,
-    });
-    transaction.set(historyRef, {
-      historyId,
-      fromStatus: null,
-      toStatus: "SUBMITTED",
-      changedByType: "PRINT_USER",
-      changedByUserId: input.printUserId,
-      reason: null,
-      changedAt: now,
-    });
+    };
+    transaction.set(orderRef, order);
+    transaction.set(trackingRef(orderId), { ...trackingCopy(order), updatedAt: now });
     transaction.set(keyRef, {
       orderId,
       action: "print-user-submit",
@@ -571,130 +597,106 @@ export async function createPrintUserOrder(input: {
     });
   });
 
-  return getShopOrderById(input.shopId, reusedOrderId ?? orderId);
+  const order = await getShopOrderById(input.shopId, reusedOrderId ?? orderId);
+  if (!reusedOrderId) {
+    await ringShop(input.shopId, { work: false, event: "order_submitted", orderId, orderNumber: order.orderNumber });
+  }
+  return order;
 }
 
+/**
+ * Moves an order from `requiredFrom` to `next`. A request for the status the order already has is a
+ * replay: it returns the order with no write (`changed: false`).
+ */
 async function transitionOrder(
-  user: AuthSessionUser,
+  user: ShopPrincipal,
   orderId: string,
-  action: TransitionAction,
   input: OrderTransitionRequestInput,
   requiredFrom: OrderStatus,
   next: OrderStatus,
-  extra: Record<string, unknown>,
-  history: { changedByType: "SHOP_USER" | "PRINT_USER"; reason: string | null },
+  extra: Record<string, unknown> = {},
 ) {
   const db = getFirebaseFirestore();
   const orderRef = ordersCollection(user.shopId).doc(orderId);
-  const keyRef = db.doc(`shops/${user.shopId}/idempotencyKeys/${input.idempotencyKey}`);
-  const historyRef = orderRef.collection("statusHistory").doc(randomUUID());
-  const now = FieldValue.serverTimestamp();
+  let changed = false;
 
   await db.runTransaction(async (transaction) => {
-    const keySnap = await transaction.get(keyRef);
+    changed = false;
     const orderSnap = await transaction.get(orderRef);
-
-    if (keySnap.exists) {
-      const storedOrderId = keySnap.get("orderId");
-      const storedAction = keySnap.get("action");
-
-      if (storedOrderId === orderId && storedAction === action) {
-        return;
-      }
-
-      throw new AuthServiceError(409, "ORDER_STATUS_CONFLICT");
-    }
 
     if (!orderSnap.exists) {
       throw new AuthServiceError(404, "ORDER_NOT_FOUND");
     }
 
-    const current = String(orderSnap.get("status") ?? "");
+    const current = orderSnap.data() ?? {};
+    const decision = decideTransition({
+      current: String(current.status ?? ""),
+      next,
+      requiredFrom,
+      expected: input.currentStatus,
+    });
 
-    if (current !== requiredFrom || current !== input.currentStatus) {
-      throw new AuthServiceError(
-        409,
-        current === "CANCELLED" ? "ORDER_ALREADY_CANCELLED" : "ORDER_STATUS_CONFLICT",
-      );
+    if (decision.kind === "replay") {
+      return;
     }
 
-    transaction.update(orderRef, {
-      status: next,
-      ...extra,
-      updatedAt: now,
-    });
-    transaction.set(historyRef, {
-      historyId: historyRef.id,
-      fromStatus: current,
-      toStatus: next,
-      changedByType: history.changedByType,
-      changedByUserId: history.changedByType === "SHOP_USER" ? user.id : null,
-      reason: history.reason,
-      changedAt: now,
-    });
-    transaction.set(keyRef, {
-      orderId,
-      action,
-      createdAt: now,
-    });
+    if (decision.kind === "conflict") {
+      throw new AuthServiceError(409, decision.reason);
+    }
+
+    changed = applyOrderChange(transaction, orderRef, current, { status: next, fields: extra }).changed;
   });
 
-  return getShopOrder(user, orderId);
+  const order = await getShopOrder(user, orderId);
+  if (changed) {
+    await ringShop(user.shopId, { work: false, event: "order_updated", orderId, orderNumber: order.orderNumber });
+  }
+  return { order, changed };
 }
 
-export function acceptShopOrder(
-  user: AuthSessionUser,
+/** Accepts the order. `accepted` is false when it was already accepted (a replay). */
+export async function acceptShopOrder(
+  user: ShopPrincipal,
   orderId: string,
   input: OrderTransitionRequestInput,
 ) {
-  const now = FieldValue.serverTimestamp();
-  return transitionOrder(user, orderId, "accept", input, "SUBMITTED", "SHOP_ACCEPTED", {
-    "lifecycle.acceptedAt": now,
-    "lifecycle.acceptedByUserId": user.id,
-  }, { changedByType: "SHOP_USER", reason: null });
+  const { order, changed } = await transitionOrder(user, orderId, input, "SUBMITTED", "SHOP_ACCEPTED", {
+    "lifecycle.acceptedByUserId": user.shopUserId,
+  });
+  return { order, accepted: changed };
 }
 
-export function rejectShopOrder(
-  user: AuthSessionUser,
+export async function rejectShopOrder(
+  user: ShopPrincipal,
   orderId: string,
   input: RejectOrderRequestInput,
 ) {
-  return transitionOrder(user, orderId, "reject", input, "SUBMITTED", "REJECTED", {
+  const { order } = await transitionOrder(user, orderId, input, "SUBMITTED", "REJECTED", {
     "rejection.rejectedAt": FieldValue.serverTimestamp(),
     "rejection.reason": input.reason,
     "rejection.category": input.category,
-  }, { changedByType: "SHOP_USER", reason: input.reason });
+  });
+  return order;
 }
 
-export function markShopOrderPrinting(
-  user: AuthSessionUser,
+export async function markShopOrderPrinting(
+  user: ShopPrincipal,
   orderId: string,
   input: OrderTransitionRequestInput,
 ) {
-  return transitionOrder(
-    user,
-    orderId,
-    "printing",
-    input,
-    "SHOP_ACCEPTED",
-    "PRINTING",
-    {},
-    { changedByType: "SHOP_USER", reason: null },
-  );
+  return (await transitionOrder(user, orderId, input, "SHOP_ACCEPTED", "PRINTING")).order;
 }
 
-export function markShopOrderReady(
-  user: AuthSessionUser,
+export async function markShopOrderReady(
+  user: ShopPrincipal,
   orderId: string,
   input: OrderTransitionRequestInput,
 ) {
-  return transitionOrder(user, orderId, "ready", input, "PRINTING", "READY", {
-    "lifecycle.readyAt": FieldValue.serverTimestamp(),
-  }, { changedByType: "SHOP_USER", reason: null });
+  return (await transitionOrder(user, orderId, input, "PRINTING", "READY")).order;
 }
 
 export async function completeShopOrder(
-  user: AuthSessionUser,
+  user: ShopPrincipal,
   orderId: string,
   input: OrderTransitionRequestInput,
 ) {
@@ -702,65 +704,59 @@ export async function completeShopOrder(
   if (order.payment.method === "CASH" && order.payment.status !== "PAID") {
     throw new AuthServiceError(409, "CASH_PAYMENT_REQUIRED");
   }
-  const completed = await transitionOrder(user, orderId, "complete", input, "READY", "COMPLETED", {
-    "lifecycle.completedAt": FieldValue.serverTimestamp(),
-    "lifecycle.completedByUserId": user.id,
-  }, { changedByType: "SHOP_USER", reason: null });
-  if (order.status === "READY") {
+  const { order: completed, changed } = await transitionOrder(user, orderId, input, "READY", "COMPLETED", {
+    "lifecycle.completedByUserId": user.shopUserId,
+  });
+  if (changed) {
     await incrementShopStats(user.shopId, {
       totalOrdersToday: 1,
-      grossRevenueTodayPaise: order.amounts.totalMinorUnits,
+      grossRevenueTodayPaise: completed.amounts.totalMinorUnits,
     });
   }
   return completed;
 }
 
+/** Records cash for a READY order. Idempotent by state: an order already paid is returned as is. */
 export async function recordCashPayment(
-  user: AuthSessionUser,
+  user: ShopPrincipal,
   orderId: string,
   input: RecordCashPaymentRequestInput,
 ) {
   const db = getFirebaseFirestore();
   const orderRef = ordersCollection(user.shopId).doc(orderId);
-  const keyRef = db.doc(`shops/${user.shopId}/idempotencyKeys/${input.idempotencyKey}`);
-  const now = FieldValue.serverTimestamp();
   let applied = false;
 
   await db.runTransaction(async (transaction) => {
-    const [keySnap, orderSnap] = await Promise.all([transaction.get(keyRef), transaction.get(orderRef)]);
-    if (keySnap.exists) {
-      if (keySnap.get("orderId") === orderId && keySnap.get("action") === "collect-cash") {
-        return;
-      }
-      throw new AuthServiceError(409, "IDEMPOTENCY_KEY_REUSED");
-    }
+    applied = false;
+    const orderSnap = await transaction.get(orderRef);
     if (!orderSnap.exists) {
       throw new AuthServiceError(404, "ORDER_NOT_FOUND");
     }
-    if (orderSnap.get("status") !== "READY") {
-      throw new AuthServiceError(409, "ORDER_NOT_READY_FOR_COLLECTION");
-    }
+    const current = orderSnap.data() ?? {};
     if (orderSnap.get("payment.method") !== "CASH") {
       throw new AuthServiceError(409, "ORDER_NOT_CASH");
+    }
+    if (orderSnap.get("payment.status") === "PAID") {
+      return;
+    }
+    if (current.status !== "READY") {
+      throw new AuthServiceError(409, "ORDER_NOT_READY_FOR_COLLECTION");
     }
     const total = Number(orderSnap.get("amounts.totalMinorUnits") ?? 0);
     if (input.cashTenderedPaise < total) {
       throw new AuthServiceError(400, "CASH_TENDERED_TOO_LOW");
     }
-    transaction.update(orderRef, {
-      "payment.status": "PAID",
-      "payment.amountPaise": total,
-      "payment.cashTenderedPaise": input.cashTenderedPaise,
-      "payment.changeReturnedPaise": input.cashTenderedPaise - total,
-      "payment.collectedByUserId": user.id,
-      "payment.collectedAt": now,
-      updatedAt: now,
-    });
-    transaction.set(keyRef, {
-      orderId,
-      action: "collect-cash",
-      createdAt: now,
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    const now = FieldValue.serverTimestamp();
+    applyOrderChange(transaction, orderRef, current, {
+      fields: {
+        "payment.status": "PAID",
+        "payment.amountPaise": total,
+        "payment.cashTenderedPaise": input.cashTenderedPaise,
+        "payment.changeReturnedPaise": input.cashTenderedPaise - total,
+        "payment.collectedByUserId": user.shopUserId,
+        "payment.collectedAt": now,
+        "lifecycle.paidAt": now,
+      },
     });
     applied = true;
   });
@@ -768,14 +764,17 @@ export async function recordCashPayment(
   const paid = await getShopOrder(user, orderId);
   if (applied) {
     await incrementShopStats(user.shopId, { cashInDrawerTodayPaise: paid.amounts.totalMinorUnits });
+    await ringShop(user.shopId, { work: false, event: "order_updated", orderId, orderNumber: paid.orderNumber });
   }
   return paid;
 }
 
 /**
- * Payment-provider callback entry point. It is deliberately separate from shop
- * operator APIs: a verified payment event is the only path that auto-admits an
- * online order.
+ * Payment-provider callback entry point, separate from the shop operator APIs. Idempotent by state:
+ * an order already paid is returned with no write.
+ *
+ * It still auto-accepts paid orders when the shop allows it. That moves into the agent's `sync` in
+ * P2-01; until then nothing else would accept them.
  */
 export async function confirmOnlinePayment(
   shopId: string,
@@ -784,72 +783,54 @@ export async function confirmOnlinePayment(
 ) {
   const db = getFirebaseFirestore();
   const orderRef = ordersCollection(shopId).doc(orderId);
-  const keyRef = db.doc(`shops/${shopId}/idempotencyKeys/${input.idempotencyKey}`);
-  const config = await getShopConfig({ id: "payment-provider", shopId } as AuthSessionUser);
-  const now = FieldValue.serverTimestamp();
+  const principal = systemPrincipal(shopId, "payment-provider");
+  const config = await getShopConfig(principal);
   let autoAccepted = false;
+  let applied = false;
 
   await db.runTransaction(async (transaction) => {
-    const [keySnap, orderSnap] = await Promise.all([transaction.get(keyRef), transaction.get(orderRef)]);
-    if (keySnap.exists) {
-      if (keySnap.get("orderId") === orderId && keySnap.get("action") === "online-payment") return;
-      throw new AuthServiceError(409, "IDEMPOTENCY_KEY_REUSED");
-    }
+    autoAccepted = false;
+    applied = false;
+    const orderSnap = await transaction.get(orderRef);
     if (!orderSnap.exists) throw new AuthServiceError(404, "ORDER_NOT_FOUND");
     if (orderSnap.get("payment.method") !== "ONLINE") throw new AuthServiceError(409, "ORDER_NOT_ONLINE");
+    if (orderSnap.get("payment.status") === "PAID") return;
 
-    const currentStatus = String(orderSnap.get("status") ?? "");
-    autoAccepted = currentStatus === "SUBMITTED" && config.orderAutomation.autoAcceptPaidOnline;
-    transaction.update(orderRef, {
-      "payment.status": "PAID",
-      "payment.reference": input.paymentReference,
-      "payment.confirmedAt": now,
-      ...(autoAccepted
-        ? { status: "SHOP_ACCEPTED", "lifecycle.acceptedAt": now, "lifecycle.acceptedByUserId": "payment-provider" }
-        : {}),
-      updatedAt: now,
+    const current = orderSnap.data() ?? {};
+    const accept = current.status === "SUBMITTED" && config.orderAutomation.autoAcceptPaidOnline;
+    const now = FieldValue.serverTimestamp();
+    applyOrderChange(transaction, orderRef, current, {
+      status: accept ? "SHOP_ACCEPTED" : undefined,
+      fields: {
+        "payment.status": "PAID",
+        "payment.reference": input.paymentReference,
+        "payment.confirmedAt": now,
+        "lifecycle.paidAt": now,
+        ...(accept ? { "lifecycle.acceptedByUserId": "payment-provider" } : {}),
+      },
     });
-    transaction.set(keyRef, {
-      orderId,
-      action: "online-payment",
-      createdAt: now,
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-    });
-    if (autoAccepted) {
-      transaction.set(orderRef.collection("statusHistory").doc(randomUUID()), {
-        fromStatus: "SUBMITTED",
-        toStatus: "SHOP_ACCEPTED",
-        changedByType: "PRINT_USER",
-        changedByUserId: "payment-provider",
-        reason: "Verified online payment",
-        changedAt: now,
-      });
-    }
+    autoAccepted = accept;
+    applied = true;
   });
 
-  const principal = { id: "payment-provider", shopId } as AuthSessionUser;
-  return { order: await getShopOrder(principal, orderId), autoAccepted };
+  const order = await getShopOrder(principal, orderId);
+  if (applied) {
+    // `work` wakes the shop's agents: once P2-01 lands, their `sync` accepts the paid order.
+    await ringShop(shopId, { work: true, event: "order_paid", orderId, orderNumber: order.orderNumber });
+  }
+  return { order, autoAccepted };
 }
 
-export function cancelShopOrder(
-  user: AuthSessionUser,
+export async function cancelShopOrder(
+  user: ShopPrincipal,
   orderId: string,
   input: OrderTransitionRequestInput,
 ) {
-  return transitionOrder(
-    user,
-    orderId,
-    "cancel",
-    input,
-    "SUBMITTED",
-    "CANCELLED",
-    {},
-    { changedByType: "PRINT_USER", reason: "Cancelled by customer" },
-  );
+  return (await transitionOrder(user, orderId, input, "SUBMITTED", "CANCELLED")).order;
 }
 
 export async function createSinglePagePrintOrder(
-  user: AuthSessionUser,
+  user: ShopPrincipal,
   input: {
     filename: string;
     contentType: string;
@@ -890,7 +871,7 @@ export async function createSinglePagePrintOrder(
   return getShopOrder(user, order.id);
 }
 
-export async function readSinglePagePrintFile(user: AuthSessionUser, orderId: string) {
+export async function readSinglePagePrintFile(user: ShopPrincipal, orderId: string) {
   const order = await getShopOrder(user, orderId);
 
   if (!order.print) {

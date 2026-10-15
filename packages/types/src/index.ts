@@ -7,6 +7,7 @@ export type {
   LoginRequest,
   RefreshRequest,
   RegisterRequest,
+  ShopPrincipal,
   ShopUser,
   ShopUserRole,
   ShopUserStatus,

@@ -19,13 +19,16 @@ import {
   defaultPrinterOffered,
   shopPrinterCapabilityList,
 } from "@ctrlp/schemas";
-import type { AuthSessionUser } from "@ctrlp/types";
+import type { ShopPrincipal } from "@ctrlp/types";
 
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
-import { getShopOrder } from "@/src/modules/orders/order.service";
+import { applyOrderChange, getShopOrder } from "@/src/modules/orders/order.service";
 import { parsePageSelection } from "@/src/modules/printing/page-selection";
+import { ringShop } from "@/src/modules/realtime/doorbell";
 
 type PrintJobStatus = "QUEUED" | "DISPATCHING" | "PRINTING" | "COMPLETED" | "FAILED" | "CANCELLED";
+
+const ACTIVE_JOB_STATUSES = new Set<string>(["QUEUED", "DISPATCHING", "PRINTING"]);
 
 export type PrintJobDto = {
   id: string;
@@ -276,7 +279,7 @@ function assertJobTransition(current: PrintJobStatus, next: PrintJobStatus) {
   }
 }
 
-export async function syncShopPrinters(user: AuthSessionUser, input: SyncPrintersRequestInput) {
+export async function syncShopPrinters(user: ShopPrincipal, input: SyncPrintersRequestInput) {
   const db = getFirebaseFirestore();
   const collection = db.collection(`shops/${user.shopId}/printers`);
   const existingDocs = await collection.get();
@@ -351,7 +354,7 @@ export async function syncShopPrinters(user: AuthSessionUser, input: SyncPrinter
   return { printers };
 }
 
-export async function listShopPrinters(user: AuthSessionUser) {
+export async function listShopPrinters(user: ShopPrincipal) {
   const snapshot = await getFirebaseFirestore().collection(`shops/${user.shopId}/printers`).get();
   return {
     printers: snapshot.docs.map((document) =>
@@ -361,7 +364,7 @@ export async function listShopPrinters(user: AuthSessionUser) {
 }
 
 export async function updatePrinterConfig(
-  user: AuthSessionUser,
+  user: ShopPrincipal,
   printerId: string,
   input: UpdatePrinterConfigRequestInput,
 ) {
@@ -441,7 +444,7 @@ export async function updatePrinterConfig(
 }
 
 export async function updatePrinterPreset(
-  user: AuthSessionUser,
+  user: ShopPrincipal,
   printerId: string,
   settings: UpdatePrinterPresetRequestInput,
 ) {
@@ -481,7 +484,7 @@ export async function updatePrinterPreset(
   return { id: printerId, isDefault: settings.isDefault, defaultPrintSettings: preset };
 }
 
-export async function dispatchPrintJob(user: AuthSessionUser, orderId: string, input: DispatchPrintJobRequestInput) {
+export async function dispatchPrintJob(user: ShopPrincipal, orderId: string, input: DispatchPrintJobRequestInput) {
   if (input.overrides.duplex === true) {
     throw new AuthServiceError(400, "duplex printing is not available");
   }
@@ -490,7 +493,7 @@ export async function dispatchPrintJob(user: AuthSessionUser, orderId: string, i
   const document = order.documents.find((entry) => {
     const record = entry as { id?: string; docId?: string };
     return record.docId === input.documentId || record.id === input.documentId;
-  }) as { pageCount?: number; storageKey?: string; config?: Record<string, unknown> } | undefined;
+  }) as { pageCount?: number; storageKey?: string; shreddedAt?: string | null; config?: Record<string, unknown> } | undefined;
 
   if (!document) {
     throw new AuthServiceError(404, "DOCUMENT_NOT_FOUND");
@@ -502,14 +505,19 @@ export async function dispatchPrintJob(user: AuthSessionUser, orderId: string, i
   if (!document.storageKey) {
     throw new AuthServiceError(409, "DOCUMENT_NOT_READY");
   }
+  if (document.shreddedAt) {
+    throw new AuthServiceError(409, "DOCUMENT_SHREDDED");
+  }
 
   const db = getFirebaseFirestore();
   const printerRef = db.doc(`shops/${user.shopId}/printers/${input.printerId}`);
   const idempotencyRef = db.doc(`shops/${user.shopId}/idempotencyKeys/${input.idempotencyKey}`);
   let jobId: string = randomUUID();
   let colorWarning = false;
+  let created = false;
 
   await db.runTransaction(async (transaction) => {
+    created = false;
     const keySnap = await transaction.get(idempotencyRef);
     if (keySnap.exists) {
       const storedOrderId = keySnap.get("orderId");
@@ -520,6 +528,14 @@ export async function dispatchPrintJob(user: AuthSessionUser, orderId: string, i
         return;
       }
       throw new AuthServiceError(409, "IDEMPOTENCY_KEY_REUSED");
+    }
+
+    // One active job per document, so a document is never printed twice by accident.
+    const documentJobs = await transaction.get(
+      db.collection(`shops/${user.shopId}/orders/${orderId}/printJobs`).where("documentId", "==", input.documentId),
+    );
+    if (documentJobs.docs.some((job) => ACTIVE_JOB_STATUSES.has(String(job.get("status"))))) {
+      throw new AuthServiceError(409, "JOB_ACTIVE");
     }
 
     const printerSnap = await transaction.get(printerRef);
@@ -611,7 +627,12 @@ export async function dispatchPrintJob(user: AuthSessionUser, orderId: string, i
       createdAt: FieldValue.serverTimestamp(),
       expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
     });
+    created = true;
   });
+
+  if (created) {
+    await ringShop(user.shopId, { work: true, event: "jobs_queued", orderId, orderNumber: order.orderNumber });
+  }
 
   const saved = await db.doc(`shops/${user.shopId}/orders/${orderId}/printJobs/${jobId}`).get();
   return {
@@ -623,7 +644,7 @@ export async function dispatchPrintJob(user: AuthSessionUser, orderId: string, i
   };
 }
 
-export async function listOrderPrintJobs(user: AuthSessionUser, orderId: string) {
+export async function listOrderPrintJobs(user: ShopPrincipal, orderId: string) {
   await getShopOrder(user, orderId);
   const snapshot = await getFirebaseFirestore()
     .collection(`shops/${user.shopId}/orders/${orderId}/printJobs`)
@@ -635,7 +656,7 @@ export async function listOrderPrintJobs(user: AuthSessionUser, orderId: string)
   };
 }
 
-export async function listAgentPrintJobs(user: AuthSessionUser, input: ClaimAgentPrintJobsRequestInput) {
+export async function listAgentPrintJobs(user: ShopPrincipal, input: ClaimAgentPrintJobsRequestInput) {
   const jobs = await listQueuedJobsByCollectionGroup(user.shopId, input).catch(() =>
     listQueuedJobsFromActiveOrders(user.shopId, input),
   );
@@ -677,7 +698,7 @@ async function listQueuedJobsFromActiveOrders(shopId: string, input: ClaimAgentP
 }
 
 export async function claimPrintJob(
-  user: AuthSessionUser,
+  user: ShopPrincipal,
   orderId: string,
   jobId: string,
   input: ClaimPrintJobRequestInput,
@@ -687,8 +708,11 @@ export async function claimPrintJob(
   const jobRef = orderRef.collection("printJobs").doc(jobId);
   const idempotencyRef = db.doc(`shops/${user.shopId}/idempotencyKeys/${input.idempotencyKey}`);
   const leaseId = randomUUID();
+  let claimed = false;
+  let orderNumber = "";
 
   await db.runTransaction(async (transaction) => {
+    claimed = false;
     const [keySnap, orderSnap, jobSnap] = await Promise.all([
       transaction.get(idempotencyRef),
       transaction.get(orderRef),
@@ -732,15 +756,20 @@ export async function claimPrintJob(
       expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
     });
     if (orderSnap.get("status") === "SHOP_ACCEPTED") {
-      transaction.update(orderRef, { status: "PRINTING", updatedAt: now });
+      applyOrderChange(transaction, orderRef, orderSnap.data() ?? {}, { status: "PRINTING" });
     }
+    orderNumber = String(orderSnap.get("orderNumber") ?? "");
+    claimed = true;
   });
 
+  if (claimed) {
+    await ringShop(user.shopId, { work: false, event: "order_updated", orderId, orderNumber });
+  }
   return toPrintJobDto(await jobRef.get());
 }
 
 export async function updatePrintJob(
-  user: AuthSessionUser,
+  user: ShopPrincipal,
   orderId: string,
   jobId: string,
   input: UpdatePrintJobRequestInput,
@@ -749,8 +778,11 @@ export async function updatePrintJob(
   const orderRef = db.doc(`shops/${user.shopId}/orders/${orderId}`);
   const jobRef = orderRef.collection("printJobs").doc(jobId);
   const idempotencyRef = db.doc(`shops/${user.shopId}/idempotencyKeys/${input.idempotencyKey}`);
+  let updated = false;
+  let orderNumber = "";
 
   await db.runTransaction(async (transaction) => {
+    updated = false;
     const keySnap = await transaction.get(idempotencyRef);
     if (keySnap.exists) {
       if (keySnap.get("orderId") === orderId && keySnap.get("jobId") === jobId) {
@@ -797,7 +829,7 @@ export async function updatePrintJob(
 
     const orderStatus = String(orderSnap.get("status") ?? "");
     if ((input.status === "DISPATCHING" || input.status === "PRINTING") && orderStatus === "SHOP_ACCEPTED") {
-      transaction.update(orderRef, { status: "PRINTING", updatedAt: now });
+      applyOrderChange(transaction, orderRef, orderSnap.data() ?? {}, { status: "PRINTING" });
     }
 
     if (input.status === "COMPLETED" && siblingJobs) {
@@ -816,13 +848,11 @@ export async function updatePrintJob(
       );
       const allCompleted = expectedDocumentIds.size > 0 &&
         [...expectedDocumentIds].every((documentId) => completedDocumentIds.has(documentId));
-      if (allCompleted && orderStatus === "PRINTING") {
-        transaction.update(orderRef, {
-          status: "READY",
-          "lifecycle.readyAt": now,
-          updatedAt: now,
-        });
-      }
+      const documentId = jobSnap.get("documentId");
+      applyOrderChange(transaction, orderRef, orderSnap.data() ?? {}, {
+        status: allCompleted && orderStatus === "PRINTING" ? "READY" : undefined,
+        fields: typeof documentId === "string" ? { completedDocumentIds: FieldValue.arrayUnion(documentId) } : {},
+      });
     }
 
     transaction.set(idempotencyRef, {
@@ -833,14 +863,20 @@ export async function updatePrintJob(
       createdAt: now,
       expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
     });
+    orderNumber = String(orderSnap.get("orderNumber") ?? "");
+    updated = true;
   });
+
+  if (updated) {
+    await ringShop(user.shopId, { work: false, event: "order_updated", orderId, orderNumber });
+  }
 
   const saved = await jobRef.get();
   return toPrintJobDto(saved);
 }
 
 export async function retryPrintJob(
-  user: AuthSessionUser,
+  user: ShopPrincipal,
   orderId: string,
   jobId: string,
   input: RetryPrintJobRequestInput,
@@ -850,7 +886,10 @@ export async function retryPrintJob(
   const jobRef = orderRef.collection("printJobs").doc(jobId);
   const idempotencyRef = db.doc(`shops/${user.shopId}/idempotencyKeys/${input.idempotencyKey}`);
 
+  let retried = false;
+
   await db.runTransaction(async (transaction) => {
+    retried = false;
     const [keySnap, jobSnap] = await Promise.all([transaction.get(idempotencyRef), transaction.get(jobRef)]);
     if (keySnap.exists) {
       if (keySnap.get("orderId") === orderId && keySnap.get("jobId") === jobId) {
@@ -885,12 +924,18 @@ export async function retryPrintJob(
       createdAt: now,
       expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
     });
+    retried = true;
   });
+
+  if (retried) {
+    // The ring's `last` only drives notifications for new and paid orders, so skip reading the order number.
+    await ringShop(user.shopId, { work: true, event: "jobs_queued", orderId, orderNumber: "" });
+  }
 
   return toPrintJobDto(await jobRef.get());
 }
 
-export async function queueIncomingOrder(user: AuthSessionUser, orderId: string) {
+export async function queueIncomingOrder(user: ShopPrincipal, orderId: string) {
   const order = await getShopOrder(user, orderId);
   for (const document of order.documents) {
     const record = document as {
@@ -914,7 +959,8 @@ export async function queueIncomingOrder(user: AuthSessionUser, orderId: string)
       await dispatchPrintJob(user, orderId, {
         printerId: route.printerId,
         documentId,
-        idempotencyKey: randomUUID(),
+        // One key per order and document: queueing the same order twice returns the existing job.
+        idempotencyKey: `queue:${orderId}:${documentId}`,
         overrides: {
           colorMode,
           copies: record.config?.copies ?? record.copies ?? 1,
@@ -929,7 +975,7 @@ export async function queueIncomingOrder(user: AuthSessionUser, orderId: string)
 }
 
 export async function writePrinterTelemetry(
-  user: AuthSessionUser,
+  user: ShopPrincipal,
   printerId: string,
   input: PrinterTelemetryRequestInput,
 ) {
@@ -963,7 +1009,7 @@ export async function writePrinterTelemetry(
   return { printerId, status: input.newStatus, telemetryId: telemetryRef.id };
 }
 
-export async function routePrintJob(user: AuthSessionUser, input: RoutePrintJobRequestInput) {
+export async function routePrintJob(user: ShopPrincipal, input: RoutePrintJobRequestInput) {
   const snapshot = await getFirebaseFirestore().collection(`shops/${user.shopId}/printers`).get();
   const required = input.colorMode === "COLOR" ? [input.paperSize, "COLOR"] : [input.paperSize];
   const candidates = snapshot.docs
