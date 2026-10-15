@@ -12,6 +12,8 @@ type ShopSessionValue = {
   shop: ShopContext
   publicShop: PublicShop
   session: GuestSessionDto
+  /** For the tracking page's live listener. In memory only; a new one comes with every session start. */
+  firebaseToken: string | null
   routes: ReturnType<typeof shopRoutes>
 }
 
@@ -41,7 +43,7 @@ export function ShopSessionProvider({
     setLoading(true)
     setError(null)
     startShopSession(slug)
-      .then(({ shop, session }) => {
+      .then(({ shop, session, firebaseToken }) => {
         if (cancelled) return
         window.sessionStorage.setItem(SHOP_STORAGE_KEY, JSON.stringify(shop))
         setValue({
@@ -49,6 +51,7 @@ export function ShopSessionProvider({
           shop: mapPublicShopToContext(shop),
           publicShop: shop,
           session,
+          firebaseToken: firebaseToken ?? null,
           routes: shopRoutes(shop.slug),
         })
       })

@@ -282,6 +282,9 @@ importers:
       embla-carousel-react:
         specifier: ^8.6.0
         version: 8.6.0(react@19.2.8)
+      firebase:
+        specifier: 12.19.0
+        version: 12.19.0
       jsqr:
         specifier: ^1.4.0
         version: 1.4.0

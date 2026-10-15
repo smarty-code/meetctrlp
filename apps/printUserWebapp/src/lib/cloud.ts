@@ -57,7 +57,8 @@ export type GuestDocumentDto = {
   fileSizeBytes: number
   pageCount: number | null
   sha256Hash: string | null
-  storageKey: string
+  /** Not sent in session responses; the server keeps storage keys to itself. */
+  storageKey?: string
   status: "UPLOADING" | "READY" | "FAILED"
   config: {
     colorMode: "BW" | "COLOR"
@@ -147,6 +148,43 @@ export type GuestOrderDto = {
   updatedAt: string | null
 }
 
+/**
+ * The customer-safe copy of an order: what the tracking page's listener reads from
+ * orderTracking/{orderId}, and what the one-off fetch returns. Times are ISO strings.
+ */
+export type OrderTrackingDto = {
+  orderId: string
+  shopId: string
+  printUserId: string
+  orderNumber: string
+  pickupCode: string
+  status: string
+  payment: { method: "CASH" | "ONLINE"; status: "PENDING" | "PAID" }
+  totalPaise: number
+  items: Array<{
+    name: string
+    pageCount: number
+    billablePages: number
+    copies: number
+    colorMode: "BW" | "COLOR"
+    paperSize: "A4" | "A3"
+    totalPaise: number
+    mimeType: string | null
+  }>
+  rejectionReason: string | null
+  times: {
+    submittedAt: string | null
+    paidAt: string | null
+    acceptedAt: string | null
+    printingAt: string | null
+    readyAt: string | null
+    completedAt: string | null
+    rejectedAt: string | null
+    cancelledAt: string | null
+  }
+  updatedAt: string | null
+}
+
 type ErrorBody = { error?: string }
 
 /** A response the server (or the hosting platform in front of it) answered with an error status. */
@@ -178,27 +216,66 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body
 }
 
+// The last guest cart the server sent (TRAFFIC_SCALING_V2_IMPLEMENTATION.md 11.2). Every
+// cart-changing response below updates it, so pages reuse it across client-side navigation
+// instead of reading the cart again. Module state: a hard load starts empty.
+let lastSession: GuestSessionDto | null = null
+
+function rememberSession(session: GuestSessionDto) {
+  lastSession = session
+}
+
+function rememberDocument(document: GuestDocumentDto) {
+  if (!lastSession) return
+  const exists = lastSession.documents.some((entry) => entry.id === document.id)
+  lastSession = {
+    ...lastSession,
+    documents: exists
+      ? lastSession.documents.map((entry) => (entry.id === document.id ? document : entry))
+      : [...lastSession.documents, document],
+  }
+}
+
+function forgetDocument(docId: string) {
+  if (!lastSession) return
+  lastSession = {
+    ...lastSession,
+    documents: lastSession.documents.filter((entry) => entry.id !== docId),
+  }
+}
+
+/**
+ * The guest cart: the one held from the last response, or one read from the server when there
+ * is none (a hard load before the session start finished). `fresh` forces the read, for
+ * recovering after a failed write.
+ */
+export async function loadGuestSession(options: { fresh?: boolean } = {}) {
+  if (lastSession && !options.fresh) return lastSession
+  const { session } = await request<{ session: GuestSessionDto }>("/api/v1/public/session")
+  rememberSession(session)
+  return session
+}
+
 export function fetchPublicShop(slug: string) {
   return request<{ shop: PublicShop }>(`/api/v1/public/shops/${encodeURIComponent(slug)}`)
 }
 
-export function startShopSession(slug: string) {
-  return request<{ session: GuestSessionDto; shop: PublicShop }>(
+export async function startShopSession(slug: string) {
+  // firebaseToken: a custom token for this guest, used only by the tracking page's listener.
+  const body = await request<{ session: GuestSessionDto; shop: PublicShop; firebaseToken: string | null }>(
     `/api/v1/public/shops/${encodeURIComponent(slug)}/session`,
     { method: "POST" },
   )
+  rememberSession(body.session)
+  return body
 }
 
-export function fetchGuestSession() {
-  return request<{ session: GuestSessionDto }>("/api/v1/public/session")
-}
-
-export function createDocumentIntent(input: {
+export async function createDocumentIntent(input: {
   originalFilename: string
   mimeType: string
   fileSizeBytes: number
 }) {
-  return request<{
+  const body = await request<{
     document: GuestDocumentDto
     uploadUrl: string
     storageKey: string
@@ -207,23 +284,29 @@ export function createDocumentIntent(input: {
     method: "POST",
     body: JSON.stringify(input),
   })
+  rememberDocument(body.document)
+  return body
 }
 
-export function completeDocumentUpload(docId: string) {
-  return request<GuestDocumentDto>(
+export async function completeDocumentUpload(docId: string) {
+  const document = await request<GuestDocumentDto>(
     `/api/v1/public/session/documents/${encodeURIComponent(docId)}/complete`,
     { method: "POST" },
   )
+  rememberDocument(document)
+  return document
 }
 
-export function deleteGuestDocument(docId: string) {
-  return request<{ ok: boolean }>(
+export async function deleteGuestDocument(docId: string) {
+  const body = await request<{ ok: boolean }>(
     `/api/v1/public/session/documents/${encodeURIComponent(docId)}`,
     { method: "DELETE" },
   )
+  forgetDocument(docId)
+  return body
 }
 
-export function saveDocumentConfiguration(
+export async function saveDocumentConfiguration(
   docId: string,
   input: {
     colorMode: "BW" | "COLOR"
@@ -233,31 +316,35 @@ export function saveDocumentConfiguration(
     pageSelection: { mode: "all" | "selected"; expression?: string }
   },
 ) {
-  return request<{ document: GuestDocumentDto }>(
+  const body = await request<{ document: GuestDocumentDto }>(
     `/api/v1/public/session/documents/${encodeURIComponent(docId)}`,
     { method: "PUT", body: JSON.stringify(input) },
   )
+  rememberDocument(body.document)
+  return body
 }
 
-export function saveDocumentConfigurations(
+export async function saveDocumentConfigurations(
   documents: Array<Parameters<typeof saveDocumentConfiguration>[1] & { documentId: string }>,
 ) {
-  return request<{ documents: GuestDocumentDto[] }>("/api/v1/public/session/documents", {
+  const body = await request<{ documents: GuestDocumentDto[] }>("/api/v1/public/session/documents", {
     method: "PUT",
     body: JSON.stringify({ documents }),
   })
+  body.documents.forEach(rememberDocument)
+  return body
 }
 
 export function quoteGuestSession() {
   return request<QuoteDto>("/api/v1/public/session/quote", { method: "POST" })
 }
 
-export function submitGuestOrder(input: {
+export async function submitGuestOrder(input: {
   paymentMethod: "CASH" | "ONLINE"
   idempotencyKey: string
   expectedTotalPaise?: number
 }) {
-  return request<{
+  const body = await request<{
     priceChanged: boolean
     quote: QuoteDto
     order: GuestOrderDto | null
@@ -265,6 +352,9 @@ export function submitGuestOrder(input: {
     method: "POST",
     body: JSON.stringify(input),
   })
+  // Placing the order takes its documents out of the cart; the next order reads the cart again.
+  if (body.order) lastSession = null
+  return body
 }
 
 export function mockConfirmPayment(orderId: string, idempotencyKey: string) {
@@ -274,8 +364,9 @@ export function mockConfirmPayment(orderId: string, idempotencyKey: string) {
   )
 }
 
-export function fetchGuestOrder(orderId: string) {
-  return request<GuestOrderDto>(
+/** One read of the order's tracking copy: the fallback when the live listener isn't available. */
+export function fetchOrderTracking(orderId: string) {
+  return request<OrderTrackingDto>(
     `/api/v1/public/session/orders/${encodeURIComponent(orderId)}`,
   )
 }

@@ -3,11 +3,8 @@ import { randomUUID } from "node:crypto";
 import { FieldValue, getFirebaseFirestore } from "@ctrlp/firebase/firestore";
 
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
-import {
-  SESSION_TTL_MS,
-  isSessionExpired,
-  shouldTouchSession,
-} from "@/src/modules/print-user/print-user.helpers";
+import type { GuestPrincipal } from "@/src/modules/print-user/print-user-cookie";
+import { SESSION_TTL_MS, isSessionExpired } from "@/src/modules/print-user/print-user.helpers";
 import { printUsersCollection, timestampToIso } from "@/src/modules/print-user/print-user-shop.service";
 import type { GuestDocument, PrintUserSession } from "@/src/modules/print-user/print-user.types";
 
@@ -109,19 +106,32 @@ async function findResumableSession(shopId: string, ipAddress: string) {
   return sessions[0];
 }
 
-async function touchSession(session: PrintUserSession) {
-  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
-  await printUsersCollection().doc(session.id).set(
-    {
-      lastSeenAt: FieldValue.serverTimestamp(),
-      expiresAt,
-    },
+/** Moves the session's end out to `expiresAt`. Called when the cookie is re-issued (at most hourly). */
+export async function extendPrintUserSession(printUserId: string, expiresAt: Date) {
+  await printUsersCollection().doc(printUserId).set(
+    { lastSeenAt: FieldValue.serverTimestamp(), expiresAt },
     { merge: true },
   );
+}
+
+async function resumeSession(session: PrintUserSession) {
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+  await extendPrintUserSession(session.id, expiresAt);
+  return { ...session, lastSeenAt: new Date().toISOString(), expiresAt: expiresAt.toISOString() };
+}
+
+/** What the guest's browser may see: no IP address and no storage keys (6.8). */
+export function toPublicSession(session: PrintUserSession) {
   return {
-    ...session,
-    lastSeenAt: new Date().toISOString(),
-    expiresAt: expiresAt.toISOString(),
+    id: session.id,
+    shopId: session.shopId,
+    shopSlug: session.shopSlug,
+    activeOrderId: session.activeOrderId,
+    createdAt: session.createdAt,
+    lastSeenAt: session.lastSeenAt,
+    expiresAt: session.expiresAt,
+    // Undefined fields are dropped from the JSON response.
+    documents: session.documents.map((document) => ({ ...document, storageKey: undefined })),
   };
 }
 
@@ -139,13 +149,13 @@ export async function createOrResumePrintUserSession(input: {
       existing.ipAddress === input.ipAddress &&
       !isSessionExpired(existing.expiresAt)
     ) {
-      return touchSession(existing);
+      return resumeSession(existing);
     }
   }
 
   const resumed = await findResumableSession(input.shopId, input.ipAddress);
   if (resumed && resumed.shopId === input.shopId) {
-    return touchSession(resumed);
+    return resumeSession(resumed);
   }
 
   const id = randomUUID();
@@ -176,20 +186,19 @@ export async function createOrResumePrintUserSession(input: {
   } satisfies PrintUserSession;
 }
 
-export async function requireValidPrintUserSession(printUserId: string, ipAddress: string) {
-  const session = await getPrintUserSession(printUserId);
-  if (!session) {
+/**
+ * The guest's session document, for actions that need the cart (one read). The signed cookie already
+ * proved who is calling, from which network; this checks the session still exists.
+ */
+export async function loadGuestSession(guest: GuestPrincipal) {
+  const session = await getPrintUserSession(guest.id);
+  if (!session || session.shopId !== guest.shopId) {
     throw new AuthServiceError(401, "guest session not found");
-  }
-  if (session.ipAddress !== ipAddress) {
-    throw new AuthServiceError(401, "guest session does not match this network");
   }
   if (isSessionExpired(session.expiresAt)) {
     throw new AuthServiceError(401, "guest session expired");
   }
-  // Every guest API call lands here; writing the session doc each time contends with the
-  // document transactions below when several files upload in parallel.
-  return shouldTouchSession(session.expiresAt) ? touchSession(session) : session;
+  return session;
 }
 
 export async function savePrintUserDocuments(printUserId: string, documents: GuestDocument[]) {
@@ -225,6 +234,7 @@ export async function mutatePrintUserDocuments<T>(
         documents: nextDocuments,
         lastSeenAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
+        expiresAt: new Date(Date.now() + SESSION_TTL_MS),
       },
       { merge: true },
     );

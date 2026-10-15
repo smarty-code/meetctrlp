@@ -14,7 +14,7 @@ import { ShopInfoDrawer } from "../../../components/shop-info-drawer"
 import { faqList } from "../../../data/mock-shop"
 import { UploadedFileItem } from "../../../types/upload"
 import { useShopSession } from "../../../components/shop-session-provider"
-import { deleteGuestDocument, fetchGuestSession } from "../../../lib/cloud"
+import { deleteGuestDocument, loadGuestSession } from "../../../lib/cloud"
 import {
   MAX_DOCUMENTS_PER_ORDER,
   UPLOAD_CONCURRENCY,
@@ -103,8 +103,8 @@ export default function ShopUploadPage() {
   // coming back from customize) so the list, the cap, and the order all agree.
   useEffect(() => {
     let cancelled = false
-    void fetchGuestSession()
-      .then(async ({ session }) => {
+    void loadGuestSession()
+      .then(async (session) => {
         const ready = session.documents.filter((document) => document.status === "READY")
         const restored = await Promise.all(
           ready.map(async (document): Promise<UploadedFileItem> => {

@@ -29,6 +29,9 @@ import { useShopSession } from "../components/shop-session-provider"
 import { deleteGuestDocument, quoteGuestSession, saveDocumentConfiguration } from "../lib/cloud"
 import { quoteToPricing, toApiColor, toApiOrientation, toApiPaper } from "../lib/print-user-map"
 
+/** Review edits are priced once they pause this long (TRAFFIC_SCALING_V2_IMPLEMENTATION.md 11.2). */
+const QUOTE_DEBOUNCE_MS = 500
+
 export function useReviewOrder() {
   const router = useRouter()
   const { routes } = useShopSession()
@@ -52,9 +55,10 @@ export function useReviewOrder() {
   const isMountedRef = useRef(true)
   const isSubmittingRef = useRef(false)
 
-  // 1. Initial Load of Draft and Session Recovery
-  const loadDraft = useCallback(() => {
-    loadOrderDraft()
+  // 1. Initial Load of Draft and Session Recovery. `fresh` reads the cart from the server again
+  // (retry, or after a failed write) instead of reusing the one already held.
+  const loadDraft = useCallback((options: { fresh?: boolean } = {}) => {
+    loadOrderDraft(options)
       .then((loaded) => {
         if (!isMountedRef.current) return
         setDraft(loaded)
@@ -83,47 +87,21 @@ export function useReviewOrder() {
         }
       })
   }, [])
+
+  const quoteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     isMountedRef.current = true
-
-    loadOrderDraft()
-      .then((loaded) => {
-        if (!isMountedRef.current) return
-        setDraft(loaded)
-        setLoadError(null)
-        setValidationError(null)
-        setPaymentError(null)
-
-        // Restore existing in-flight transaction if matching order ID
-        const existingTx = getActiveTransaction()
-        if (existingTx && existingTx.orderId === loaded.orderId) {
-          setActiveTransaction(existingTx)
-          setPaymentState(existingTx.state)
-          setUserSelectedMethod(existingTx.method)
-        } else {
-          setPaymentState("METHOD_SELECTED")
-        }
-      })
-      .catch((err) => {
-        if (!isMountedRef.current) return
-        console.error("Failed to load order draft:", err)
-        setLoadError("Unable to retrieve your order details.")
-      })
-      .finally(() => {
-        if (isMountedRef.current) {
-          setIsLoading(false)
-        }
-      })
-
+    loadDraft()
     return () => {
       isMountedRef.current = false
+      if (quoteTimerRef.current) clearTimeout(quoteTimerRef.current)
     }
-  }, [])
+  }, [loadDraft])
 
   const retry = useCallback(() => {
     setIsLoading(true)
-    loadDraft()
+    loadDraft({ fresh: true })
   }, [loadDraft])
 
   // Derive Available Payment Methods from Shop Context
@@ -167,34 +145,65 @@ export function useReviewOrder() {
   )
 
   // Review edits must reach the server cart, which is what the order is built from. Writes are
-  // chained so rapid +/- taps land in order, and submit waits for the chain to drain.
+  // chained so rapid +/- taps land in order, and submit waits for the chain to drain. The quote
+  // runs once the edits pause (one quote for a burst of taps), or right away when submit needs it.
   const syncQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const quoteDueRef = useRef(false)
   // Submit awaits the sync queue, then reads the draft from here: its closure would be stale.
   const draftRef = useRef<OrderDraft | null>(draft)
   useEffect(() => {
     draftRef.current = draft
   }, [draft])
 
+  const handleSyncError = useCallback(
+    (error: unknown) => {
+      console.error("Failed to sync review changes:", error)
+      if (!isMountedRef.current) return
+      setValidationError("Could not save your change. Reloading your order.")
+      loadDraft({ fresh: true })
+    },
+    [loadDraft]
+  )
+
+  const runQuote = useCallback(() => {
+    if (quoteTimerRef.current) clearTimeout(quoteTimerRef.current)
+    quoteTimerRef.current = null
+    quoteDueRef.current = false
+    syncQueueRef.current = syncQueueRef.current
+      .then(quoteGuestSession)
+      .then((quote) => {
+        if (!isMountedRef.current) return
+        const pricing = quoteToPricing(quote)
+        if (draftRef.current) draftRef.current = { ...draftRef.current, pricing }
+        setDraft((current) => (current ? { ...current, pricing } : current))
+      })
+      .catch(handleSyncError)
+  }, [handleSyncError])
+
+  const scheduleQuote = useCallback(() => {
+    quoteDueRef.current = true
+    if (quoteTimerRef.current) clearTimeout(quoteTimerRef.current)
+    quoteTimerRef.current = setTimeout(runQuote, QUOTE_DEBOUNCE_MS)
+  }, [runQuote])
+
   const syncWithServer = useCallback(
     (write: () => Promise<unknown>) => {
       syncQueueRef.current = syncQueueRef.current
         .then(write)
-        .then(quoteGuestSession)
-        .then((quote) => {
-          if (!isMountedRef.current) return
-          const pricing = quoteToPricing(quote)
-          if (draftRef.current) draftRef.current = { ...draftRef.current, pricing }
-          setDraft((current) => (current ? { ...current, pricing } : current))
-        })
-        .catch((error) => {
-          console.error("Failed to sync review changes:", error)
-          if (!isMountedRef.current) return
-          setValidationError("Could not save your change. Reloading your order.")
-          loadDraft()
-        })
+        .then(scheduleQuote)
+        .catch(handleSyncError)
     },
-    [loadDraft]
+    [handleSyncError, scheduleQuote]
   )
+
+  // Waits for queued edits, then prices them now rather than after the debounce.
+  const settleEdits = useCallback(async () => {
+    await syncQueueRef.current
+    if (quoteDueRef.current) {
+      runQuote()
+      await syncQueueRef.current
+    }
+  }, [runQuote])
 
   const handleUpdateCopies = useCallback(
     (documentId: string, newCopies: number) => {
@@ -276,9 +285,9 @@ export function useReviewOrder() {
   const handlePaymentSubmit = useCallback(async () => {
     if (!draftRef.current || isSubmittingRef.current || isValidating) return
 
-    // Let pending copy/delete edits reach the server before prices are compared.
+    // Let pending copy/delete edits reach the server, and be priced, before prices are compared.
     isSubmittingRef.current = true
-    await syncQueueRef.current
+    await settleEdits()
     isSubmittingRef.current = false
     const draft = draftRef.current
     if (!draft || !isMountedRef.current) return
@@ -395,7 +404,7 @@ export function useReviewOrder() {
         setIsSubmitting(false)
       }
     }
-  }, [isValidating, selectedMethod, router, routes.orderStatus])
+  }, [isValidating, selectedMethod, router, routes.orderStatus, settleEdits])
 
   const canSubmit = useMemo(() => {
     if (

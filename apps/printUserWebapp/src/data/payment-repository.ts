@@ -6,7 +6,7 @@ import {
   SubmittedOrder,
 } from "../types/payment"
 import { PAYMENT_COPY, PAYMENT_STORAGE_KEYS } from "./payment-constants"
-import { quoteGuestSession, mockConfirmPayment, submitGuestOrder } from "../lib/cloud"
+import { mockConfirmPayment, submitGuestOrder } from "../lib/cloud"
 import { quoteToPricing } from "../lib/print-user-map"
 
 /**
@@ -42,7 +42,9 @@ export function getAvailablePaymentMethods(
 }
 
 /**
- * Initiates an online payment transaction after authoritative price verification.
+ * Places the online order at the price the customer saw. The server compares it with its own
+ * quote and refuses with `priceChanged` (and the new quote) when they differ, so no separate
+ * quote request is needed.
  */
 export async function initiateOnlinePaymentTransaction(
   order: OrderDraft,
@@ -53,30 +55,10 @@ export async function initiateOnlinePaymentTransaction(
   authoritativeTotal: number
   submittedOrderId?: string
 }> {
-  const quote = await quoteGuestSession()
-  const authoritativeTotal = quote.totalPaise / 100
-  if (Math.abs(authoritativeTotal - order.pricing.total) > 0.009) {
-    return {
-      transaction: {
-        transactionId: `TXN-ERR-${Date.now().toString(36).toUpperCase()}`,
-        orderId: order.orderId,
-        amount: authoritativeTotal,
-        currency: quote.currency,
-        method: "ONLINE",
-        state: "FAILED",
-        initiatedAt: new Date().toISOString(),
-        idempotencyKey,
-        errorMessage: PAYMENT_COPY.priceChangedDescription,
-      },
-      priceChanged: true,
-      authoritativeTotal,
-    }
-  }
-
   const result = await submitGuestOrder({
     paymentMethod: "ONLINE",
     idempotencyKey,
-    expectedTotalPaise: quote.totalPaise,
+    expectedTotalPaise: Math.round(order.pricing.total * 100),
   })
 
   if (result.priceChanged || !result.order) {
@@ -98,11 +80,12 @@ export async function initiateOnlinePaymentTransaction(
     }
   }
 
+  const authoritativeTotal = result.quote.totalPaise / 100
   const transaction: PaymentTransaction = {
     transactionId: `TXN-${result.order.id.slice(0, 8).toUpperCase()}`,
     orderId: result.order.id,
     amount: authoritativeTotal,
-    currency: quote.currency,
+    currency: result.quote.currency,
     method: "ONLINE",
     state: "VERIFICATION_PENDING",
     initiatedAt: new Date().toISOString(),
@@ -176,7 +159,6 @@ export async function submitCashPaymentOrder(
     idempotencyKey,
   }
 
-  saveSubmittedOrder(submitted)
   clearActiveTransaction()
   return submitted
 }
@@ -201,7 +183,6 @@ export async function submitOnlinePaidOrder(
     idempotencyKey: transaction.idempotencyKey,
   }
 
-  saveSubmittedOrder(submitted)
   clearActiveTransaction()
   return submitted
 }
@@ -248,32 +229,3 @@ export function clearActiveTransaction(): void {
   }
 }
 
-/**
- * Persists the final submitted order to sessionStorage for Screen 05
- */
-export function saveSubmittedOrder(order: SubmittedOrder): void {
-  if (typeof window === "undefined") return
-  try {
-    window.sessionStorage.setItem(
-      PAYMENT_STORAGE_KEYS.SUBMITTED_ORDER,
-      JSON.stringify(order)
-    )
-  } catch (e) {
-    console.warn("Failed to save submitted order:", e)
-  }
-}
-
-/**
- * Loads the submitted order from sessionStorage for Screen 05
- */
-export function getSubmittedOrder(): SubmittedOrder | null {
-  if (typeof window === "undefined") return null
-  try {
-    const raw = window.sessionStorage.getItem(
-      PAYMENT_STORAGE_KEYS.SUBMITTED_ORDER
-    )
-    return raw ? JSON.parse(raw) : null
-  } catch {
-    return null
-  }
-}

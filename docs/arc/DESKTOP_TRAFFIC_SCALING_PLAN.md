@@ -1,6 +1,6 @@
 # Desktop traffic and server load: serverless plan
 
-> **Status:** **Accepted**, version 2.2, 15 Oct 2026. The doorbell spike passed (7.1): the stream delivered every ring, with p95 latency of 77 ms, an idle cost of about 6.4 KB per PC-hour, and clean recovery at token expiry. Field checks on real shop networks are still running (implementation plan 3.3). Nothing in this document is implemented yet.
+> **Status:** **Accepted**, version 2.2, 15 Oct 2026. The doorbell spike passed (7.1): the stream delivered every ring, with p95 latency of 77 ms, an idle cost of about 6.4 KB per PC-hour, and clean recovery at token expiry. Field checks on real shop networks are still running (implementation plan 3.3). **Implemented** on `fix/upload` (all three phases), not yet deployed or run against staging; see the implementation plan, section 13.
 > **History:** version 2.1 was revised after the minimized-window spike: a minimized WebView2 window doesn't deliver Firestore listener updates reliably, so nothing time-critical may run in the desktop's web view. Version 1 (server hub and SSE) is in git history (`ccadc8b`).
 > **Hosting:** Firebase App Hosting (serverless, on Cloud Run). See [`apps/server/docs/deployment.md`](../../apps/server/docs/deployment.md).
 > **Guides:** [developer guide](./traffic-scaling-v2/DEVELOPER_GUIDE.md) and [testing guide](./traffic-scaling-v2/TESTING_GUIDE.md).

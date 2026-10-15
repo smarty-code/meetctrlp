@@ -20,7 +20,6 @@ export const PAYMENT_STATUS = {
 
 export const PAYMENT_STORAGE_KEYS = {
   ACTIVE_TRANSACTION: "ctrlp-active-payment-transaction",
-  SUBMITTED_ORDER: "ctrlp-submitted-order",
 } as const
 
 export const PAYMENT_TIMINGS = {

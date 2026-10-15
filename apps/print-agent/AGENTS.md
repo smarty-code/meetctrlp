@@ -31,7 +31,7 @@ Ipc         framing, dispatcher, NamedPipeServerStream.
 Core        AgentRuntime + handlers + SQLite job journal + background worker.
 Windows     EnumPrinters, Print Schema/GDI catalog, Credential Manager, machine fingerprint.
 Host        Program, CLI, log file, parent watcher.
-Tests       framing + hello/auth/printers/jobs + cloud (SSE parser, token manager, doorbell, cloud.* handlers; fake clock and HttpMessageHandler). No Host.
+Tests       framing + hello/auth/printers/jobs + cloud (SSE parser, token manager, doorbell, sync service, report outbox, SQLite report columns, cloud.* handlers; fake clock and HttpMessageHandler). No Host.
 ```
 
 Do not reverse those dependencies.

@@ -4,8 +4,8 @@ import { jsonResponse } from "@/src/lib/http";
 import { authErrorResponse } from "@/src/modules/auth/auth-http";
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
 import { isShopAcceptingOrders } from "@/src/modules/print-user/print-user.helpers";
-import { readClientIp, readPrintUserCookie, writePrintUserCookie } from "@/src/modules/print-user/print-user-http";
-import { createOrResumePrintUserSession } from "@/src/modules/print-user/print-user-session.service";
+import { readClientIp, readGuestPrincipal, writePrintUserCookie } from "@/src/modules/print-user/print-user-http";
+import { createOrResumePrintUserSession, toPublicSession } from "@/src/modules/print-user/print-user-session.service";
 import { getPublicShopBySlug } from "@/src/modules/print-user/print-user-shop.service";
 
 export const runtime = "nodejs";
@@ -38,10 +38,10 @@ export async function POST(request: Request, context: RouteContext) {
       shopId: shop.id,
       shopSlug: shop.slug,
       ipAddress: readClientIp(request),
-      cookiePrintUserId: await readPrintUserCookie(),
+      cookiePrintUserId: (await readGuestPrincipal(request))?.id,
     });
-    await writePrintUserCookie(session.id);
-    return jsonResponse({ session, shop, firebaseToken: await guestFirebaseToken(session.id) });
+    await writePrintUserCookie(session, request);
+    return jsonResponse({ session: toPublicSession(session), shop, firebaseToken: await guestFirebaseToken(session.id) });
   } catch (error) {
     return authErrorResponse(error);
   }

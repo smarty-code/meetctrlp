@@ -5,26 +5,28 @@ This runbook covers the Windows shop desktop order loop. It is for a local Fireb
 ## Shipped flow
 
 1. A document intake request creates an order with immutable file metadata: MIME type (`application/pdf`, `image/png`, or `image/jpeg`), byte count, SHA-256, page count, and print configuration.
-2. Cash orders remain `SUBMITTED` until a shop operator accepts them. A verified `ONLINE` payment callback may move an order to `SHOP_ACCEPTED` when the shop policy enables `autoAcceptPaidOnline`.
+2. Cash orders remain `SUBMITTED` until a shop operator accepts them. A verified `ONLINE` payment rings the shop's doorbell; when the shop policy enables `autoAcceptPaidOnline`, the agent's next `sync` moves the order to `SHOP_ACCEPTED`. The payment callback itself no longer accepts, so a paid order waits in `SUBMITTED` while the shop's PC is off.
 3. Accepted orders auto-dispatch only when `autoDispatchAcceptedOrders` is enabled and an enabled online printer advertises the requested paper/color capability.
 4. Firestore contains an idempotent document-level `printJob`, addressed with the Firestore printer ID: one job per document. Its assigned agent receives `printerSystemName` for the Windows queue. A document can be dispatched while the order is `SHOP_ACCEPTED` or `PRINTING`. The first claimed job moves the order to `PRINTING`, and the remaining documents must still dispatch.
-5. The detached C# agent polls only its assigned jobs, claims a lease, obtains a short-lived ticket, stages the file under `%LOCALAPPDATA%\Ctrlp\PrintAgent\jobs\{cloudJobId}`, verifies SHA-256, then inserts a correlated SQLite `queue.db` job.
-   - **One job at a time:** each polled job is staged on its own. A failure on one job is logged and the rest of the batch continues.
-   - **Failures after a claim:** if staging fails after a successful claim (ticket, download, or hash mismatch), the agent reports the job `FAILED` with `AGENT_STAGING_FAILED`. The operator can then retry or reassign it, instead of it staying leased in `DISPATCHING`.
-   - **Retries:** claim and stage idempotency keys include the job's `retryCount` (`agent-claim-{jobId}-{retryCount}`, `agent-stage-{jobId}-{retryCount}`). A job re-queued by a cloud retry is therefore claimed and staged again rather than replaying the first attempt.
+5. The detached C# agent waits on the shop's doorbell. When `workAt` changes (or on start, a network return, or **Sync now**), it calls `POST /api/v1/shops/{shopId}/agents/{agentId}/sync`. One sync accepts paid orders (step 2), claims this agent's `QUEUED` jobs with a fresh lease, hands back jobs stuck in `DISPATCHING` for 15 minutes, and returns a 60-minute download link per job. It repeats while the response says `more`. The agent stages each file under `%LOCALAPPDATA%\Ctrlp\PrintAgent\jobs\{cloudJobId}`, verifies SHA-256, then inserts a correlated SQLite `queue.db` job.
+   - **One job at a time:** each claimed job is staged on its own. A failure on one job is logged and the rest of the batch continues.
+   - **Failures after a claim:** if staging fails (download or hash mismatch), the agent records the job `FAILED` with `AGENT_STAGING_FAILED` and reports it. The operator can then retry or reassign it, instead of it staying leased in `DISPATCHING`.
+   - **Duplicates:** a job is de-duplicated locally by job ID plus lease. A re-delivered job (same lease) is not staged twice; a job re-queued by a cloud retry gets a new lease and is staged again.
+   - **Retry backoff:** a failed sync is retried after 2 s, doubling to 60 s. A successful sync waits for the next ring (or, in polling mode, the next 60 s check).
 6. The worker renders PDF through PDFium (`Docnet.Core`), or loads PNG/JPEG, and submits pages through `PrintDocument`. It captures the spooler ID if the driver leaves it observable. Successful staged files are deleted; failed files remain only for an operator retry.
-7. Agent progress updates the cloud job and order stream. All required document jobs must complete before the server moves the order to `READY`. Cash is recorded at `READY`; pickup completion remains an explicit operator action.
-   - **Report order:** status reports are sent without waiting, so `COMPLETED` can arrive before `PRINTING`. The server therefore accepts `DISPATCHING → COMPLETED`.
-   - **Acknowledgement:** the agent marks a local job as acknowledged only after a final report (`COMPLETED`, `FAILED`, `CANCELLED`) succeeds. If that report is lost, the next sync sends it again.
+7. The agent reports final results (`COMPLETED`, `FAILED`, `CANCELLED`) through a durable outbox: `POST .../agents/{agentId}/jobs/report`, up to 20 jobs per call. The server records each document in the order's `completedDocumentIds`, and moves the order to `READY` once all of them are done. Cash is recorded at `READY`; pickup completion remains an explicit operator action.
+   - **Outbox:** each finished local job is marked `report_state: pending` in SQLite in the same write as its final state, so a report survives an agent restart. The server's answer per job moves it to `acked` (`ok`), `rejected` (`lease_mismatch`, `invalid_state`, `not_found`) or back to pending with a backoff (`retry`, when the file couldn't be deleted yet). A failed call is retried with backoff, honouring `Retry-After`; a 400 rejects the batch.
+   - **Stale reports:** a report whose lease no longer matches (the job was rescued or retried) gets `lease_mismatch` and changes nothing.
+   - **Files:** after a document prints, the server deletes its stored file unless another active job uses it, and sets the document's `shreddedAt`. A shredded document can't be dispatched again (`409 DOCUMENT_SHREDDED`).
+   - **Rescue:** an operator can retry a `FAILED` job, re-route a `QUEUED` one, or take back a job stuck in `DISPATCHING` for 15 minutes. Cloud jobs are retried in the cloud only, never by re-printing the local copy, so a job can't print twice. Retrying with another printer also moves the job to that printer's agent.
    - **Known gap:** **Mark ready for pickup** does not check that every document has a job, so an operator can finish an order early.
-   - **Known gap:** reassigning a failed job changes only `printerId`, not the agent or Windows printer name.
 
 ## Credentials and data handling
 
-- The UI stores a refresh token and the sidecar stores a device-scoped agent credential in Windows Credential Manager. The agent never receives a Firebase ID token.
+- The agent owns the shop login: it keeps the refresh token in Windows Credential Manager (`Ctrlp.PrintShop/refreshToken`), turns it into ID tokens, and hands them to the UI (`cloud.getIdToken`). There is no separate agent credential; agent routes take the shop's ID token and check its claims.
 - Do not log document bytes, local document paths, signed URLs, or credentials.
 - `CTRLP_PAYMENT_WEBHOOK_SECRET` is required by `POST /api/v1/internal/payments/shops/{shopId}/orders/{orderId}/confirmed`. Send it only as `x-ctrlp-payment-secret`; calls require a UUID idempotency key and a gateway payment reference.
-- A server download ticket must not be reused after the document shred marker. Remote object deletion is still a follow-up item.
+- Download links last 60 minutes and stop working once the document is shredded. Stored files are deleted after printing, and the daily clean-up deletes the files of rejected and cancelled orders.
 
 ## Development seed
 
@@ -76,6 +78,6 @@ Current automated coverage validates:
 - TypeScript contracts and UI reducers.
 - Shop-hours rules and validation.
 - Guest-cart helpers and PDF page counting.
-- The agent queue's persistence, claim, cancel, and retry behaviours.
-
-The agent's cloud synchronizer (claim, stage, report) has no automated test. The physical Windows matrix above remains required because driver spool semantics cannot be reproduced in a cross-platform test.
+- The agent queue's persistence, claim, cancel, and retry behaviours, and the report columns of the SQLite store.
+- The agent's sync service (coalescing, de-duplication by job and lease, staging failures, retry backoff) and the report outbox (batching, per-job results, `Retry-After`), on a fake clock and a fake HTTP handler.
+- The server's pure job rules (`job-model.test.ts`: report decisions, retry and rescue) and board rules (`board-model.test.ts`). The physical Windows matrix above remains required because driver spool semantics cannot be reproduced in a cross-platform test.

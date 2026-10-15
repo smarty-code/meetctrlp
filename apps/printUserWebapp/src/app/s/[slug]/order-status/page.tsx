@@ -9,12 +9,14 @@ import { OrderBillPaymentSection } from "../../../../components/tracking/order-b
 import { TrackingShopAccordion } from "../../../../components/tracking/tracking-shop-accordion";
 import { TrackingLoadingSkeleton } from "../../../../components/tracking/tracking-loading-skeleton";
 import { TrackingErrorState } from "../../../../components/tracking/tracking-error-state";
+import { TRACKING_COPY } from "../../../../data/tracking-constants";
 
 function OrderStatusContent() {
   const {
     order,
     isLoading,
     isRefreshing,
+    awaitingShop,
     error,
     copied,
     copyOrderReference,
@@ -65,6 +67,12 @@ function OrderStatusContent() {
         onNewOrder={startNewOrder}
       />
       <main className="mx-auto w-full max-w-2xl flex-1 pb-16 space-y-0">
+        {awaitingShop ? (
+          <div role="status" className="mx-4 mt-4 rounded-[12px] border border-macaw-blue bg-paper px-4 py-3">
+            <p className="text-body font-bold text-midnight">{TRACKING_COPY.notConfirmedTitle}</p>
+            <p className="mt-1 text-caption text-ash">{TRACKING_COPY.notConfirmedDescription}</p>
+          </div>
+        ) : null}
         <div className="border-b border-graphite/10 py-1">
           <OrderCompactTimeline steps={order.timeline} />
         </div>

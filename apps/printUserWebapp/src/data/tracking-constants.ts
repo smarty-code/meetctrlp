@@ -97,30 +97,19 @@ export const ORDER_STATUS_PRESENTATION: Record<
     stepIndex: 1,
     isTerminal: true,
   },
-  FAILED: {
-    label: "Printing failed",
-    headline: "Printing could not be completed",
-    customerDescription:
-      "There was a problem while printing your order. The shop counter staff will assist you.",
-    badgeVariant: "destructive",
-    iconName: "alert-circle",
-    stepIndex: 2,
-    isTerminal: true,
-  },
 };
 
 export const TRACKING_TIMINGS = {
-  POLLING_INTERVAL_MS: 6000,
-  SIMULATION_STEP_MS: 4000,
   COPY_FEEDBACK_DURATION_MS: 2000,
   REFRESH_DEBOUNCE_MS: 1000,
-} as const;
-
-export const TRACKING_STORAGE_KEYS = {
-  ORDER_TRACKING_CACHE: "ctrlp-active-order-tracking",
+  /** After this long in SUBMITTED, tell the customer the shop hasn't confirmed yet. */
+  NOT_CONFIRMED_AFTER_MS: 10 * 60 * 1000,
 } as const;
 
 export const TRACKING_COPY = {
+  notConfirmedTitle: "The shop hasn't confirmed your order yet",
+  notConfirmedDescription:
+    "The shop's computer may be off. Your order is saved and will print once they open it, or you can contact the shop.",
   headerTitle: "Order Status",
   screenTag: "Screen 06",
   newOrderCTA: "New Order",

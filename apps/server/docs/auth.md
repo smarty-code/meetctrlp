@@ -49,7 +49,6 @@ All JSON. Errors: `{ "error": "message" }`.
 | POST | `/api/auth/logout` | Bearer idToken | `{ allDevices? }` (body optional). Signs out this device only; refresh tokens are revoked only when `allDevices` is `true`, because one login often runs on several PCs. |
 | GET | `/api/auth/me` | Bearer idToken | current ACTIVE shop user (reads the user record) |
 | POST | `/api/v1/devices/register` | Bearer idToken | `{ deviceIdentifier, hostname, osVersion, appVersion, agentVersion }` |
-| POST | `/api/v1/devices/heartbeat` | Bearer idToken | `{ deviceId, memoryWorkingSetBytes?, spoolerJobCount?, onlinePrinterCount? }` |
 | POST | `/api/v1/devices/offline` | Bearer idToken | `{ deviceId }` |
 | GET | `/api/v1/shops/profile` | Bearer idToken | shop name, phone, email, status, and address when stored |
 | GET | `/api/v1/shops/staff` | Bearer idToken | ACTIVE staff on the caller's shop |
@@ -72,7 +71,7 @@ Hours rules:
 - **Closed days:** a closed day always drops the 24-hour flag.
 - **Rejected:** only a day whose opening and closing times are the same, with 400 `opening and closing time can't be the same. Turn on Open 24 hours instead.`
 
-Device register returns `{ deviceId, heartbeatIntervalSeconds: 30, status: "ONLINE" }`. The agent document is `shops/{shopId}/agents/{agentId}` in Firestore. The same PC and shop always map to the same `deviceId`. Heartbeat only updates liveness and telemetry. Agents with `lastSeenAt` older than 90 seconds are marked `OFFLINE` on the next heartbeat from that shop.
+Device register returns `{ deviceId, status: "ONLINE" }`. The agent document is `shops/{shopId}/agents/{agentId}` in Firestore. The same PC and shop always map to the same `deviceId`. There is no heartbeat: the agent's `sync` and `jobs/report` calls record `lastActiveAt` (at most once every 10 minutes per agent), and `offline` marks the agent and its printers `OFFLINE` when the agent exits or the shop signs out.
 
 Success for register/login/refresh:
 

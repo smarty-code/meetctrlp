@@ -13,6 +13,7 @@ import type {
 } from "@ctrlp/schemas";
 
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
+import { trackingCopy } from "@/src/modules/orders/order-model";
 import { inspectDocument } from "@/src/modules/documents/inspect-document";
 import {
   confirmOnlinePayment,
@@ -38,9 +39,10 @@ import {
 } from "@/src/modules/print-user/print-user.helpers";
 import {
   checkoutPrintUserDocuments,
-  getPrintUserSession,
+  loadGuestSession,
   mutatePrintUserDocuments,
 } from "@/src/modules/print-user/print-user-session.service";
+import type { GuestPrincipal } from "@/src/modules/print-user/print-user-cookie";
 import type { GuestDocument, PrintUserSession } from "@/src/modules/print-user/print-user.types";
 import { randomUUID } from "node:crypto";
 
@@ -78,7 +80,7 @@ async function removeGuestDocument(printUserId: string, document: GuestDocument)
   }));
 }
 
-export async function createUploadIntent(session: PrintUserSession, input: PrintUserUploadIntentRequestInput) {
+export async function createUploadIntent(session: GuestPrincipal, input: PrintUserUploadIntentRequestInput) {
   const officeMessage = officeFormatMessage(input.originalFilename);
   if (officeMessage) {
     throw new AuthServiceError(400, officeMessage);
@@ -140,11 +142,9 @@ export async function createUploadIntent(session: PrintUserSession, input: Print
   };
 }
 
-export async function completeGuestDocument(session: PrintUserSession, docId: string) {
-  const current = await getPrintUserSession(session.id);
-  if (!current) {
-    throw new AuthServiceError(401, "guest session not found");
-  }
+export async function completeGuestDocument(session: GuestPrincipal, docId: string) {
+  // The one read of this request; the write below is its own transaction.
+  const current = await loadGuestSession(session);
 
   const document = requireDocument(current, docId);
   if (document.status === "READY" && document.pageCount) {
@@ -218,7 +218,8 @@ export async function completeGuestDocument(session: PrintUserSession, docId: st
   });
 }
 
-export async function deleteGuestDocument(session: PrintUserSession, docId: string) {
+export async function deleteGuestDocument(guest: GuestPrincipal, docId: string) {
+  const session = await loadGuestSession(guest);
   await removeGuestDocument(session.id, requireDocument(session, docId));
 }
 
@@ -266,7 +267,7 @@ function resolveDocumentConfiguration(
 }
 
 export async function updateGuestDocumentConfiguration(
-  session: PrintUserSession,
+  session: GuestPrincipal,
   docId: string,
   input: PrintUserPrintConfigurationInput,
 ) {
@@ -276,10 +277,10 @@ export async function updateGuestDocumentConfiguration(
 
 /** Validates and saves settings for several cart documents in a single transaction. */
 export async function updateGuestDocumentConfigurations(
-  session: PrintUserSession,
+  guest: GuestPrincipal,
   inputs: PrintUserBatchConfigurationInput["documents"],
 ) {
-  const config = await getShopConfigByShopId(session.shopId);
+  const [session, config] = await Promise.all([loadGuestSession(guest), getShopConfigByShopId(guest.shopId)]);
   const configs = new Map(
     inputs.map((input) => [
       input.documentId,
@@ -304,7 +305,11 @@ export async function updateGuestDocumentConfigurations(
   });
 }
 
-export async function quoteGuestSession(session: PrintUserSession) {
+export async function quoteGuestSession(guest: GuestPrincipal) {
+  return quoteSessionDocuments(await loadGuestSession(guest));
+}
+
+async function quoteSessionDocuments(session: PrintUserSession) {
   const config = await getShopConfigByShopId(session.shopId);
   const ready = session.documents.filter((document) => document.status === "READY" && document.pageCount);
   const items = ready.map((document) => {
@@ -360,26 +365,27 @@ function quoteFromOrder(order: Awaited<ReturnType<typeof createPrintUserOrder>>)
   };
 }
 
-export async function submitGuestOrder(session: PrintUserSession, input: PrintUserSubmitOrderRequestInput) {
+export async function submitGuestOrder(guest: GuestPrincipal, input: PrintUserSubmitOrderRequestInput) {
   // A retried submit must return the original order even though checkout emptied the cart.
-  const placed = await findPrintUserOrderByIdempotencyKey(session.shopId, session.id, input.idempotencyKey);
+  const placed = await findPrintUserOrderByIdempotencyKey(guest.shopId, guest.id, input.idempotencyKey);
   if (placed) {
     // Also covers a first attempt that created the order but failed before clearing the cart.
     await checkoutPrintUserDocuments(
-      session.id,
+      guest.id,
       placed.id,
       placed.documents.map((document) => document.id),
     );
     return { priceChanged: false as const, quote: quoteFromOrder(placed), order: placed };
   }
 
+  const session = await loadGuestSession(guest);
   const ready = session.documents.filter((document) => document.status === "READY" && document.pageCount);
   const submitCheck = canSubmitGuestDocuments(ready);
   if (!submitCheck.ok) {
     throw new AuthServiceError(400, submitCheck.reason);
   }
 
-  const quote = await quoteGuestSession(session);
+  const quote = await quoteSessionDocuments(session);
   if (
     typeof input.expectedTotalPaise === "number" &&
     input.expectedTotalPaise !== quote.totalPaise
@@ -425,10 +431,7 @@ export async function submitGuestOrder(session: PrintUserSession, input: PrintUs
   return { priceChanged: false as const, quote, order };
 }
 
-export async function getGuestOrder(session: PrintUserSession, orderId: string) {
-  if (session.activeOrderId && session.activeOrderId !== orderId) {
-    throw new AuthServiceError(403, "this order does not belong to the guest session");
-  }
+export async function getGuestOrder(session: GuestPrincipal, orderId: string) {
   const order = await getShopOrderById(session.shopId, orderId);
   if (order.printUserId !== session.id) {
     throw new AuthServiceError(403, "this order does not belong to the guest session");
@@ -436,7 +439,16 @@ export async function getGuestOrder(session: PrintUserSession, orderId: string) 
   return order;
 }
 
-export async function mockConfirmGuestPayment(session: PrintUserSession, orderId: string, idempotencyKey: string) {
+/**
+ * The customer-safe view of a guest order, the same shape as its `orderTracking` copy: the tracking
+ * page reads this once when its live listener is unavailable (TRAFFIC_SCALING_V2 6.8).
+ */
+export async function getGuestOrderTracking(guest: GuestPrincipal, orderId: string) {
+  const order = await getGuestOrder(guest, orderId);
+  return { ...trackingCopy(order), updatedAt: order.updatedAt };
+}
+
+export async function mockConfirmGuestPayment(session: GuestPrincipal, orderId: string, idempotencyKey: string) {
   if (!mockPaymentsAllowed()) {
     throw new AuthServiceError(404, "not found");
   }

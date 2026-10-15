@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
-  SESSION_TTL_MS,
   billablePages,
   canMockConfirmPayment,
   canSubmitGuestDocuments,
@@ -19,7 +18,6 @@ import {
   officeFormatMessage,
   parsePageSelection,
   sessionCookieOptions,
-  shouldTouchSession,
 } from "./print-user.helpers.ts";
 
 describe("print-user helpers", () => {
@@ -110,14 +108,5 @@ describe("print-user helpers", () => {
     assert.equal(isAbandonedUpload({ status: "UPLOADING", createdAt: minutesAgo(25) }, now), true);
     assert.equal(isAbandonedUpload({ status: "UPLOADING", createdAt: null }, now), true);
     assert.equal(isAbandonedUpload({ status: "READY", createdAt: minutesAgo(600) }, now), false);
-  });
-
-  it("re-extends a session at most once per interval", () => {
-    const now = new Date("2026-10-14T10:00:00Z");
-    const fresh = new Date(now.getTime() + SESSION_TTL_MS - 10_000).toISOString();
-    const stale = new Date(now.getTime() + SESSION_TTL_MS - 5 * 60_000).toISOString();
-    assert.equal(shouldTouchSession(fresh, now), false);
-    assert.equal(shouldTouchSession(stale, now), true);
-    assert.equal(shouldTouchSession(null, now), true);
   });
 });

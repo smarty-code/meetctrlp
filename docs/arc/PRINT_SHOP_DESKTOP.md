@@ -1,6 +1,6 @@
 # CtrlP Print Shop Desktop (Tauri UI + C# Agent)
 
-> **Status:** Auth, device heartbeat, printer capabilities/shop config, server-streamed orders, leased cloud-to-agent handoff, PDF/JPEG/PNG spool, cash/pickup, and shop Settings (profile, pricing, hours, capabilities, diagnostics, log export) are in.
+> **Status:** Auth (the agent owns the login), the shop doorbell, the order board with deltas, server-side history and search, agent sync with leased jobs and a durable report outbox, printer capabilities/shop config, PDF/JPEG/PNG spool, cash/pickup, and shop Settings (profile, pricing, hours, capabilities, diagnostics, log export) are in. How the doorbell design works: [`traffic-scaling-v2/DEVELOPER_GUIDE.md`](./traffic-scaling-v2/DEVELOPER_GUIDE.md).
 > **Platform:** Windows 10/11 x64 only.  
 > **Source of truth for this stack:** this file, plus `apps/print-shop/AGENTS.md` and `apps/print-agent/AGENTS.md`.  
 > **PRD progress checklist:** [`docs/developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md`](../developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md).
@@ -15,7 +15,7 @@ Shop operators get **one installer EXE**. After install:
 
 1. The Tauri app (React UI) is the frontend.
 2. A compiled C# agent runs as a sidecar, in a loop, talking to Windows APIs.
-3. The UI sends commands; the agent returns results and durable-queue notifications. The agent independently polls assigned cloud jobs, validates/stages them, and submits rendered pages to Windows.
+3. The UI sends commands; the agent returns results and durable-queue notifications. The agent waits on the shop's doorbell (Realtime Database) and, when rung, syncs with the server: it accepts paid orders, claims the jobs assigned to it, validates/stages them, submits rendered pages to Windows, and reports results through a durable outbox. Nothing polls our server on a timer.
 
 ```text
 Operator
@@ -39,14 +39,14 @@ Windows Print Spooler → printer driver → hardware
 
 | Layer | Location | Role | Implemented |
 | --- | --- | --- | --- |
-| Shop UI | `apps/print-shop` | Login, dashboard KPIs, Orders/details, Printers drawer, unified queue, editable Settings | Auth, printer config, streamed orders, shop config editors, queue/reassign |
+| Shop UI | `apps/print-shop` | Login, dashboard KPIs, Orders/details, Printers drawer, unified queue, editable Settings | Auth, printer config, doorbell-driven board (`/board` deltas), server history and search, shop config editors, queue/reassign |
 | Tauri commands | `apps/print-shop/src-tauri/src/commands.rs` | Thin RPC proxy | Ping, status, printers, jobs, secrets, host |
 | Rust IPC | `apps/print-shop/src-tauri/src/agent/` | Spawn sidecar, framed JSON-RPC | Hello handshake, request/response, events |
-| C# host | `apps/print-agent/.../Host` | Detached single-instance process, CLI, log file | Yes |
+| C# host | `apps/print-agent/.../Host` | Single-instance process that exits with the app (`--parent-pid`), CLI, log file | Yes |
 | C# IPC | `apps/print-agent/.../Ipc` | Named pipe server, JSON-RPC 2.0 | Yes |
-| C# core | `apps/print-agent/.../Core` | Handlers, SQLite WAL job journal, cloud synchronizer, worker | Durable queue, lease/stage/report lifecycle |
+| C# core | `apps/print-agent/.../Core` | Handlers, SQLite WAL job journal, token manager, doorbell client, sync service, report outbox, worker | Durable queue, lease/stage/report lifecycle |
 | Windows adapter | `apps/print-agent/.../Windows` | winspool + Print Schema/GDI/PDFium renderer | Discovery, live status, capabilities, PDF/JPEG/PNG submission |
-| Cloud HTTP | `apps/print-shop/src/lib/cloud.ts` | Auth, devices, printers, orders, documents, REST + SSE | Yes (no Firebase SDK) |
+| Cloud HTTP | `apps/print-shop/src/lib/cloud.ts` | Auth, devices, printers, board, orders, history, search, documents (REST; the bearer token comes from the agent) | Yes (no Firebase SDK) |
 | Sidecar bundle | `externalBin` + publish script | Agent EXE next to Tauri binary | Yes |
 | NSIS installer | `tauri.conf.json` `bundle.targets: ["nsis"]` | Single setup EXE for the shop PC | Configured; needs `pnpm desktop:build` |
 
@@ -130,14 +130,26 @@ Windows APIs stay in `Ctrlp.PrintAgent.Windows`. React never calls Win32.
 | `secrets.getRefreshToken` | `{}` | `{ refreshToken }` |
 | `secrets.setRefreshToken` | `{ refreshToken }` | `{ ok }` |
 | `secrets.clearRefreshToken` | `{}` | `{ ok }` |
+| `cloud.getIdToken` | `{ forceRefresh? }` | `{ signedIn, idToken?, expiresAt?, claims? }`. The UI's bearer token for every API call. |
 | `host.identity` | `{}` | `{ deviceIdentifier, hostname, osVersion, appVersion, agentVersion }` |
 | `host.telemetry` | `{}` | `{ memoryWorkingSetBytes }` |
 | `host.exportLog` | `{ destinationPath }` | `{ path, bytesCopied }` |
 
 `PrinterDto` includes identity, live `status` / `statusReason` / `jobCount`, Windows default, hardware flags (`isColorCapable`, `isDuplexCapable`, `supportedPaperSizes`), copies max, and `options` (color modes, papers, trays, duplex, dpi, current driver defaults, unmatched `raw` names). Printer `id` is still the Windows queue name; Firestore `printerId` is `sha256(systemName).slice(0,32)`.
 
-`JobDto` includes identity, cloud order/document/job/lease correlation, state/progress/retry, spooler ID, and terminal timing. Local paths are never serialized through IPC or logs. The SQLite journal uses WAL and restart recovery turns an ambiguous in-progress print into an explicit failure for operator retry.
-The agent stores its device-scoped cloud credential in Credential Manager, polls and claims only assigned jobs, stages to its private data root, checks SHA-256, then renders PDFs with PDFium (`Docnet.Core`) or JPEG/PNG with GDI before calling `PrintDocument`. Raw PDF bytes are never sent to `WritePrinter`.
+Notifications **to** the agent (JSON-RPC without `id`, sent through the Rust `agent_notify` allowlist):
+
+| Notification | Params | Effect |
+| --- | --- | --- |
+| `cloud.configure` | `{ serverBaseUrl, firebaseApiKey, databaseUrl }` | Where the agent's API and doorbell calls go |
+| `cloud.session` | `{ shopId, agentId, idToken?, expiresAt? }` | Starts the doorbell and sync for this shop; a login's ID token seeds the agent's cache |
+| `cloud.clear` | `{}` | Sign-out: closes the stream, forgets the session |
+| `sync.request` | `{}` | "Sync now" from Settings, or the UI's stale-work nudge |
+
+Notifications **from** the agent, besides the job and printer events: `cloud.state` (`{ doorbell, token, pendingReports, lastSyncAt?, lastError? }`), `board.changed` (the UI refetches `/board?since=`), and `orders.attention` (Rust shows a Windows toast and flashes the taskbar).
+
+`JobDto` includes identity, cloud order/document/job/lease correlation, state/progress/retry, spooler ID, report state, and terminal timing. Local paths are never serialized through IPC or logs. The SQLite journal uses WAL and restart recovery turns an ambiguous in-progress print into an explicit failure for operator retry.
+The agent holds the shop login (the refresh token in Credential Manager) and turns it into ID tokens. On each doorbell ring it calls `POST .../agents/{agentId}/sync`, which claims only jobs assigned to this agent and returns 60-minute download links. It stages to its private data root, checks SHA-256, then renders PDFs with PDFium (`Docnet.Core`) or JPEG/PNG with GDI before calling `PrintDocument`. Raw PDF bytes are never sent to `WritePrinter`.
 
 ### UI → Rust commands
 
@@ -152,6 +164,8 @@ React calls `@tauri-apps/api/core` `invoke`:
 | `shutdown_agent` | `agent.shutdown` |
 | `get_refresh_token` / `set_refresh_token` / `clear_refresh_token` | secrets.* (Windows Credential Manager) |
 | `get_host_identity` / `get_host_telemetry` / `export_agent_log` | host.identity / host.telemetry / host.exportLog |
+| `agent_notify` | `cloud.configure` / `cloud.session` / `cloud.clear` / `sync.request` (allowlisted notifications) |
+| `agent_get_id_token` | `cloud.getIdToken` |
 
 Notifications from the agent (JSON-RPC without `id`) are forwarded as Tauri event `agent:event`.
 
@@ -293,10 +307,9 @@ Opening `pnpm shop:dev` in a browser shows login but cannot store a refresh toke
 
 The desktop app has **no Firebase SDK**. Email or Indian phone + password go to `apps/server`, which talks to Firebase Auth and writes Firestore `shops/{shopId}`, `shops/{shopId}/users/{userId}`, and `shops/{shopId}/agents/{agentId}`. Phone accounts use the internal `{digits}@phone.meetctrlp.app` mapping and do **not** use OTP.
 
-- ID token stays in UI memory.
-- Refresh token is stored by the C# agent in Windows Credential Manager (`Ctrlp.PrintShop/refreshToken`).
-- After sign-in the UI registers this PC and heartbeats every 30 seconds.
-- Sign out revokes Firebase refresh tokens, deletes the credential, and marks the agent `OFFLINE`.
+- The agent owns the login. The refresh token is stored by the C# agent in Windows Credential Manager (`Ctrlp.PrintShop/refreshToken`), and the UI asks the agent for an ID token (`cloud.getIdToken`) for each API call. Right after a login the UI uses the login's own token until the agent has the session (`src/lib/session.ts`).
+- After sign-in the UI registers this PC (`POST /api/v1/devices/register`) and sends `cloud.session`. There is no heartbeat: the server records agent activity on each sync, and marks the agent and its printers `OFFLINE` when the agent exits (`POST /api/v1/devices/offline`, 2 s budget).
+- Sign out logs out this PC only (`allDevices: false`), sends `cloud.clear`, and deletes the credential.
 
 Server env: `FIREBASE_WEB_API_KEY`, `FIREBASE_SERVICE_ACCOUNT_BASE64`. Shop UI env: `VITE_SERVER_BASE_URL` (default `http://localhost:3000`).
 

@@ -22,7 +22,7 @@ import {
 } from "../../../../lib/print-user-map"
 import {
   deleteGuestDocument,
-  fetchGuestSession,
+  loadGuestSession,
   saveDocumentConfigurations,
 } from "../../../../lib/cloud"
 import {
@@ -103,8 +103,8 @@ export default function CustomizePage() {
   // Local settings are kept for documents still in the cart, so unsaved edits survive navigation.
   useEffect(() => {
     let cancelled = false
-    void fetchGuestSession()
-      .then(({ session }) => {
+    void loadGuestSession()
+      .then((session) => {
         if (cancelled) return
         setDocuments((current) => {
           const local = new Map(current.map((document) => [document.id, document]))

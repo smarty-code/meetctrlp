@@ -1,6 +1,22 @@
 # Guest print-user API
 
-The customer web app ([`apps/printUserWebapp`](../../printUserWebapp)) calls these routes through its `/api` proxy. A guest has no account. Each guest session is a cart bound to one shop by the `ctrlp_print_user` cookie and the client IP. It lasts 12 hours and is stored at `printUsers/{printUserId}`.
+The customer web app ([`apps/printUserWebapp`](../../printUserWebapp)) calls these routes through its `/api` proxy. A guest has no account. Each guest session is a cart bound to one shop by the `ctrlp_print_user` cookie and the client IP. It lasts 12 hours from the last activity and is stored at `printUsers/{printUserId}`.
+
+## The guest cookie
+
+The cookie is signed, so the server knows the guest without reading Firestore:
+
+```text
+v1.<printUserId>.<shopId>.<expiresAtSeconds>.<ipTag>.<hmac>
+```
+
+- `hmac` is an HMAC-SHA256 over the rest with `PRINT_USER_COOKIE_SECRET` ([`deployment.md`](./deployment.md#environment-variables)). Development without the variable uses a per-process secret, so a dev-server restart starts guests over.
+- `ipTag` is a short hash of the client IP. A cookie used from another network doesn't verify: cart routes return 401, and the next session start begins a new cart.
+- An expired, tampered or wrong-version cookie is treated the same way.
+- **Sliding expiry:** once the cookie is more than an hour old, the next request re-issues it with a fresh 12 hours and writes the session's new `expiresAt` (one write an hour at most). Cart writes set `expiresAt` too.
+- Routes that need the cart (`GET /public/session`, quote, order submit, uploads) read `printUsers/{printUserId}` once. Routes that don't (order tracking, mock confirm) don't read it at all.
+
+Code: [`src/modules/print-user/print-user-cookie.ts`](../src/modules/print-user/print-user-cookie.ts) (pure, tested in `print-user-cookie.test.ts`) and `print-user-http.ts` (`readGuestPrincipal`, `requirePrintUserSession`, `runPrintUser`).
 
 All JSON. Errors: `{ "error": "message" }`.
 
@@ -10,7 +26,7 @@ All JSON. Errors: `{ "error": "message" }`.
 | --- | --- | --- | --- |
 | GET | `/api/v1/public/shops/{slug}` | — | `{ shop }` |
 | POST | `/api/v1/public/shops/{slug}/session` | — | `{ session, shop, firebaseToken }`. Creates or resumes the session and sets the cookie. `firebaseToken` is a Firebase custom token for uid = `printUserId`, used only by the tracking page to read its own `orderTracking` documents; it is `null` if signing failed. |
-| GET | `/api/v1/public/session` | — | `{ session }`, including the cart in `session.documents` |
+| GET | `/api/v1/public/session` | — | `{ session }`, including the cart in `session.documents`. Documents carry no `storageKey`, and the session no IP. |
 | POST | `/api/v1/public/session/documents` | `{ originalFilename, mimeType, fileSizeBytes }` | `{ document, uploadUrl, storageKey, expiresIn }` |
 | PUT | `/api/v1/public/session/documents` | `{ documents: [{ documentId, colorMode, copies, paperSize, orientation?, pageSelection }] }`, 1 to 10 entries | `{ documents }` |
 | POST | `/api/v1/public/session/documents/{docId}/complete` | — | the `READY` document |
@@ -18,10 +34,25 @@ All JSON. Errors: `{ "error": "message" }`.
 | DELETE | `/api/v1/public/session/documents/{docId}` | — | `{ ok: true }` |
 | POST | `/api/v1/public/session/quote` | — | price quote for every `READY` document |
 | POST | `/api/v1/public/session/orders` | `{ paymentMethod, idempotencyKey, expectedTotalPaise? }` | `{ priceChanged, quote, order }` |
-| GET | `/api/v1/public/session/orders/{orderId}` | — | the order |
+| GET | `/api/v1/public/session/orders/{orderId}` | — | the order's tracking copy (below). The tracking page's fallback when its live listener isn't available. |
 | POST | `/api/v1/public/session/orders/{orderId}/payments/mock-confirm` | `{ idempotencyKey }` | the order |
 
 `pageSelection` is `{ mode: "all" }` or `{ mode: "selected", expression: "1,3,5-8" }`.
+
+## Order tracking
+
+Every guest order (`channel: "PRINT_USER"`) has a customer-safe copy at `orderTracking/{orderId}`, written in the same transaction as each change to the order. The tracking page signs in with `firebaseToken` and listens to that document, so status changes reach the customer with no API requests. Firestore rules let a guest read only a copy whose `printUserId` is their own uid.
+
+```text
+{ orderId, shopId, printUserId, orderNumber, pickupCode, status,
+  payment: { method, status }, totalPaise,
+  items: [{ name, pageCount, billablePages, copies, colorMode, paperSize, totalPaise, mimeType }],
+  rejectionReason,
+  times: { submittedAt, paidAt, acceptedAt, printingAt, readyAt, completedAt, rejectedAt, cancelledAt },
+  updatedAt }
+```
+
+It holds no staff IDs, payment references, storage keys or phone numbers. The `GET .../orders/{orderId}` route returns the same shape with times as ISO strings. Copies of orders that finished more than 30 days ago are removed by the daily clean-up.
 
 ## Uploading one file
 
@@ -56,7 +87,7 @@ On Firebase App Hosting this is the only upload step that runs on the server. Se
 
 Every cart change is a read-modify-write of one Firestore document (`mutatePrintUserDocuments`, up to 10 transaction attempts). Parallel uploads all touch that document, so the server keeps other writes to it rare:
 
-- Each request extends the session expiry at most once a minute (`shouldTouchSession`), not on every call.
+- The session expiry moves at most once an hour (the cookie re-issue), not on every call.
 - Settings for the whole cart are saved in one transaction.
 
 The web app also uploads at most 3 files at a time.
@@ -102,4 +133,4 @@ While the shop is closed, the web app disables uploading. The server does not re
 pnpm --filter server test
 ```
 
-This runs the print-user helper tests and the PDF page-count tests. None of them call Firestore or storage.
+This runs the print-user helper and cookie tests and the PDF page-count tests, among others. None of them call Firestore or storage.

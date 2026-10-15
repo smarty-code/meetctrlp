@@ -7,8 +7,8 @@ runConfig:
   # pages. The default 512 MiB leaves little room beside Next.js once a few large PDFs overlap.
   # Raise to 2048 if Cloud Run logs show out-of-memory restarts.
   memoryMiB: 1024
-  # Each open desktop order stream (SSE) holds one of these slots for up to 5 minutes.
   concurrency: 80
-  # One warm instance, so the first upload or desktop reconnect after a quiet period does not wait
-  # for a cold start. This bills an always-on instance; set to 0 to scale to zero instead.
-  minInstances: 1
+  # Scale to zero: nothing holds a connection open any more (desktops wait on the doorbell, not
+  # an SSE stream), so a quiet backend costs nothing. The first request after a quiet period
+  # waits for a cold start. Set to 1 to keep one instance warm; that bills it around the clock.
+  minInstances: 0

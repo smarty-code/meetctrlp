@@ -1,6 +1,6 @@
 # Traffic scaling v2: implementation plan
 
-> **Status:** Final, revision 3, 15 Oct 2026. **Approved for implementation.** No production code has been written yet.
+> **Status:** Final, revision 3, 15 Oct 2026. **Approved for implementation.** Phases 1–3 are written and committed on `fix/upload`; **nothing is deployed**. What's left is ops setup, staging runs and field checks (section 13).
 > **Revision 3:** the doorbell spike passed (3.2). This revision records its results and folds in what it found: a new polling-fallback rule and a 65 s watchdog (10.3), ring timeouts treated as "unknown" (6.9), and no second token refresh on `auth_revoked` (10.2). It also fixes problems found by re-reading the plan against the code; see the revision 3 rows in section 16. Field checks on shop networks are still open. They run alongside Phase 1 as P0-03 and must pass before the agent reaches shops, but they don't block coding.
 > **Revision 2:** the minimized-window test failed. A minimized WebView2 window doesn't deliver Firestore listener updates reliably. Everything time-critical now runs in the agent, which listens to a Realtime Database "doorbell" over its documented REST stream. The desktop window has no Firebase SDK.
 > **Guides:** [developer guide](./traffic-scaling-v2/DEVELOPER_GUIDE.md) and [testing guide](./traffic-scaling-v2/TESTING_GUIDE.md).
@@ -1023,6 +1023,15 @@ Estimates are for one engineer who knows the code. Dependencies are by task ID.
 | P2-07 | Removals (8.7, 6.6) and docs (section 17) | P2-04, P2-06 | 0.5 d | Grep finds none of the removed symbols; docs updated |
 | **Phase 2** | | | **10.5 d** | |
 
+**Phase 2 status (15 Oct 2026): code written, not deployed.** Server tests (52), agent tests (76), desktop tests (38), typechecks, `cargo build` and both Next.js builds pass. What differs from the tasks above, and what's still open:
+
+- **P2-01:** done. Payment confirmation no longer auto-accepts; the agent's `sync` does, with this agent preferred for routing and no ring back to itself (`quietAgentId`). The shop config read is cached for 60 s per instance (part of P3-02's "config cache"). Three new indexes (`orderTracking` by status and `updatedAt`; orders by status and `rejectedAt`, and by status and `cancelledAt`) back the maintenance job, which runs from Cloud Scheduler (`apps/server/docs/deployment.md`, "Daily clean-up"). The rules are unit-tested as pure decisions (`job-model.test.ts`); the Firestore paths themselves have no automated test, because there's no emulator run yet (Java).
+- **P2-02:** done; delta rules tested in `board-model.test.ts`. The SSE stream route and its helpers are deleted.
+- **P2-03, P2-05:** done (`80ad1bf`). The 3-hour staging run hasn't happened.
+- **P2-04:** done. Not yet run end to end against staging.
+- **P2-06:** done, plus one rule the plan didn't spell out: **cloud jobs are retried in the cloud only.** Re-printing the agent's local copy as well would print twice. The stale-work nudge also covers paid orders waiting for the agent to accept them.
+- **P2-07:** done. A grep for the 8.7 and 6.6 symbols finds none. The section 17 docs are updated.
+
 ### Phase 3: customer side and trims
 
 | ID | Task | Depends on | Estimate | Done when |
@@ -1031,6 +1040,14 @@ Estimates are for one engineer who knows the code. Dependencies are by task ID.
 | P3-02 | Signed cookie, read-once, config cache, cart reuse, one quote (6.8, 11.2) | — | 1.5 d | Per-order counts within ±20% of the model |
 | P3-03 | `minInstances: 0`, `deployment.md`, staging cost and idle runs (12.2) | P2-07 | 0.5 d | Cost check and idle check pass |
 | **Phase 3** | | | **3.5 d** | |
+
+**Phase 3 status (15 Oct 2026): code written, not deployed.** Web app typecheck and build pass; its lint findings are all older than this work.
+
+- **P3-01:** done. The one-off read behind the fallback and Refresh is `fetchOrderTracking` (it replaces `pollLatestOrderStatus`), and `GET /public/session/orders/{orderId}` now returns the tracking copy, not the full order. The mapping is `normalizeTrackingDocument` plus `mapTrackingToOrder`. Without the four `NEXT_PUBLIC_FIREBASE_*` values, the page reads once and offers Refresh. "0 API requests after load" still needs checking in a browser against staging.
+- **P3-02:** done. The cart store lives in the web app's `src/lib/cloud.ts`. Because the session start already returns the cart, `GET /public/session` now runs only for the next order after one is placed. The online submit sends the price the customer saw and relies on the server's `priceChanged` check, not a separate quote. Review edits are quoted once they pause for 500 ms, and submit flushes a pending quote first. Also removed: the written-but-never-read submitted-order copy in `sessionStorage`, and the old payment page's unused components. The per-order count check needs staging.
+- **P3-03:** `minInstances: 0` and `deployment.md` done. The staging cost and idle runs are open.
+
+**Still open across all phases:** P0-01's staging project, key restrictions and env values; P0-03 field checks; the rules tests (need Java 11+); deploying indexes and rules; budget and usage alerts; the Cloud Scheduler job; the staging runs above; and the manual cases in the [testing guide](./traffic-scaling-v2/TESTING_GUIDE.md).
 
 **Total remaining: about 22 days** (Phase 0: 1.6 for P0-01, P0-03 and P0-04; Phase 1: 6.35; Phase 2: 10.5; Phase 3: 3.5). P0-02 (1 day) is done.
 

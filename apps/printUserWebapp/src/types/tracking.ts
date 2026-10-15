@@ -7,8 +7,7 @@ export type OrderLifecycleStatus =
   | "READY"
   | "COMPLETED"
   | "REJECTED"
-  | "CANCELLED"
-  | "FAILED";
+  | "CANCELLED";
 
 export type TimelineStepState = "completed" | "current" | "upcoming" | "failed";
 
@@ -61,6 +60,8 @@ export interface OrderTrackingData {
   documentSummary: DocumentSummary;
   estimatedReadyTime?: string;
   submittedAt: string;
+  /** When an online payment was confirmed. */
+  paidAt?: string;
   updatedAt: string;
   timeline: TimelineStepItem[];
   collectionInstructions?: string;

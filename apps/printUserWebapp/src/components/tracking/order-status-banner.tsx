@@ -53,8 +53,7 @@ export function OrderStatusBanner({
   // Visual container styles according to status type
   const isErrorOrCancel =
     order.status === "REJECTED" ||
-    order.status === "CANCELLED" ||
-    order.status === "FAILED";
+    order.status === "CANCELLED";
 
   const isSuccessOrReady =
     order.status === "READY" || order.status === "COMPLETED";

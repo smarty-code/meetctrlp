@@ -13,7 +13,7 @@ import {
 import { STORAGE_KEYS } from "./review-constants"
 import { restoreCachedFile } from "../lib/file-store"
 import { mapStoredFilesToDocuments } from "./customize-mapper"
-import { fetchGuestSession, quoteGuestSession } from "../lib/cloud"
+import { loadGuestSession, quoteGuestSession } from "../lib/cloud"
 import { guestDocumentsToConfigurable, mapPublicShopToContext, quoteToPricing } from "../lib/print-user-map"
 import { readStoredPublicShop } from "../components/shop-session-provider"
 
@@ -132,16 +132,17 @@ function getOrCreateGuestSessionId(): string {
 }
 
 /**
- * Loads the active order draft from session storage, restoring any cached file handles.
+ * Builds the order draft from the guest cart (the one already held, unless `fresh`), restoring
+ * any cached file handles, and prices it with one server quote.
  */
-export async function loadOrderDraft(): Promise<OrderDraft> {
+export async function loadOrderDraft(options: { fresh?: boolean } = {}): Promise<OrderDraft> {
   const storedShop = readStoredPublicShop()
   const shop = storedShop ? mapPublicShopToContext(storedShop) : mockShop
   const sessionId = getOrCreateGuestSessionId()
   let documents: ConfigurableDocument[] = []
 
   try {
-    const { session } = await fetchGuestSession()
+    const session = await loadGuestSession(options)
     const fileLookup = new Map<string, { file?: File; previewUrl?: string }>()
     if (typeof window !== "undefined") {
       for (const document of session.documents) {
@@ -222,26 +223,3 @@ export function saveOrderDraft(draft: OrderDraft): void {
   }
 }
 
-/**
- * Revalidates price with authoritative backend simulation before proceeding to Payment
- */
-export async function refreshPriceAuthoritatively(
-  draft: OrderDraft
-): Promise<{
-  pricing: OrderPricingBreakdown
-  hasChanged: boolean
-  previousTotal: number
-}> {
-  const previousTotal = draft.pricing.total
-  let freshPricing = calculateOrderPricing(draft.documents, draft.shop)
-  try {
-    freshPricing = quoteToPricing(await quoteGuestSession())
-  } catch {
-    // Keep the local estimate if the quote request fails.
-  }
-  return {
-    pricing: freshPricing,
-    hasChanged: freshPricing.total !== previousTotal,
-    previousTotal,
-  }
-}
