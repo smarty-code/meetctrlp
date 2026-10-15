@@ -11,6 +11,7 @@ import { BrandFooter } from "../../../components/brand-footer"
 import { cacheUploadedFile, getCachedFileUrl, restoreCachedFile } from "../../../lib/file-store"
 import { Info } from "lucide-react"
 import { ShopInfoDrawer } from "../../../components/shop-info-drawer"
+import { VideoCard } from "../../../components/video-card"
 import { faqList } from "../../../data/mock-shop"
 import { UploadedFileItem } from "../../../types/upload"
 import { useShopSession } from "../../../components/shop-session-provider"
@@ -251,14 +252,6 @@ export default function ShopUploadPage() {
     void runUpload([retried])
   }
 
-  // For documents already in the cart that no upload round will carry forward: the shopper came
-  // back from customize, or some files failed and they want to go on without them.
-  const canContinue = hasUploadedFiles && !isUploadingOverall && !isReadyToContinue
-  const handleContinueToConfig = () => {
-    if (!canContinue) return
-    stashUploadedFiles(uploadedFiles)
-    router.push(routes.customize)
-  }
 
   const isAvailable = shop.status === "OPEN" || shop.status === "BUSY"
   // The hours label only applies to a shop that is running; a paused shop is simply closed.
@@ -311,6 +304,7 @@ export default function ShopUploadPage() {
         <DocumentsUploadCard
           isAvailable={isAvailable}
           startingPrice={shop.startingPriceA4}
+          shopName={shop.name}
           uploadedFiles={uploadedFiles}
           onFilesSelected={handleFilesSelected}
           onRemoveFile={handleRemoveFile}
@@ -320,8 +314,10 @@ export default function ShopUploadPage() {
           isCheckingUploads={isCheckingUploads}
           uploadProgress={uploadProgress}
           uploadingCount={roundFiles.length}
-          canContinue={canContinue}
-          onContinue={handleContinueToConfig}
+        />
+        <VideoCard
+          videoUrl={shop.promoVideoUrl}
+          caption={`Watch how printing works at ${shop.name}`}
         />
         <PromiseSection />
         <FAQSection items={faqList} />

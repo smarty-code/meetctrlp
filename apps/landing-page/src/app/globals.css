@@ -1,0 +1,51 @@
+@import "tailwindcss";
+@import "@ctrlp/ui/design-system.css";
+@import "@ctrlp/ui/shadcn.css";
+
+@source "../";
+@source "../../../../packages/ui/src";
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    font-family: var(--font-din-round);
+    scroll-behavior: smooth;
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* Tactile 3D pressable button effect */
+.btn-pressable-green {
+  border-bottom: 4px solid #46a302;
+  transition: all 0.1s ease;
+}
+.btn-pressable-green:hover {
+  filter: brightness(1.05);
+}
+.btn-pressable-green:active {
+  border-bottom-width: 0;
+  transform: translateY(4px);
+}
+
+.btn-pressable-lime {
+  border: 2px solid var(--color-lingot-lime);
+  border-bottom: 4px solid #7bc544;
+  transition: all 0.1s ease;
+}
+.btn-pressable-lime:active {
+  border-bottom-width: 2px;
+  transform: translateY(2px);
+}
+
+.btn-pressable-blue {
+  border: 2px solid var(--color-macaw-blue);
+  border-bottom: 4px solid #168ecc;
+  transition: all 0.1s ease;
+}
+.btn-pressable-blue:active {
+  border-bottom-width: 2px;
+  transform: translateY(2px);
+}

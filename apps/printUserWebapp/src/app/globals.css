@@ -98,9 +98,33 @@
   animation: progressShimmer 1.8s ease-in-out infinite;
 }
 
+/* Upload progress drawer: document scanning laser line sweep */
+@keyframes scanLine {
+  0% {
+    top: -28px;
+    opacity: 0;
+  }
+  5% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    top: calc(100% - 2px);
+    opacity: 0;
+  }
+}
+
+.animate-scanLine {
+  animation: scanLine 2.2s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-successBounce,
-  .animate-progressShimmer {
+  .animate-progressShimmer,
+  .animate-scanLine {
     animation: none;
   }
 }
+

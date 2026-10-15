@@ -11,6 +11,9 @@ import { UploadProgressDrawer } from "./upload-progress-drawer"
 interface DocumentsUploadCardProps {
   isAvailable?: boolean
   startingPrice?: number
+  shopName?: string
+  title?: string
+  description?: string
   uploadedFiles: UploadedFileItem[]
   onFilesSelected: (files: FileList | null) => void
   onRemoveFile: (fileId: string) => void
@@ -23,13 +26,14 @@ interface DocumentsUploadCardProps {
   /** Combined percentage for the files in the current upload round. */
   uploadProgress?: number
   uploadingCount?: number
-  canContinue?: boolean
-  onContinue?: () => void
 }
 
 export const DocumentsUploadCard: React.FC<DocumentsUploadCardProps> = ({
   isAvailable = true,
   startingPrice = 3,
+  shopName,
+  title,
+  description,
   uploadedFiles,
   onFilesSelected,
   onRemoveFile,
@@ -39,11 +43,30 @@ export const DocumentsUploadCard: React.FC<DocumentsUploadCardProps> = ({
   isCheckingUploads = false,
   uploadProgress = 0,
   uploadingCount = 0,
-  canContinue = false,
-  onContinue,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const showDrawer = isUploadingOverall || isUploadComplete
+
+  // Dynamic copy computed from state (no hardcoding)
+  const resolvedTitle =
+    title ??
+    (!isAvailable
+      ? "Printing is paused"
+      : uploadedFiles.length > 0
+        ? `${uploadedFiles.length} document${uploadedFiles.length === 1 ? "" : "s"} added`
+        : shopName
+          ? `Print at ${shopName}`
+          : "Print documents")
+
+  const resolvedDescription =
+    description ??
+    (!isAvailable
+      ? "This shop is currently not accepting new print jobs. Please check back later."
+      : uploadedFiles.length > 0
+        ? "Add more documents or continue configuring your print options."
+        : startingPrice
+          ? `Upload your documents for instant A4 prints starting at ₹${startingPrice} per page.`
+          : "Upload your documents for instant counter collection.")
 
   const handleButtonClick = () => {
     if (!isAvailable) return
@@ -69,17 +92,14 @@ export const DocumentsUploadCard: React.FC<DocumentsUploadCardProps> = ({
       <div className="mx-auto mt-4 w-full max-w-xl px-4 sm:mt-6 sm:px-6 md:mt-8 md:max-w-2xl lg:max-w-3xl">
         {/* Paper surface, rounded card, subtle border matching design */}
         <div className="w-full rounded-2xl border border-graphite/20 bg-paper p-5 sm:p-7 md:p-8">
-          {/* Card Header & Collage Artwork */}
+          {/* Card Header & Collage Artwork — Simplified clean layout */}
           <div className="flex items-start justify-between gap-4">
             <div className="flex-1 pr-1">
               <h2 className="font-heading text-heading-sm leading-snug tracking-heading-sm text-midnight sm:text-heading">
-                Documents
+                {resolvedTitle}
               </h2>
               <p className="mt-1 text-body font-medium text-charcoal sm:text-[16px]">
-                A4 B/W and Color prints
-              </p>
-              <p className="mt-0.5 text-body font-bold text-midnight sm:text-[16px]">
-                Starts at ₹{startingPrice} per page
+                {resolvedDescription}
               </p>
             </div>
 
@@ -119,26 +139,7 @@ export const DocumentsUploadCard: React.FC<DocumentsUploadCardProps> = ({
             </Button>
           </div>
 
-          {/* If the user returned from customize and has existing files, show the continue CTA */}
-          {canContinue && (
-            <div className="mt-4 border-t border-graphite/15 pt-4">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={onContinue}
-                className="h-12 w-full rounded-xl border-2 text-[15px] font-bold"
-              >
-                <span>
-                  Continue with{" "}
-                  {uploadedFiles.filter((f) => f.status === "success").length}{" "}
-                  document
-                  {uploadedFiles.filter((f) => f.status === "success").length === 1
-                    ? ""
-                    : "s"}
-                </span>
-              </Button>
-            </div>
-          )}
+
         </div>
       </div>
 
