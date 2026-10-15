@@ -60,3 +60,47 @@
     animation: none;
   }
 }
+
+/* Upload progress drawer: success checkmark bounce-in */
+@keyframes successBounce {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+  70% {
+    transform: scale(0.95);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-successBounce {
+  animation: successBounce 0.5s ease-out forwards;
+}
+
+/* Upload progress drawer: shimmer sweep over the progress bar */
+@keyframes progressShimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-progressShimmer {
+  animation: progressShimmer 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-successBounce,
+  .animate-progressShimmer {
+    animation: none;
+  }
+}
