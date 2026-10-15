@@ -17,6 +17,7 @@ import {
   weekdayLabels,
   type EditableBusinessHour,
 } from "../lib/dashboard"
+import type { AgentCloudState } from "../lib/agent"
 import { appVersion, type AgentStatus, type OrderAutomation, type Printer, type ShopConfig, type ShopProfile, type ShopUser } from "../lib/protocol"
 
 export function SettingsScreen({
@@ -27,9 +28,8 @@ export function SettingsScreen({
   printers,
   hostName,
   deviceId,
-  lastHeartbeatAt,
   cloudState,
-  streamState,
+  onSyncNow,
   queuedJobs,
   busy,
   onSaveProfile,
@@ -47,9 +47,8 @@ export function SettingsScreen({
   printers: Printer[]
   hostName: string | null
   deviceId: string | null
-  lastHeartbeatAt: string | null
-  cloudState: string
-  streamState: string
+  cloudState: AgentCloudState | null
+  onSyncNow: () => void
   queuedJobs: number
   busy: boolean
   onSaveProfile: (input: {
@@ -375,12 +374,21 @@ export function SettingsScreen({
           <CardDescription>Connection, agent, and versions for this PC.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-2 text-body">
-          <p>Cloud: {cloudState} · Orders stream: {streamState}</p>
+          <p>
+            Doorbell: {cloudState?.doorbell ?? "offline"} · Sign-in: {cloudState?.token ?? "none"} · Results waiting to send:{" "}
+            {cloudState?.pendingReports ?? 0}
+          </p>
+          <p>
+            Last sync: {cloudState?.lastSyncAt ? new Date(cloudState.lastSyncAt).toLocaleString() : "not yet"}
+            {cloudState?.lastError ? ` · ${cloudState.lastError}` : ""}
+          </p>
           <p>Agent: {status.state} · pipe {status.pipeName ?? "—"} · uptime {uptime}</p>
           <p>Printers: {status.printerCount ?? printers.length} · Local queued jobs: {queuedJobs}</p>
-          <p>Last heartbeat: {lastHeartbeatAt ?? "not sent yet"}</p>
           <p>App {appVersion} · Agent {status.agentVersion ?? "—"} · Protocol {status.protocolVersion ?? "—"}</p>
           <p>Hostname: {hostName ?? "—"} · Device {deviceId ?? "not registered"}</p>
+          <Button variant="outline" className="rounded-[12px]" disabled={busy || !deviceId} onClick={onSyncNow}>
+            Sync now
+          </Button>
         </CardContent>
       </Card>
 

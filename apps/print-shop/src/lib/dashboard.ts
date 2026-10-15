@@ -158,6 +158,24 @@ export function mergeQueue(localJobs: PrintJob[], cloudJobs: CloudPrintJob[]): Q
   return entries.sort((left, right) => right.createdAt - left.createdAt)
 }
 
+/** The shop-time calendar day (`YYYY-MM-DD`) of an instant. Shops are in India (Asia/Kolkata). */
+export function shopDay(iso: string | null | undefined) {
+  if (!iso) return ""
+  const at = new Date(iso)
+  if (Number.isNaN(at.getTime())) return ""
+  return at.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" })
+}
+
+/** A cloud job stuck DISPATCHING this long belongs to a PC that stopped syncing (implementation plan 6.3). */
+export const STUCK_JOB_MS = 15 * 60 * 1000
+
+/** True when the operator may rescue this cloud job onto another printer, after confirming. */
+export function isStuckCloudJob(job: CloudPrintJob | undefined, now = Date.now()) {
+  if (!job || (job.status !== "DISPATCHING" && job.status !== "PRINTING")) return false
+  const claimed = job.claimedAt ? Date.parse(job.claimedAt) : Number.NaN
+  return Number.isFinite(claimed) && now - claimed >= STUCK_JOB_MS
+}
+
 export function filterOrders(
   orders: ShopOrder[],
   input: {
@@ -170,10 +188,7 @@ export function filterOrders(
   const query = input.search?.trim().toLowerCase() ?? ""
   return orders.filter((order) => {
     if (input.statuses && !input.statuses.includes(order.status)) return false
-    if (input.date) {
-      const created = (order.createdAt ?? "").slice(0, 10)
-      if (created !== input.date) return false
-    }
+    if (input.date && shopDay(order.createdAt) !== input.date) return false
     if (input.payment && input.payment !== "all") {
       if (input.payment === "CASH" || input.payment === "ONLINE") {
         if (order.payment.method !== input.payment) return false

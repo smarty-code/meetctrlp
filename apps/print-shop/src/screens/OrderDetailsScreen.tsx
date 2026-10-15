@@ -3,7 +3,7 @@ import { Badge } from "@ctrlp/ui/badge"
 import { Button } from "@ctrlp/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ctrlp/ui/card"
 
-import { documentReadiness } from "../lib/dashboard"
+import { documentReadiness, isStuckCloudJob } from "../lib/dashboard"
 import type { CloudPrintJob, Printer, ShopOrder } from "../lib/protocol"
 
 export function OrderDetailsScreen({
@@ -138,7 +138,7 @@ export function OrderDetailsScreen({
                     {job.printerName} · {job.status} · {job.pagesPrinted}/{job.pagesTotal}
                     {job.errorMessage ? ` · ${job.errorMessage}` : ""}
                   </p>
-                  {job.status === "FAILED" ? (
+                  {job.status === "FAILED" || isStuckCloudJob(job) ? (
                     <div className="flex flex-wrap gap-2">
                       {readiness.matches.map((printer) => (
                         <Button

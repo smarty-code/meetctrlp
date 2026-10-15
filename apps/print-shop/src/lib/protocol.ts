@@ -141,6 +141,9 @@ export type CloudPrintJob = {
   updatedAt: string | null
   startedAt: string | null
   completedAt: string | null
+  /** When this job's current lease was taken; a DISPATCHING job older than 15 minutes can be rescued. */
+  claimedAt?: string | null
+  leaseId?: string | null
 }
 
 export type ShopOrderStatus =
@@ -187,16 +190,21 @@ export type ShopOrder = {
     acceptedAt: string | null
     readyAt: string | null
     completedAt: string | null
+    paidAt?: string | null
+    printingAt?: string | null
+    rejectedAt?: string | null
+    cancelledAt?: string | null
   }
   createdAt: string | null
   updatedAt: string | null
 }
 
-export type OrderStreamEvent =
-  | { type: "ORDERS_SNAPSHOT"; orders: ShopOrder[] }
-  | { type: "ORDER_CREATED" | "ORDER_STATUS_CHANGED"; order: ShopOrder }
+/** Changes to the order board: from `GET .../board` (implementation plan 8.4) or the operator's own actions. */
+export type OrderBoardEvent =
+  | { type: "BOARD_SNAPSHOT"; orders: ShopOrder[]; jobs: CloudPrintJob[] }
+  | { type: "BOARD_DELTA"; orders: ShopOrder[]; jobs: CloudPrintJob[] }
+  | { type: "ORDER_STATUS_CHANGED"; order: ShopOrder }
   | { type: "PRINT_JOB_CHANGED"; job: CloudPrintJob }
-  | { type: "connection"; state: "connected" | "reconnecting" | "offline"; message?: string }
 
 export type AgentStatus = {
   protocolVersion?: string
@@ -321,7 +329,6 @@ export type HostIdentity = {
   agentVersion: string
 }
 
-export type CloudLinkState = "connected" | "reconnecting" | "offline"
 
 export type JsonRpcRequest = {
   jsonrpc: "2.0"

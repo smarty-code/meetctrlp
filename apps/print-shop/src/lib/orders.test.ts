@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest"
 
-import { parseOrderStreamMessage } from "./cloud"
 import { emptyOrderStore, reduceOrderEvent } from "./orders"
 import type { CloudPrintJob, ShopOrder } from "./protocol"
 
@@ -37,31 +36,67 @@ const job = {
   errorCode: null,
   errorMessage: null,
   createdAt: null,
-  updatedAt: null,
+  updatedAt: "2026-09-28T12:00:00.000Z",
   startedAt: null,
   completedAt: null,
 } satisfies CloudPrintJob
 
-describe("order stream state", () => {
-  it("parses snapshot and ignores malformed server-sent events", () => {
-    expect(parseOrderStreamMessage(`event: ORDERS_SNAPSHOT\ndata: {"orders":[${JSON.stringify(order)}]}`)).toEqual({
-      type: "ORDERS_SNAPSHOT",
-      orders: [order],
-    })
-    expect(parseOrderStreamMessage("event: PRINT_JOB_CHANGED\ndata: not-json")).toBeNull()
-    expect(parseOrderStreamMessage("event: ping\ndata: {}")).toBeNull()
+describe("order board", () => {
+  it("replaces everything on a snapshot", () => {
+    const stale = reduceOrderEvent(emptyOrderStore, { type: "BOARD_SNAPSHOT", orders: [{ ...order, id: "old" }], jobs: [] })
+    const fresh = reduceOrderEvent(stale, { type: "BOARD_SNAPSHOT", orders: [order], jobs: [job] })
+
+    expect(fresh.orders.map((entry) => entry.id)).toEqual(["order-1"])
+    expect(fresh.jobsByOrderId[order.id]).toEqual([job])
   })
 
-  it("merges order and print-job deltas without losing existing orders", () => {
-    const withOrder = reduceOrderEvent(emptyOrderStore, { type: "ORDER_CREATED", order })
-    const withJob = reduceOrderEvent(withOrder, {
-      type: "PRINT_JOB_CHANGED",
-      job,
+  it("merges a delta without losing other orders, and announces new orders", () => {
+    const base = reduceOrderEvent(emptyOrderStore, { type: "BOARD_SNAPSHOT", orders: [{ ...order, id: "other" }], jobs: [] })
+    const merged = reduceOrderEvent(base, { type: "BOARD_DELTA", orders: [order], jobs: [job] })
+
+    expect(merged.orders.map((entry) => entry.id).sort()).toEqual(["order-1", "other"])
+    expect(merged.jobsByOrderId[order.id]).toHaveLength(1)
+    expect(merged.notifications[0]?.kind).toBe("new-order")
+  })
+
+  it("keeps the newer copy when deltas overlap", () => {
+    const later = { ...order, status: "SHOP_ACCEPTED" as const, updatedAt: "2026-09-28T12:05:00.000Z" }
+    const store = reduceOrderEvent(emptyOrderStore, { type: "BOARD_SNAPSHOT", orders: [later], jobs: [] })
+    // The 5 s overlap re-sends an older version of the same order.
+    const replayed = reduceOrderEvent(store, { type: "BOARD_DELTA", orders: [order], jobs: [] })
+
+    expect(replayed.orders[0]?.status).toBe("SHOP_ACCEPTED")
+    expect(replayed.notifications).toHaveLength(0)
+  })
+
+  it("moves an order that left the active set by its new status", () => {
+    const store = reduceOrderEvent(emptyOrderStore, { type: "BOARD_SNAPSHOT", orders: [order], jobs: [] })
+    const done = reduceOrderEvent(store, {
+      type: "BOARD_DELTA",
+      orders: [{ ...order, status: "COMPLETED", updatedAt: "2026-09-28T13:00:00.000Z" }],
+      jobs: [],
     })
 
-    expect(withJob.orders).toEqual([order])
-    expect(withJob.jobsByOrderId[order.id]).toHaveLength(1)
-    expect(withJob.jobsByOrderId[order.id][0]?.status).toBe("QUEUED")
-    expect(withOrder.notifications[0]?.kind).toBe("new-order")
+    expect(done.orders[0]?.status).toBe("COMPLETED")
+  })
+
+  it("notifies once when a job fails", () => {
+    const store = reduceOrderEvent(emptyOrderStore, { type: "BOARD_SNAPSHOT", orders: [order], jobs: [job] })
+    const failedJob = { ...job, status: "FAILED" as const, errorMessage: "Paper jam", updatedAt: "2026-09-28T12:10:00.000Z" }
+    const failed = reduceOrderEvent(store, { type: "BOARD_DELTA", orders: [], jobs: [failedJob] })
+    const again = reduceOrderEvent(failed, { type: "BOARD_DELTA", orders: [], jobs: [failedJob] })
+
+    expect(failed.notifications.map((entry) => entry.kind)).toEqual(["print-failed"])
+    expect(again.notifications).toHaveLength(1)
+  })
+
+  it("applies the operator's own changes from action responses", () => {
+    const store = reduceOrderEvent(emptyOrderStore, { type: "BOARD_SNAPSHOT", orders: [order], jobs: [] })
+    const accepted = reduceOrderEvent(store, {
+      type: "ORDER_STATUS_CHANGED",
+      order: { ...order, status: "SHOP_ACCEPTED", updatedAt: "2026-09-28T12:01:00.000Z" },
+    })
+
+    expect(accepted.orders[0]?.status).toBe("SHOP_ACCEPTED")
   })
 })

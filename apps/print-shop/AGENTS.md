@@ -13,7 +13,8 @@ UI design: repo root `AGENTS.md` and `docs/design-system/` (`DESIGN copy.md`, `t
 
 - React shell: login, dashboard KPIs, Orders/order details, Printers (capabilities + shop default / enable / offer color-A3 + test page), unified print queue, editable Settings (profile, pricing, hours, capabilities, diagnostics, log export).
 - Thin Rust: spawn the C# sidecar, JSON-RPC over a named pipe, Tauri commands.
-- HTTP to `apps/server` for auth, device, printer inventory, orders, documents, order-automation settings, and server-mediated SSE (no Firebase SDK).
+- HTTP to `apps/server` for auth, device, printer inventory, orders, documents and order-automation settings (no Firebase SDK). The bearer token comes from the agent (`cloud.getIdToken`, `src/lib/session.ts`); the window never stores tokens.
+- The order board (`src/lib/board.ts`) loads `GET .../board` on start, then `?since=` deltas when the agent sends `board.changed`, only while the window is visible. History and search are paged from the server. No timer calls the server.
 - Not a browser app. `pnpm shop:dev` (Vite) cannot reach the agent.
 
 PRD leftover list: [`docs/developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md`](../../docs/developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md).

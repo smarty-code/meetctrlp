@@ -3,7 +3,7 @@ import { Badge } from "@ctrlp/ui/badge"
 import { Button } from "@ctrlp/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ctrlp/ui/card"
 
-import { mergeQueue, type QueueEntry } from "../lib/dashboard"
+import { mergeQueue, type QueueEntry, isStuckCloudJob } from "../lib/dashboard"
 import type { CloudPrintJob, PrintJob, Printer } from "../lib/protocol"
 
 export function PrintQueueScreen({
@@ -55,9 +55,9 @@ export function PrintQueueScreen({
               </CardHeader>
               <CardContent className="flex flex-wrap items-center gap-2">
                 {entry.error ? <p className="w-full text-caption text-destructive">{entry.error}</p> : null}
-                {entry.state === "failed" ? (
+                {entry.state === "failed" || isStuckCloudJob(entry.cloud) ? (
                   <Button size="sm" className="rounded-[12px]" disabled={busy} onClick={() => onRetry(entry)}>
-                    Retry
+                    {entry.state === "failed" ? "Retry" : "Rescue"}
                   </Button>
                 ) : null}
                 {!terminal && !printing && entry.local ? (
@@ -130,10 +130,12 @@ function QueueDrawer({
           <p>Progress: {entry.pagesPrinted ?? 0}/{entry.pagesTotal ?? 0}</p>
           <p>Started: {started}</p>
           {entry.error ? <p className="text-destructive">{entry.error}</p> : null}
-          {entry.cloud?.errorCode === "PRINT_JOB_STATUS_CONFLICT" || entry.error?.includes("another device") ? (
-            <p className="text-caption text-ash">Another device claimed this job. Retry only after that lease ends.</p>
+          {isStuckCloudJob(entry.cloud) ? (
+            <p className="text-caption text-ash">
+              Another PC took this job over 15 minutes ago and hasn't reported back. If that PC is off, send the job again here.
+            </p>
           ) : null}
-          {entry.state === "failed" ? (
+          {entry.state === "failed" || isStuckCloudJob(entry.cloud) ? (
             <div className="space-y-2">
               <select
                 value={printerId}

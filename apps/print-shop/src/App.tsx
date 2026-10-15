@@ -16,46 +16,48 @@ import {
   clearStoredRefreshToken,
   cancelJob,
   exportAgentLog,
+  getAgentIdToken,
   getAgentStatus,
   getHostIdentity,
-  getHostTelemetry,
-  getStoredRefreshToken,
   isTauriRuntime,
   listJobs,
   listPrinters,
   listenAgentEvents,
+  listenAgentReady,
   pingAgent,
   printTestPage,
   refreshPrinters,
   retryJob,
   storeRefreshToken,
   waitForAgent,
+  type AgentCloudState,
 } from "./lib/agent"
+import { BoardSync, createNudger, hasStaleWork } from "./lib/board"
 import {
+  fetchBoard,
+  fetchCurrentUser,
+  fetchOrderHistory,
   fetchShopProfile,
   fetchShopConfig,
   fetchShopStaff,
   getDocumentDownloadUrl,
   getShopOrder,
-  listShopOrders,
   listShopPrinters,
   listOrderPrintJobs,
   loginOwner,
   logoutSession,
   markDeviceOffline,
   patchShopPrinter,
-  refreshSession,
   registerDevice,
   registerOwner,
   routeOrderPrintJob,
-  sendDeviceHeartbeat,
+  searchShopOrders,
   sendPrinterTelemetry,
   serverBaseUrl,
   dispatchOrderPrintJob,
   rejectShopOrder,
   recordCashPayment,
   retryOrderPrintJob,
-  streamShopOrders,
   syncShopPrinters,
   transitionShopOrder,
   updateOrderAutomation,
@@ -64,7 +66,7 @@ import {
   updateShopPricing,
   updateShopProfile,
 } from "./lib/cloud"
-import { dashboardMetrics, rupees } from "./lib/dashboard"
+import { dashboardMetrics, isStuckCloudJob, rupees } from "./lib/dashboard"
 import { shopError, shopLog, shopWarn } from "./lib/debug"
 import { emptyOrderStore, notifyPrinterOffline, reduceOrderEvent, type OrderStore } from "./lib/orders"
 import {
@@ -78,7 +80,7 @@ import {
   appVersion,
   type AgentStatus,
   type AuthSession,
-  type CloudLinkState,
+  type CloudPrintJob,
   type OrderAutomation,
   type PrintJob,
   type Printer as PrinterModel,
@@ -88,6 +90,7 @@ import {
   type ShopStaffMember,
   type ShopUser,
 } from "./lib/protocol"
+import { clearLoginToken, onSignedOut, seedLoginToken } from "./lib/session"
 import { LoginScreen } from "./screens/LoginScreen"
 import { OrderDetailsScreen } from "./screens/OrderDetailsScreen"
 import { OrdersScreen } from "./screens/OrdersScreen"
@@ -105,18 +108,35 @@ const nav = [
   { id: "settings", label: "Settings", icon: Settings },
 ] as const
 
+/** Tells the agent which server and doorbell to use. Sent on boot and whenever the agent (re)connects. */
+function configureAgent() {
+  return agentNotify({
+    method: "cloud.configure",
+    params: {
+      serverBaseUrl,
+      firebaseApiKey: import.meta.env.VITE_FIREBASE_API_KEY ?? "",
+      databaseUrl: import.meta.env.VITE_FIREBASE_DATABASE_URL ?? "",
+    },
+  })
+}
+
+function confirmRescue(job: CloudPrintJob | undefined) {
+  // A job DISPATCHING for 15 minutes is usually on a PC that died, but a large job may still be printing.
+  return !isStuckCloudJob(job) || window.confirm(
+    "This job has been with another PC for over 15 minutes and may still be printing there. Send it again?"
+  )
+}
+
 export default function App() {
   const [bootstrapping, setBootstrapping] = useState(true)
   const [authBusy, setAuthBusy] = useState(false)
   const [user, setUser] = useState<ShopUser | null>(null)
-  const [idToken, setIdToken] = useState<string | null>(null)
   const [shop, setShop] = useState<ShopProfile | null>(null)
   const [shopConfig, setShopConfig] = useState<ShopConfig | null>(null)
   const [staff, setStaff] = useState<ShopStaffMember[]>([])
   const [deviceId, setDeviceId] = useState<string | null>(null)
   const [hostName, setHostName] = useState<string | null>(null)
-  const [lastHeartbeatAt, setLastHeartbeatAt] = useState<string | null>(null)
-  const [cloud, setCloud] = useState<CloudLinkState>("offline")
+  const [cloudState, setCloudState] = useState<AgentCloudState | null>(null)
   const [cloudMessage, setCloudMessage] = useState<string | null>(null)
   const [screen, setScreen] = useState<Screen>("dashboard")
   const [status, setStatus] = useState<AgentStatus>({ state: "starting" })
@@ -128,15 +148,21 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [selectedPrinter, setSelectedPrinter] = useState<PrinterModel | null>(null)
   const sessionRef = useRef({
-    idToken: null as string | null,
     deviceId: null as string | null,
     shopId: null as string | null,
   })
   const telemetryRef = useRef(new Map<string, string>())
   const printersRef = useRef<PrinterModel[]>([])
   const orderStoreRef = useRef<OrderStore>(emptyOrderStore)
+  const boardRef = useRef<BoardSync | null>(null)
+  const nudgeRef = useRef(
+    createNudger(() => {
+      shopLog("board", "stale work on the board; asking the agent to sync")
+      void agentNotify({ method: "sync.request" }).catch((err) => shopWarn("board", "sync.request failed", err))
+    })
+  )
 
-  sessionRef.current = { idToken, deviceId, shopId: user?.shopId ?? null }
+  sessionRef.current = { deviceId, shopId: user?.shopId ?? null }
   printersRef.current = printers
   orderStoreRef.current = orderStore
 
@@ -156,28 +182,23 @@ export default function App() {
     )
   }
 
-  async function persistSession(session: AuthSession) {
-    setUser(session.user)
-    setIdToken(session.tokens.idToken)
-    if (isTauriRuntime()) {
-      await storeRefreshToken(session.tokens.refreshToken)
-    }
-  }
-
-  async function loadShopContext(token: string) {
-    const [profile, staffResult] = await Promise.all([
-      fetchShopProfile(token),
-      fetchShopStaff(token),
-    ])
+  async function loadShopContext() {
+    const [profile, staffResult] = await Promise.all([fetchShopProfile(), fetchShopStaff()])
     setShop(profile.shop)
     setStaff(staffResult.staff)
-    const config = await fetchShopConfig(token, profile.shop.id)
-    setShopConfig(config)
+    setShopConfig(await fetchShopConfig(profile.shop.id))
   }
 
-  async function connectDevice(token: string, shopId: string, nextPrinters: PrinterModel[]) {
+  /**
+   * Registers this PC and hands the agent the session, so it can listen to the shop's doorbell and
+   * call the API as this user. `login` seeds the agent with a fresh login's token (no refresh needed).
+   */
+  async function connectDevice(
+    shopId: string,
+    nextPrinters: PrinterModel[],
+    login?: { token: string; expiresAt: number }
+  ) {
     if (!isTauriRuntime()) {
-      setCloud("offline")
       setCloudMessage("Open with pnpm desktop:dev to register this PC.")
       return
     }
@@ -185,56 +206,28 @@ export default function App() {
     try {
       const identity = await getHostIdentity()
       setHostName(identity.hostname)
-      const registered = await registerDevice(token, identity)
-      // The agent calls the API with this user's ID token (no device key) and listens to the
-      // shop's doorbell. P2-06 moves these to boot and agent:ready (implementation plan 8.3).
-      await agentNotify({
-        method: "cloud.configure",
-        params: {
-          serverBaseUrl,
-          firebaseApiKey: import.meta.env.VITE_FIREBASE_API_KEY ?? "",
-          databaseUrl: import.meta.env.VITE_FIREBASE_DATABASE_URL ?? "",
-        },
-      })
+      const registered = await registerDevice(identity)
       await agentNotify({
         method: "cloud.session",
-        params: { shopId, agentId: registered.deviceId, idToken: token },
+        params: {
+          shopId,
+          agentId: registered.deviceId,
+          ...(login ? { idToken: login.token, expiresAt: login.expiresAt } : {}),
+        },
       })
+      clearLoginToken()
       setDeviceId(registered.deviceId)
-      setCloud("connected")
+      sessionRef.current = { deviceId: registered.deviceId, shopId }
       setCloudMessage(null)
       shopLog("device", "registered", registered.deviceId, identity.hostname)
-      await beatOnce(token, registered.deviceId, nextPrinters)
-      await syncDiscoveredPrinters(token, shopId, registered.deviceId, nextPrinters, true)
+      await syncDiscoveredPrinters(shopId, registered.deviceId, nextPrinters, true)
     } catch (err) {
       shopWarn("device", "register failed", err)
-      setCloud("offline")
       setCloudMessage(err instanceof Error ? err.message : String(err))
     }
   }
 
-  async function beatOnce(token: string, currentDeviceId: string, nextPrinters: PrinterModel[]) {
-    const telemetry = await getHostTelemetry().catch(() => ({ memoryWorkingSetBytes: 0 }))
-    await sendDeviceHeartbeat(token, {
-      deviceId: currentDeviceId,
-      memoryWorkingSetBytes: telemetry.memoryWorkingSetBytes,
-      spoolerJobCount: nextPrinters.reduce((sum, printer) => sum + printer.jobCount, 0),
-      onlinePrinterCount: nextPrinters.filter(
-        (printer) => cloudPrinterStatus(printer.status) !== "OFFLINE"
-      ).length,
-    })
-    setLastHeartbeatAt(new Date().toISOString())
-    setCloud("connected")
-    setCloudMessage(null)
-  }
-
-  async function syncDiscoveredPrinters(
-    token: string,
-    shopId: string,
-    agentId: string,
-    local: PrinterModel[],
-    refresh = false
-  ) {
+  async function syncDiscoveredPrinters(shopId: string, agentId: string, local: PrinterModel[], refresh = false) {
     if (!shopId) {
       applyPrinters(local)
       return local
@@ -245,18 +238,15 @@ export default function App() {
       applyPrinters(discovered)
       return discovered
     }
-    await syncShopPrinters(token, shopId, {
-      agentId,
-      printers: discovered.map(toSyncPrinter),
-    })
-    const cloud = await listShopPrinters(token, shopId)
+    await syncShopPrinters(shopId, { agentId, printers: discovered.map(toSyncPrinter) })
+    const cloud = await listShopPrinters(shopId)
     const merged = mergeShopPrinters(discovered, cloud.printers)
     applyPrinters(merged)
-    await reportPrinterTelemetry(token, shopId, merged)
+    await reportPrinterTelemetry(shopId, merged)
     return merged
   }
 
-  async function reportPrinterTelemetry(token: string, shopId: string, nextPrinters: PrinterModel[]) {
+  async function reportPrinterTelemetry(shopId: string, nextPrinters: PrinterModel[]) {
     for (const printer of nextPrinters) {
       if (!printer.cloudId) {
         continue
@@ -272,7 +262,7 @@ export default function App() {
       }
       const previousStatus = previous.split("|")[1] ?? cloudPrinterStatus(printer.status)
       try {
-        await sendPrinterTelemetry(token, shopId, printer.cloudId, {
+        await sendPrinterTelemetry(shopId, printer.cloudId, {
           previousStatus,
           newStatus: cloudPrinterStatus(printer.status),
           errorDescription: printer.statusReason ?? null,
@@ -285,36 +275,74 @@ export default function App() {
     }
   }
 
-  async function enterSession(session: AuthSession) {
-    await persistSession(session)
-    await loadShopContext(session.tokens.idToken)
+  async function enterSession(signedIn: ShopUser, login?: { token: string; expiresAt: number }) {
+    setUser(signedIn)
+    sessionRef.current = { deviceId: null, shopId: signedIn.shopId }
+    await loadShopContext()
     const nextPrinters = isTauriRuntime() ? await listPrinters().catch(() => []) : []
     const nextJobs = isTauriRuntime() ? await listJobs().catch(() => []) : []
     applyPrinters(nextPrinters)
     setJobs(nextJobs)
-    await connectDevice(session.tokens.idToken, session.user.shopId, nextPrinters)
+    await connectDevice(signedIn.shopId, nextPrinters, login)
   }
 
+  /** Boot: the agent holds this PC's login. If it has none, show the login screen (implementation plan 8.3). */
   async function restoreSession() {
     shopLog("auth", "restore begin")
-    if (isTauriRuntime()) {
-      const agent = await waitForAgent().catch((err) => {
-        shopWarn("auth", "agent wait failed", err)
-        return getAgentStatus().catch(() => ({ state: "starting" }) as AgentStatus)
-      })
-      setStatus(agent)
-      const refreshToken = await getStoredRefreshToken().catch(() => null)
-      if (!refreshToken) {
-        shopLog("auth", "no stored refresh token")
-        return
-      }
-      const session = await refreshSession(refreshToken)
-      await enterSession(session)
+    if (!isTauriRuntime()) {
+      shopLog("auth", "browser preview; skipping credential restore")
       return
     }
 
-    shopLog("auth", "browser preview; skipping credential restore")
+    const agent = await waitForAgent().catch((err) => {
+      shopWarn("auth", "agent wait failed", err)
+      return getAgentStatus().catch(() => ({ state: "starting" }) as AgentStatus)
+    })
+    setStatus(agent)
+    await configureAgent()
+    const token = await getAgentIdToken(false).catch(() => ({ signedIn: false }))
+    if (!token.signedIn) {
+      shopLog("auth", "agent has no signed-in user")
+      return
+    }
+    const { user: current } = await fetchCurrentUser()
+    await enterSession(current)
   }
+
+  /** The login is gone (revoked, expired or invalid): forget it on this PC and show the login screen. */
+  function resetSession(message: string | null) {
+    clearLoginToken()
+    setUser(null)
+    setShop(null)
+    setShopConfig(null)
+    setStaff([])
+    setDeviceId(null)
+    setCloudState(null)
+    setCloudMessage(null)
+    setPrinters([])
+    setSelectedPrinter(null)
+    setJobs([])
+    setOrderStore(emptyOrderStore)
+    setSelectedOrder(null)
+    setError(message)
+  }
+
+  const signedOutRef = useRef<() => void>(() => undefined)
+  signedOutRef.current = () => {
+    if (!sessionRef.current.shopId) {
+      return
+    }
+    shopWarn("auth", "sign-in is no longer valid")
+    if (isTauriRuntime()) {
+      void agentNotify({ method: "cloud.clear" }).catch(() => undefined)
+      void clearStoredRefreshToken().catch(() => undefined)
+    }
+    resetSession("Your sign-in has expired. Sign in again.")
+  }
+
+  useEffect(() => {
+    onSignedOut(() => signedOutRef.current())
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -323,9 +351,6 @@ export default function App() {
         await restoreSession()
       } catch (err) {
         shopWarn("auth", "restore failed", err)
-        if (isTauriRuntime()) {
-          await clearStoredRefreshToken().catch(() => undefined)
-        }
       } finally {
         if (!cancelled) {
           setBootstrapping(false)
@@ -337,44 +362,53 @@ export default function App() {
     }
   }, [])
 
+  // The board: full on start, then deltas after the doorbell rings, only while visible (plan 8.4).
   useEffect(() => {
-    if (!idToken || !user) {
+    if (!user) {
       return
     }
 
-    const abort = new AbortController()
-    void listShopOrders(idToken, user.shopId)
-      .then(({ orders }) => {
-        setOrderStore((current) => reduceOrderEvent(current, { type: "ORDERS_SNAPSHOT", orders }))
-      })
-      .catch((err) => {
-        shopWarn("orders", "initial fetch failed", err)
-      })
-    void streamShopOrders(idToken, user.shopId, (event) => {
-      setOrderStore((current) => reduceOrderEvent(current, event))
-    }, abort.signal)
-    return () => abort.abort()
-  }, [idToken, user])
+    const board = new BoardSync({
+      fetch: (since) => fetchBoard(user.shopId, since),
+      apply: (response) =>
+        setOrderStore((current) =>
+          reduceOrderEvent(current, {
+            type: response.full ? "BOARD_SNAPSHOT" : "BOARD_DELTA",
+            orders: response.orders,
+            jobs: response.jobs,
+          })
+        ),
+      isVisible: () => document.visibilityState === "visible",
+      onError: (err) => shopWarn("board", "fetch failed", err),
+    })
+    boardRef.current = board
+    void board.load()
+    const shown = () => board.shown()
+    document.addEventListener("visibilitychange", shown)
+    window.addEventListener("focus", shown)
+    return () => {
+      document.removeEventListener("visibilitychange", shown)
+      window.removeEventListener("focus", shown)
+      board.dispose()
+      boardRef.current = null
+    }
+  }, [user])
 
+  // A lost ring leaves work the agent should have taken; nudge it at most once a minute.
   useEffect(() => {
-    if (!idToken || !deviceId) {
+    if (!user || !isTauriRuntime()) {
       return
     }
-
-    const timer = window.setInterval(() => {
-      void (async () => {
-        try {
-          await beatOnce(idToken, deviceId, printersRef.current)
-        } catch (err) {
-          shopWarn("device", "heartbeat failed", err)
-          setCloud("reconnecting")
-          setCloudMessage(err instanceof Error ? err.message : String(err))
-        }
-      })()
-    }, 30_000)
-
-    return () => window.clearInterval(timer)
-  }, [idToken, deviceId])
+    nudgeRef.current(
+      hasStaleWork({
+        orders: orderStore.orders,
+        jobs: Object.values(orderStore.jobsByOrderId).flat(),
+        agentId: deviceId,
+        autoAcceptPaidOnline: shopConfig?.orderAutomation.autoAcceptPaidOnline ?? false,
+        now: Date.now(),
+      })
+    )
+  }, [deviceId, orderStore, shopConfig, user])
 
   async function refreshAll(userInitiated = false) {
     shopLog("ui", "refreshAll begin", { userInitiated, busy })
@@ -401,6 +435,9 @@ export default function App() {
       })
       applyPrinters(mergeLiveStatus(printersRef.current, nextPrinters))
       setJobs(nextJobs)
+      if (userInitiated) {
+        await boardRef.current?.refresh()
+      }
     } catch (err) {
       shopError("ui", "refreshAll failed", err)
       setError(err instanceof Error ? err.message : String(err))
@@ -427,8 +464,9 @@ export default function App() {
       const merged = mergeLiveStatus(printersRef.current, live)
       applyPrinters(merged)
       const current = sessionRef.current
-      if (current.idToken && current.shopId) {
-        await reportPrinterTelemetry(current.idToken, current.shopId, merged)
+      if (current.shopId) {
+        // Sent only when a printer's state actually changed.
+        await reportPrinterTelemetry(current.shopId, merged)
       }
     } catch (err) {
       shopWarn("ui", "poll printers failed", err)
@@ -441,6 +479,7 @@ export default function App() {
     }
     shopLog("ui", "shell mount", { tauri: isTauriRuntime() })
     void refreshAll(true)
+    // Both talk to the local agent over the pipe, not to the server.
     const statusTimer = window.setInterval(() => {
       void pollStatus()
     }, 15_000)
@@ -453,22 +492,35 @@ export default function App() {
     }
   }, [user])
 
+  // Agent notifications: local job progress, the doorbell's board.changed, and cloud.state.
   useEffect(() => {
-    if (!user || !isTauriRuntime()) {
+    if (!isTauriRuntime()) {
       return
     }
 
     let unlisten: (() => void) | undefined
     let disposed = false
     void listenAgentEvents((payload) => {
-      const event = payload as { method?: string; params?: { job?: PrintJob } }
-      if (!event.method?.startsWith("job.") || !event.params?.job) {
+      const event = payload as { method?: string; params?: unknown }
+      if (event.method === "board.changed") {
+        boardRef.current?.changed()
+        return
+      }
+      if (event.method === "cloud.state") {
+        const state = event.params as AgentCloudState
+        setCloudState(state)
+        if (state.token === "invalid") {
+          signedOutRef.current()
+        }
+        return
+      }
+      const job = (event.params as { job?: PrintJob } | undefined)?.job
+      if (!event.method?.startsWith("job.") || !job) {
         return
       }
       setJobs((current) => {
-        const next = event.params!.job!
-        const index = current.findIndex((job) => job.id === next.id)
-        return index === -1 ? [next, ...current] : current.map((job) => (job.id === next.id ? next : job))
+        const index = current.findIndex((entry) => entry.id === job.id)
+        return index === -1 ? [job, ...current] : current.map((entry) => (entry.id === job.id ? job : entry))
       })
     }).then((stop) => {
       if (disposed) {
@@ -482,13 +534,42 @@ export default function App() {
       disposed = true
       unlisten?.()
     }
-  }, [user])
+  }, [])
+
+  // agent:ready fires once per app start, when the bridge is up: hand the agent the server and session.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined
+    let disposed = false
+    void listenAgentReady(() => {
+      void configureAgent().catch((err) => shopWarn("agent", "cloud.configure failed", err))
+      const current = sessionRef.current
+      if (current.shopId && current.deviceId) {
+        void agentNotify({ method: "cloud.session", params: { shopId: current.shopId, agentId: current.deviceId } })
+          .catch((err) => shopWarn("agent", "cloud.session failed", err))
+      }
+    }).then((stop) => {
+      if (disposed) {
+        stop()
+      } else {
+        unlisten = stop
+      }
+    })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [])
 
   async function handleAuthSession(session: AuthSession) {
     setAuthBusy(true)
     setError(null)
     try {
-      await enterSession(session)
+      if (isTauriRuntime()) {
+        await storeRefreshToken(session.tokens.refreshToken)
+        await configureAgent()
+      }
+      const login = seedLoginToken(session.tokens.idToken, session.tokens.expiresIn)
+      await enterSession(session.user, { token: login.token, expiresAt: login.expiresAt })
     } catch (err) {
       shopError("auth", "session enter failed", err)
       setError(err instanceof Error ? err.message : String(err))
@@ -525,37 +606,25 @@ export default function App() {
     }
   }
 
+  /** Signs out this PC only (implementation plan 8.3): printers offline, logout, agent cleared, token removed. */
   async function handleSignOut() {
     const current = sessionRef.current
     shopLog("auth", "sign out")
     try {
-      if (current.idToken && current.deviceId) {
-        await markDeviceOffline(current.idToken, current.deviceId).catch((err) => {
+      if (current.deviceId) {
+        await markDeviceOffline(current.deviceId).catch((err) => {
           shopWarn("device", "offline failed", err)
         })
       }
-      if (current.idToken) {
-        await logoutSession(current.idToken).catch((err) => {
-          shopWarn("auth", "logout failed", err)
-        })
-      }
+      await logoutSession().catch((err) => {
+        shopWarn("auth", "logout failed", err)
+      })
     } finally {
       if (isTauriRuntime()) {
+        await agentNotify({ method: "cloud.clear" }).catch(() => undefined)
         await clearStoredRefreshToken().catch(() => undefined)
       }
-      setUser(null)
-      setIdToken(null)
-      setShop(null)
-      setShopConfig(null)
-      setStaff([])
-      setDeviceId(null)
-      setCloud("offline")
-      setPrinters([])
-      setSelectedPrinter(null)
-      setJobs([])
-      setOrderStore(emptyOrderStore)
-      setSelectedOrder(null)
-      setError(null)
+      resetSession(null)
     }
   }
 
@@ -577,9 +646,8 @@ export default function App() {
     setError(null)
     try {
       const current = sessionRef.current
-      if (current.idToken && current.deviceId && current.shopId) {
+      if (current.deviceId && current.shopId) {
         await syncDiscoveredPrinters(
-          current.idToken,
           current.shopId,
           current.deviceId,
           printersRef.current,
@@ -601,13 +669,13 @@ export default function App() {
     input: { isDefault?: boolean; enabled?: boolean; offered?: { color?: boolean; a3?: boolean } }
   ) {
     const current = sessionRef.current
-    if (!current.idToken || !current.shopId || !printer.cloudId) {
+    if (!current.shopId || !printer.cloudId) {
       throw new Error("This printer is not synced to the shop yet. Rediscover first.")
     }
     setBusy(true)
     setError(null)
     try {
-      const saved = await patchShopPrinter(current.idToken, current.shopId, printer.cloudId, input)
+      const saved = await patchShopPrinter(current.shopId, printer.cloudId, input)
       applyPrinters(
         printersRef.current.map((entry) =>
           entry.id === printer.id
@@ -634,12 +702,12 @@ export default function App() {
 
   async function refreshSelectedOrder(order: ShopOrder) {
     const current = sessionRef.current
-    if (!current.idToken || !current.shopId) {
+    if (!current.shopId) {
       return
     }
     const [fresh, jobResult] = await Promise.all([
-      getShopOrder(current.idToken, current.shopId, order.id),
-      listOrderPrintJobs(current.idToken, current.shopId, order.id),
+      getShopOrder(current.shopId, order.id),
+      listOrderPrintJobs(current.shopId, order.id),
     ])
     setOrderStore((previous) => {
       let next = reduceOrderEvent(previous, { type: "ORDER_STATUS_CHANGED", order: fresh })
@@ -656,13 +724,13 @@ export default function App() {
     action: "accept" | "printing" | "ready" | "complete"
   ) {
     const current = sessionRef.current
-    if (!current.idToken || !current.shopId) {
+    if (!current.shopId) {
       return
     }
     setBusy(true)
     setError(null)
     try {
-      const saved = await transitionShopOrder(current.idToken, current.shopId, order.id, action, order.status)
+      const saved = await transitionShopOrder(current.shopId, order.id, action, order.status, current.deviceId)
       setOrderStore((previous) => reduceOrderEvent(previous, { type: "ORDER_STATUS_CHANGED", order: saved }))
       setSelectedOrder(saved)
     } catch (err) {
@@ -674,14 +742,13 @@ export default function App() {
 
   async function handleRejectOrder(order: ShopOrder) {
     const current = sessionRef.current
-    if (!current.idToken || !current.shopId) {
+    if (!current.shopId) {
       return
     }
     setBusy(true)
     setError(null)
     try {
       const saved = await rejectShopOrder(
-        current.idToken,
         current.shopId,
         order.id,
         order.status,
@@ -699,18 +766,18 @@ export default function App() {
   async function handleDispatchOrderDocument(order: ShopOrder, documentId: string) {
     const current = sessionRef.current
     const document = order.documents.find((entry) => (entry.docId ?? entry.id) === documentId)
-    if (!current.idToken || !current.shopId || !document) {
+    if (!current.shopId || !document) {
       setError("Rediscover and enable a compatible shop printer before printing.")
       return
     }
     setBusy(true)
     setError(null)
     try {
-      const route = await routeOrderPrintJob(current.idToken, current.shopId, {
+      const route = await routeOrderPrintJob(current.shopId, {
         colorMode: document.config?.colorMode ?? document.colorMode,
         paperSize: document.config?.paperSize ?? document.paperSize,
       })
-      await dispatchOrderPrintJob(current.idToken, current.shopId, order.id, {
+      await dispatchOrderPrintJob(current.shopId, order.id, {
         printerId: route.printerId,
         documentId,
       })
@@ -724,11 +791,11 @@ export default function App() {
 
   async function handlePreviewDocument(order: ShopOrder, documentId: string) {
     const current = sessionRef.current
-    if (!current.idToken || !current.shopId) {
+    if (!current.shopId) {
       return { valid: false, message: "Your shop session is unavailable." }
     }
     try {
-      const download = await getDocumentDownloadUrl(current.idToken, current.shopId, order.id, documentId)
+      const download = await getDocumentDownloadUrl(current.shopId, order.id, documentId)
       const response = await fetch(download.url)
       if (!response.ok) {
         throw new Error(`Download failed (${response.status})`)
@@ -774,17 +841,21 @@ export default function App() {
   }
 
   async function handleRetryQueue(entry: import("./lib/dashboard").QueueEntry, printerId?: string) {
+    const current = sessionRef.current
+    if (entry.cloud && !confirmRescue(entry.cloud)) {
+      return
+    }
     setBusy(true)
     setError(null)
     try {
-      if (entry.local) {
+      if (entry.cloud) {
+        if (!current.shopId) return
+        const retried = await retryOrderPrintJob(current.shopId, entry.cloud.orderId, entry.cloud.id, printerId)
+        setOrderStore((store) => reduceOrderEvent(store, { type: "PRINT_JOB_CHANGED", job: retried }))
+      } else if (entry.local) {
         await retryJob(entry.local.id)
-        setJobs(await listJobs())
       }
-      const current = sessionRef.current
-      if (entry.cloud && current.idToken && current.shopId) {
-        await retryOrderPrintJob(current.idToken, current.shopId, entry.cloud.orderId, entry.cloud.id, printerId)
-      }
+      setJobs(await listJobs())
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -796,13 +867,13 @@ export default function App() {
     await handleRetryQueue(entry, printerId)
   }
 
-  async function handleReassignOrderJob(job: import("./lib/protocol").CloudPrintJob, printerId: string) {
+  async function handleReassignOrderJob(job: CloudPrintJob, printerId: string) {
     const current = sessionRef.current
-    if (!current.idToken || !current.shopId) return
+    if (!current.shopId || !confirmRescue(job)) return
     setBusy(true)
     setError(null)
     try {
-      const retried = await retryOrderPrintJob(current.idToken, current.shopId, job.orderId, job.id, printerId)
+      const retried = await retryOrderPrintJob(current.shopId, job.orderId, job.id, printerId)
       setOrderStore((store) => reduceOrderEvent(store, { type: "PRINT_JOB_CHANGED", job: retried }))
       if (selectedOrder) {
         await refreshSelectedOrder(selectedOrder)
@@ -816,14 +887,13 @@ export default function App() {
 
   async function handleCashPayment(order: ShopOrder) {
     const current = sessionRef.current
-    if (!current.idToken || !current.shopId) {
+    if (!current.shopId) {
       return
     }
     setBusy(true)
     setError(null)
     try {
       const paid = await recordCashPayment(
-        current.idToken,
         current.shopId,
         order.id,
         order.amounts.totalMinorUnits
@@ -839,11 +909,11 @@ export default function App() {
 
   async function handleOrderAutomation(next: OrderAutomation) {
     const current = sessionRef.current
-    if (!current.idToken || !current.shopId) return
+    if (!current.shopId) return
     setBusy(true)
     setError(null)
     try {
-      const saved = await updateOrderAutomation(current.idToken, current.shopId, next)
+      const saved = await updateOrderAutomation(current.shopId, next)
       setShopConfig((config) => (config ? { ...config, orderAutomation: saved } : config))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -852,13 +922,11 @@ export default function App() {
     }
   }
 
-  async function handleSaveProfile(input: Parameters<typeof updateShopProfile>[1]) {
-    const current = sessionRef.current
-    if (!current.idToken) return
+  async function handleSaveProfile(input: Parameters<typeof updateShopProfile>[0]) {
     setBusy(true)
     setError(null)
     try {
-      const result = await updateShopProfile(current.idToken, input)
+      const result = await updateShopProfile(input)
       setShop(result.shop)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -869,11 +937,11 @@ export default function App() {
 
   async function handleSavePricing(input: { bwA4PricePaise: number; colorA4PricePaise: number; colorA3PricePaise: number }) {
     const current = sessionRef.current
-    if (!current.idToken || !current.shopId) return
+    if (!current.shopId) return
     setBusy(true)
     setError(null)
     try {
-      setShopConfig(await updateShopPricing(current.idToken, current.shopId, input))
+      setShopConfig(await updateShopPricing(current.shopId, input))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -883,11 +951,11 @@ export default function App() {
 
   async function handleSaveHours(hours: NonNullable<ShopConfig["businessHours"]>) {
     const current = sessionRef.current
-    if (!current.idToken || !current.shopId) return
+    if (!current.shopId) return
     setBusy(true)
     setError(null)
     try {
-      setShopConfig(await updateShopHours(current.idToken, current.shopId, hours))
+      setShopConfig(await updateShopHours(current.shopId, hours))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -897,11 +965,11 @@ export default function App() {
 
   async function handleSaveCapabilities(input: { colorPrinting: boolean; a3Printing: boolean }) {
     const current = sessionRef.current
-    if (!current.idToken || !current.shopId) return
+    if (!current.shopId) return
     setBusy(true)
     setError(null)
     try {
-      setShopConfig(await updateShopCapabilities(current.idToken, current.shopId, input))
+      setShopConfig(await updateShopCapabilities(current.shopId, input))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -974,7 +1042,7 @@ export default function App() {
           })}
         </nav>
         <div className="space-y-3">
-          <CloudPill state={cloud} message={cloudMessage} />
+          <CloudPill state={cloudState} message={cloudMessage} />
           <StatusPill status={status} />
           <p className="px-1 text-caption text-ash">
             {hostName ?? "This PC"} (v{appVersion})
@@ -991,9 +1059,7 @@ export default function App() {
             <h2 className="text-heading font-bold tracking-[1.7px] text-midnight">
               {nav.find((item) => item.id === screen)?.label}
             </h2>
-            <p className="text-body text-ash">
-              Signed in as {user.name}. Order stream: {orderStore.streamState}.
-            </p>
+            <p className="text-body text-ash">Signed in as {user.name}.</p>
           </div>
           <Button onClick={() => void refreshAll(true)} disabled={busy}>
             {busy ? "Refreshing" : "Refresh"}
@@ -1023,6 +1089,8 @@ export default function App() {
           <OrdersScreen
             orders={orderStore.orders}
             busy={busy}
+            loadHistory={(input) => fetchOrderHistory(user.shopId, input)}
+            searchOrders={(q, cursor) => searchShopOrders(user.shopId, q, cursor)}
             onOpen={(order) => {
               setSelectedOrder(order)
               void refreshSelectedOrder(order)
@@ -1082,9 +1150,8 @@ export default function App() {
             printers={printers}
             hostName={hostName}
             deviceId={deviceId}
-            lastHeartbeatAt={lastHeartbeatAt}
-            cloudState={cloud}
-            streamState={orderStore.streamState}
+            cloudState={cloudState}
+            onSyncNow={() => void agentNotify({ method: "sync.request" }).catch((err) => setError(err instanceof Error ? err.message : String(err)))}
             queuedJobs={jobs.filter((job) => job.state === "queued" || job.state === "created" || job.state === "printing").length}
             busy={busy}
             onSaveProfile={(input) => handleSaveProfile(input)}
@@ -1101,9 +1168,19 @@ export default function App() {
   )
 }
 
-function CloudPill({ state, message }: { state: CloudLinkState; message: string | null }) {
+function CloudPill({ state, message }: { state: AgentCloudState | null; message: string | null }) {
+  const doorbell = state?.doorbell ?? "offline"
   const label =
-    state === "connected" ? "Connected" : state === "reconnecting" ? "Reconnecting" : "Offline"
+    state?.token === "invalid"
+      ? "Sign in again"
+      : doorbell === "connected"
+        ? "Live"
+        : doorbell === "polling"
+          ? "Checking every minute"
+          : doorbell === "connecting"
+            ? "Connecting"
+            : "Offline"
+  const pending = state?.pendingReports ?? 0
   return (
     <div className="rounded-[12px] border border-graphite px-3 py-3">
       <p className="text-caption text-ash">Shop cloud</p>
@@ -1111,15 +1188,20 @@ function CloudPill({ state, message }: { state: CloudLinkState; message: string 
         <span
           className={cn(
             "size-2 rounded-full",
-            state === "connected"
+            doorbell === "connected" && state?.token !== "invalid"
               ? "bg-primary"
-              : state === "reconnecting"
+              : doorbell === "polling" || doorbell === "connecting"
                 ? "bg-macaw-blue"
                 : "bg-destructive"
           )}
         />
         <span className="text-body font-bold">{label}</span>
       </div>
+      {pending > 0 ? (
+        <p className="mt-1 text-caption text-ash">
+          {pending} print result{pending === 1 ? "" : "s"} waiting to send
+        </p>
+      ) : null}
       {message ? <p className="mt-1 text-caption text-ash">{message}</p> : null}
     </div>
   )
@@ -1171,7 +1253,7 @@ function Dashboard({
       <Card>
         <CardHeader>
           <CardTitle>Today</CardTitle>
-          <CardDescription>Live counts from the order stream</CardDescription>
+          <CardDescription>Live counts from the order board</CardDescription>
         </CardHeader>
         <CardContent className="space-y-1 text-body">
           <p>{metrics.newCount} new</p>
@@ -1213,7 +1295,7 @@ function Dashboard({
         </CardHeader>
         <CardContent className="space-y-2">
           {metrics.recentOrders.length === 0 ? (
-            <p className="text-caption text-ash">No orders in the live stream yet.</p>
+            <p className="text-caption text-ash">No active orders right now.</p>
           ) : (
             metrics.recentOrders.map((order) => (
               <p key={order.id} className="text-body">

@@ -4,7 +4,6 @@ import {
   type AuthSession,
   type CloudPrintJob,
   type OrderAutomation,
-  type OrderStreamEvent,
   type ShopOrder,
   type ShopStaffMember,
   type ShopUser,
@@ -16,28 +15,74 @@ export const serverBaseUrl = (
 
 type ErrorBody = { error?: string }
 
-async function request<T>(path: string, init: RequestInit & { token?: string } = {}): Promise<T> {
+/** Supplies the API bearer token. `forceRefresh` asks for a new one after a 401. Null: nobody signed in. */
+export type TokenSource = (forceRefresh: boolean) => Promise<string | null>
+
+let tokenSource: TokenSource = async () => null
+let onSignedOut: () => void = () => undefined
+
+/**
+ * The window never keeps tokens itself: the agent owns this PC's login and hands out ID tokens
+ * (implementation plan 8.2). On a 401 the token is refreshed once and the call retried; a second 401
+ * means the login is gone, and `signedOut` shows the login screen.
+ */
+export function configureCloudAuth(source: TokenSource, signedOut: () => void) {
+  tokenSource = source
+  onSignedOut = signedOut
+}
+
+export class CloudError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message)
+    this.name = "CloudError"
+  }
+}
+
+async function send<T>(path: string, init: RequestInit, token: string | null) {
   const headers = new Headers(init.headers)
   headers.set("Content-Type", "application/json")
-  if (init.token) {
-    headers.set("Authorization", `Bearer ${init.token}`)
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`)
   }
-
-  const url = `${serverBaseUrl}${path}`
   shopLog("cloud", init.method ?? "GET", path)
-  const response = await fetch(url, {
-    ...init,
-    headers,
-  })
+  const response = await fetch(`${serverBaseUrl}${path}`, { ...init, headers })
   const body = (await response.json().catch(() => ({}))) as T & ErrorBody
+  return { response, body }
+}
+
+async function request<T>(path: string, init: RequestInit & { auth?: boolean } = {}): Promise<T> {
+  const { auth = true, ...rest } = init
+  let token = auth ? await tokenSource(false) : null
+  let { response, body } = await send<T>(path, rest, token)
+
+  if (auth && response.status === 401) {
+    token = await tokenSource(true).catch(() => null)
+    if (token) {
+      ;({ response, body } = await send<T>(path, rest, token))
+    }
+    if (response.status === 401) {
+      onSignedOut()
+    }
+  }
 
   if (!response.ok) {
     const message = body.error ?? `Request failed (${response.status})`
     shopError("cloud", path, response.status, message)
-    throw new Error(message)
+    throw new CloudError(message, response.status)
   }
 
   return body
+}
+
+function query(params: Record<string, string | number | undefined | null>) {
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") {
+      search.set(key, String(value))
+    }
+  }
+  const text = search.toString()
+  return text ? `?${text}` : ""
 }
 
 export function registerOwner(input: {
@@ -49,6 +94,7 @@ export function registerOwner(input: {
   const identifier = input.identifier.trim()
   return request<AuthSession>("/api/auth/register", {
     method: "POST",
+    auth: false,
     body: JSON.stringify({
       name: input.name.trim(),
       shopName: input.shopName.trim(),
@@ -61,198 +107,126 @@ export function registerOwner(input: {
 export function loginOwner(identifier: string, password: string) {
   return request<AuthSession>("/api/auth/login", {
     method: "POST",
+    auth: false,
     body: JSON.stringify({ identifier: identifier.trim(), password }),
   })
 }
 
-export function refreshSession(refreshToken: string) {
-  return request<AuthSession>("/api/auth/refresh", {
-    method: "POST",
-    body: JSON.stringify({ refreshToken }),
-  })
-}
-
-export function logoutSession(token: string) {
+/** Signs out this PC only; the same login stays signed in on other PCs (implementation plan 5.1). */
+export function logoutSession() {
   return request<{ ok?: boolean }>("/api/auth/logout", {
     method: "POST",
-    token,
-    body: "{}",
+    body: JSON.stringify({ allDevices: false }),
   })
 }
 
-export function fetchCurrentUser(token: string) {
-  return request<{ user: ShopUser }>("/api/auth/me", { token })
+export function fetchCurrentUser() {
+  return request<{ user: ShopUser }>("/api/auth/me")
 }
 
-export function fetchShopProfile(token: string) {
-  return request<{ shop: import("./protocol").ShopProfile }>("/api/v1/shops/profile", { token })
+export function fetchShopProfile() {
+  return request<{ shop: import("./protocol").ShopProfile }>("/api/v1/shops/profile")
 }
 
-export function updateShopProfile(
-  token: string,
-  input: {
-    name: string
-    phone: string | null
-    email: string | null
-    address: import("./protocol").ShopAddress
-  }
-) {
+export function updateShopProfile(input: {
+  name: string
+  phone: string | null
+  email: string | null
+  address: import("./protocol").ShopAddress
+}) {
   return request<{ shop: import("./protocol").ShopProfile }>("/api/v1/shops/profile", {
     method: "PATCH",
-    token,
     body: JSON.stringify(input),
   })
 }
 
-export function fetchShopConfig(token: string, shopId: string) {
-  return request<import("./protocol").ShopConfig>(`/api/v1/shops/${shopId}/pricing`, { token })
+export function fetchShopConfig(shopId: string) {
+  return request<import("./protocol").ShopConfig>(`/api/v1/shops/${shopId}/pricing`)
 }
 
 export function updateShopPricing(
-  token: string,
   shopId: string,
   input: { bwA4PricePaise: number; colorA4PricePaise: number; colorA3PricePaise: number }
 ) {
   return request<import("./protocol").ShopConfig>(`/api/v1/shops/${shopId}/pricing`, {
     method: "PUT",
-    token,
     body: JSON.stringify({ ...input, idempotencyKey: crypto.randomUUID() }),
   })
 }
 
-export function updateShopHours(
-  token: string,
-  shopId: string,
-  businessHours: import("./protocol").ShopBusinessHour[]
-) {
+export function updateShopHours(shopId: string, businessHours: import("./protocol").ShopBusinessHour[]) {
   return request<import("./protocol").ShopConfig>(`/api/v1/shops/${shopId}/hours`, {
     method: "PUT",
-    token,
     body: JSON.stringify({ businessHours, idempotencyKey: crypto.randomUUID() }),
   })
 }
 
-export function updateShopCapabilities(
-  token: string,
-  shopId: string,
-  input: { colorPrinting: boolean; a3Printing: boolean }
-) {
+export function updateShopCapabilities(shopId: string, input: { colorPrinting: boolean; a3Printing: boolean }) {
   return request<import("./protocol").ShopConfig>(`/api/v1/shops/${shopId}/capabilities`, {
     method: "PUT",
-    token,
     body: JSON.stringify({ ...input, idempotencyKey: crypto.randomUUID() }),
   })
 }
 
-export function fetchOrderAutomation(token: string, shopId: string) {
-  return request<OrderAutomation>(`/api/v1/shops/${shopId}/automation`, { token })
+export function fetchOrderAutomation(shopId: string) {
+  return request<OrderAutomation>(`/api/v1/shops/${shopId}/automation`)
 }
 
-export function updateOrderAutomation(token: string, shopId: string, automation: OrderAutomation) {
+export function updateOrderAutomation(shopId: string, automation: OrderAutomation) {
   return request<OrderAutomation>(`/api/v1/shops/${shopId}/automation`, {
     method: "PUT",
-    token,
     body: JSON.stringify(automation),
   })
 }
 
-export function fetchShopStaff(token: string) {
-  return request<{ staff: ShopStaffMember[] }>("/api/v1/shops/staff", { token })
+export function fetchShopStaff() {
+  return request<{ staff: ShopStaffMember[] }>("/api/v1/shops/staff")
 }
 
-export function registerDevice(
-  token: string,
-  input: {
-    deviceIdentifier: string
-    hostname: string
-    osVersion: string
-    appVersion: string
-    agentVersion: string
-  }
-) {
-  return request<{
-    deviceId: string
-    agentCredential?: string
-    heartbeatIntervalSeconds: number
-    status: "ONLINE"
-  }>("/api/v1/devices/register", {
+export function registerDevice(input: {
+  deviceIdentifier: string
+  hostname: string
+  osVersion: string
+  appVersion: string
+  agentVersion: string
+}) {
+  return request<{ deviceId: string; status: "ONLINE" }>("/api/v1/devices/register", {
     method: "POST",
-    token,
     body: JSON.stringify(input),
   })
 }
 
-export function sendDeviceHeartbeat(
-  token: string,
-  input: {
-    deviceId: string
-    memoryWorkingSetBytes?: number
-    spoolerJobCount?: number
-    onlinePrinterCount?: number
-  }
-) {
-  return request<{
-    deviceId: string
-    status: "ONLINE"
-    heartbeatIntervalSeconds: number
-  }>("/api/v1/devices/heartbeat", {
-    method: "POST",
-    token,
-    body: JSON.stringify(input),
-  })
-}
-
-export function markDeviceOffline(token: string, deviceId: string) {
+/** Marks this PC and its printers OFFLINE, so routing stops sending them work. */
+export function markDeviceOffline(deviceId: string) {
   return request<{ deviceId: string; status: "OFFLINE" }>("/api/v1/devices/offline", {
     method: "POST",
-    token,
     body: JSON.stringify({ deviceId }),
   })
 }
 
-export function syncShopPrinters(
-  token: string,
-  shopId: string,
-  input: {
-    agentId: string
-    printers: Array<Record<string, unknown>>
-  }
-) {
-  return request<{ printers: import("./protocol").CloudPrinter[] }>(
-    `/api/v1/shops/${shopId}/printers`,
-    {
-      method: "POST",
-      token,
-      body: JSON.stringify(input),
-    }
-  )
+export function syncShopPrinters(shopId: string, input: { agentId: string; printers: Array<Record<string, unknown>> }) {
+  return request<{ printers: import("./protocol").CloudPrinter[] }>(`/api/v1/shops/${shopId}/printers`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
 }
 
-export function listShopPrinters(token: string, shopId: string) {
-  return request<{ printers: import("./protocol").CloudPrinter[] }>(
-    `/api/v1/shops/${shopId}/printers`,
-    { token }
-  )
+export function listShopPrinters(shopId: string) {
+  return request<{ printers: import("./protocol").CloudPrinter[] }>(`/api/v1/shops/${shopId}/printers`)
 }
 
 export function patchShopPrinter(
-  token: string,
   shopId: string,
   printerId: string,
   input: { isDefault?: boolean; enabled?: boolean; offered?: { color?: boolean; a3?: boolean } }
 ) {
-  return request<import("./protocol").CloudPrinter>(
-    `/api/v1/shops/${shopId}/printers/${printerId}`,
-    {
-      method: "PATCH",
-      token,
-      body: JSON.stringify(input),
-    }
-  )
+  return request<import("./protocol").CloudPrinter>(`/api/v1/shops/${shopId}/printers/${printerId}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  })
 }
 
 export function sendPrinterTelemetry(
-  token: string,
   shopId: string,
   printerId: string,
   input: {
@@ -262,40 +236,72 @@ export function sendPrinterTelemetry(
     activeSpoolJobs: number
   }
 ) {
-  return request<{ printerId: string; status: string }>(
-    `/api/v1/shops/${shopId}/printers/${printerId}/telemetry`,
-    {
-      method: "POST",
-      token,
-      body: JSON.stringify(input),
-    }
+  return request<{ printerId: string; status: string }>(`/api/v1/shops/${shopId}/printers/${printerId}/telemetry`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
+}
+
+export type BoardResponse = {
+  /** True: replace the board. False: merge these changes. */
+  full: boolean
+  orders: ShopOrder[]
+  jobs: CloudPrintJob[]
+  /** Pass back as `since` on the next fetch. */
+  cursor: string
+}
+
+/** Active orders and unfinished jobs, or only what changed since `since` (implementation plan 6.4). */
+export function fetchBoard(shopId: string, since?: string | null) {
+  return request<BoardResponse>(`/api/v1/shops/${shopId}/board${query({ since })}`)
+}
+
+export type OrderPage = { orders: ShopOrder[]; nextCursor: string | null }
+
+/** Paged history, newest first. Dates are shop-time days (`YYYY-MM-DD`), resolved on the server. */
+export function fetchOrderHistory(
+  shopId: string,
+  input: { statuses?: ShopOrder["status"][]; from?: string; to?: string; cursor?: string | null; limit?: number } = {}
+) {
+  return request<OrderPage>(
+    `/api/v1/shops/${shopId}/orders${query({
+      status: input.statuses?.join(","),
+      from: input.from,
+      to: input.to,
+      cursor: input.cursor,
+      limit: input.limit,
+    })}`
   )
 }
 
-export function listShopOrders(token: string, shopId: string) {
-  return request<{ orders: ShopOrder[] }>(`/api/v1/shops/${shopId}/orders`, { token })
+/** Exact matches on order number, pickup code, phone digits or filename words (3+ characters). */
+export function searchShopOrders(shopId: string, q: string, cursor?: string | null) {
+  return request<OrderPage>(`/api/v1/shops/${shopId}/orders/search${query({ q, cursor })}`)
 }
 
-export function getShopOrder(token: string, shopId: string, orderId: string) {
-  return request<ShopOrder>(`/api/v1/shops/${shopId}/orders/${orderId}`, { token })
+export function getShopOrder(shopId: string, orderId: string) {
+  return request<ShopOrder>(`/api/v1/shops/${shopId}/orders/${orderId}`)
 }
 
 export function transitionShopOrder(
-  token: string,
   shopId: string,
   orderId: string,
   action: "accept" | "printing" | "ready" | "complete",
-  currentStatus: ShopOrder["status"]
+  currentStatus: ShopOrder["status"],
+  agentId?: string | null
 ) {
   return request<ShopOrder>(`/api/v1/shops/${shopId}/orders/${orderId}/${action}`, {
     method: "POST",
-    token,
-    body: JSON.stringify({ idempotencyKey: crypto.randomUUID(), currentStatus }),
+    body: JSON.stringify({
+      idempotencyKey: crypto.randomUUID(),
+      currentStatus,
+      // On accept, this PC's printers are tried first for the jobs.
+      ...(action === "accept" && agentId ? { agentId } : {}),
+    }),
   })
 }
 
 export function rejectShopOrder(
-  token: string,
   shopId: string,
   orderId: string,
   currentStatus: ShopOrder["status"],
@@ -304,35 +310,22 @@ export function rejectShopOrder(
 ) {
   return request<ShopOrder>(`/api/v1/shops/${shopId}/orders/${orderId}/reject`, {
     method: "POST",
-    token,
-    body: JSON.stringify({
-      idempotencyKey: crypto.randomUUID(),
-      currentStatus,
-      reason,
-      category,
-    }),
+    body: JSON.stringify({ idempotencyKey: crypto.randomUUID(), currentStatus, reason, category }),
   })
 }
 
-export function recordCashPayment(
-  token: string,
-  shopId: string,
-  orderId: string,
-  cashTenderedPaise: number
-) {
+export function recordCashPayment(shopId: string, orderId: string, cashTenderedPaise: number) {
   return request<ShopOrder>(`/api/v1/shops/${shopId}/orders/${orderId}/cash`, {
     method: "POST",
-    token,
     body: JSON.stringify({ idempotencyKey: crypto.randomUUID(), cashTenderedPaise }),
   })
 }
 
-export function listOrderPrintJobs(token: string, shopId: string, orderId: string) {
-  return request<{ jobs: CloudPrintJob[] }>(`/api/v1/shops/${shopId}/orders/${orderId}/jobs`, { token })
+export function listOrderPrintJobs(shopId: string, orderId: string) {
+  return request<{ jobs: CloudPrintJob[] }>(`/api/v1/shops/${shopId}/orders/${orderId}/jobs`)
 }
 
 export function dispatchOrderPrintJob(
-  token: string,
   shopId: string,
   orderId: string,
   input: {
@@ -349,148 +342,30 @@ export function dispatchOrderPrintJob(
 ) {
   return request<{ jobId: string; status: "QUEUED"; resolvedSettings: Record<string, unknown> }>(
     `/api/v1/shops/${shopId}/orders/${orderId}/jobs`,
-    {
-      method: "POST",
-      token,
-      body: JSON.stringify({ ...input, idempotencyKey: crypto.randomUUID() }),
-    }
+    { method: "POST", body: JSON.stringify({ ...input, idempotencyKey: crypto.randomUUID() }) }
   )
 }
 
-export function routeOrderPrintJob(
-  token: string,
-  shopId: string,
-  input: { colorMode: "BW" | "COLOR"; paperSize: "A4" | "A3" }
-) {
+export function routeOrderPrintJob(shopId: string, input: { colorMode: "BW" | "COLOR"; paperSize: "A4" | "A3" }) {
   return request<{ printerId: string; name: string; activeSpoolJobs: number; status: string }>(
     `/api/v1/shops/${shopId}/routing`,
-    {
-      method: "POST",
-      token,
-      body: JSON.stringify(input),
-    }
+    { method: "POST", body: JSON.stringify(input) }
   )
 }
 
-export function updateOrderPrintJob(
-  token: string,
-  shopId: string,
-  orderId: string,
-  jobId: string,
-  input: {
-    status: CloudPrintJob["status"]
-    pagesPrinted?: number
-    spoolerJobId?: number | null
-    errorCode?: string | null
-    errorMessage?: string | null
-  }
-) {
-  return request<CloudPrintJob>(`/api/v1/shops/${shopId}/orders/${orderId}/jobs/${jobId}`, {
-    method: "PATCH",
-    token,
-    body: JSON.stringify({ ...input, idempotencyKey: crypto.randomUUID() }),
-  })
-}
-
-export function retryOrderPrintJob(token: string, shopId: string, orderId: string, jobId: string, printerId?: string) {
+/**
+ * Puts a cloud job back in the queue with a new lease, optionally on another printer. Also rescues a
+ * job stuck DISPATCHING for 15 minutes on a PC that stopped syncing.
+ */
+export function retryOrderPrintJob(shopId: string, orderId: string, jobId: string, printerId?: string) {
   return request<CloudPrintJob>(`/api/v1/shops/${shopId}/orders/${orderId}/jobs/${jobId}/retry`, {
     method: "POST",
-    token,
     body: JSON.stringify({ idempotencyKey: crypto.randomUUID(), printerId }),
   })
 }
 
-export async function getDocumentDownloadUrl(token: string, shopId: string, orderId: string, docId: string) {
+export async function getDocumentDownloadUrl(shopId: string, orderId: string, docId: string) {
   return request<{ url: string; sha256Hash: string; mimeType?: string; pageCount: number; expiresIn: number }>(
-    `/api/v1/shops/${shopId}/orders/${orderId}/documents/${docId}/download-url`,
-    { token }
+    `/api/v1/shops/${shopId}/orders/${orderId}/documents/${docId}/download-url`
   )
-}
-
-export function markDocumentShredded(token: string, shopId: string, orderId: string, docId: string) {
-  return request<{ docId: string }>(`/api/v1/shops/${shopId}/orders/${orderId}/documents/${docId}/shred`, {
-    method: "POST",
-    token,
-    body: "{}",
-  })
-}
-
-export function parseOrderStreamMessage(message: string): OrderStreamEvent | null {
-  const event = /^event:\s*(.+)$/m.exec(message)?.[1]
-  const json = /^data:\s*(.+)$/m.exec(message)?.[1]
-  if (!event || !json || event === "ping") {
-    return null
-  }
-
-  try {
-    const data = JSON.parse(json) as unknown
-    if (event === "ORDERS_SNAPSHOT") {
-      return { type: event, orders: (data as { orders: ShopOrder[] }).orders }
-    }
-    if (event === "ORDER_CREATED" || event === "ORDER_STATUS_CHANGED") {
-      return { type: event, order: data as ShopOrder }
-    }
-    if (event === "PRINT_JOB_CHANGED") {
-      return { type: event, job: data as CloudPrintJob }
-    }
-  } catch {
-    return null
-  }
-
-  return null
-}
-
-export function streamShopOrders(
-  token: string,
-  shopId: string,
-  onEvent: (event: OrderStreamEvent) => void,
-  signal: AbortSignal
-) {
-  return (async () => {
-    let attempt = 0
-    while (!signal.aborted) {
-      try {
-        onEvent({ type: "connection", state: attempt === 0 ? "connected" : "reconnecting" })
-        const response = await fetch(`${serverBaseUrl}/api/v1/shops/${shopId}/orders/stream`, {
-          headers: { Authorization: `Bearer ${token}`, Accept: "text/event-stream" },
-          signal,
-        })
-        if (!response.ok || !response.body) {
-          throw new Error(`Order stream failed (${response.status})`)
-        }
-
-        attempt = 0
-        const reader = response.body.getReader()
-        const decoder = new TextDecoder()
-        let buffer = ""
-        while (!signal.aborted) {
-          const next = await reader.read()
-          if (next.done) {
-            break
-          }
-          buffer += decoder.decode(next.value, { stream: true })
-          const messages = buffer.split("\n\n")
-          buffer = messages.pop() ?? ""
-          for (const message of messages) {
-            const event = parseOrderStreamMessage(message)
-            if (event) {
-              onEvent(event)
-            }
-          }
-        }
-      } catch (error) {
-        if (signal.aborted) {
-          return
-        }
-        onEvent({
-          type: "connection",
-          state: "offline",
-          message: error instanceof Error ? error.message : "Order stream disconnected",
-        })
-      }
-
-      attempt += 1
-      await new Promise((resolve) => window.setTimeout(resolve, Math.min(10_000, 500 * 2 ** attempt)))
-    }
-  })()
 }

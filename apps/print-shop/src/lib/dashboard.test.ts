@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { dashboardMetrics, documentReadiness, filterOrders, mergeQueue } from "./dashboard"
+import { STUCK_JOB_MS, dashboardMetrics, documentReadiness, filterOrders, isStuckCloudJob, mergeQueue, shopDay } from "./dashboard"
 import type { CloudPrintJob, PrintJob, Printer, ShopOrder } from "./protocol"
 
 const order = {
@@ -99,5 +99,22 @@ describe("dashboard and order filters", () => {
     const merged = mergeQueue([local], [cloud, { ...cloud, id: "other", status: "FAILED" }])
     expect(merged).toHaveLength(2)
     expect(merged[0]?.cloud?.id === "cloud-job" || merged[1]?.cloud?.id === "cloud-job").toBe(true)
+  })
+})
+
+describe("shop time and stuck jobs", () => {
+  it("uses the India calendar day, not the UTC one", () => {
+    // 00:15 India time on 15 Oct is 18:45 UTC on 14 Oct.
+    expect(shopDay("2026-10-14T18:45:00.000Z")).toBe("2026-10-15")
+    expect(shopDay(null)).toBe("")
+  })
+
+  it("lets the operator rescue a job dispatching for 15 minutes", () => {
+    const now = Date.parse("2026-10-15T10:00:00.000Z")
+    const job = { status: "DISPATCHING", claimedAt: new Date(now - STUCK_JOB_MS).toISOString() } as never
+    expect(isStuckCloudJob(job, now)).toBe(true)
+    expect(isStuckCloudJob({ status: "DISPATCHING", claimedAt: new Date(now - 60_000).toISOString() } as never, now)).toBe(false)
+    expect(isStuckCloudJob({ status: "FAILED", claimedAt: null } as never, now)).toBe(false)
+    expect(isStuckCloudJob(undefined, now)).toBe(false)
   })
 })
