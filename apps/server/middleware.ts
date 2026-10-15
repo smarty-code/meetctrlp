@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { desktopCorsHeaders } from "@/src/lib/cors";
-import { printUserOrigin } from "@/src/modules/print-user/print-user.helpers";
+import { printUserOrigin } from "@/src/modules/print-user/print-user-origin";
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;

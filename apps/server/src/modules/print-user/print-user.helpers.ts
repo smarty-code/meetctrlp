@@ -1,5 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 
+import { printUserOrigin } from "./print-user-origin";
+
 export const PRINT_USER_COOKIE = "ctrlp_print_user";
 export const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 export const MAX_GUEST_FILES = 10;
@@ -18,9 +20,7 @@ export type SupportedMimeType = (typeof SUPPORTED_MIME_TYPES)[number];
 
 const OFFICE_EXTENSIONS = new Set(["doc", "docx", "ppt", "pptx"]);
 
-export function printUserOrigin() {
-  return (process.env.PRINT_USER_ORIGIN ?? "http://localhost:3002").replace(/\/$/, "");
-}
+export { printUserOrigin };
 
 export function shopCustomerUrl(slug: string) {
   return `${printUserOrigin()}/s/${encodeURIComponent(slug)}`;
