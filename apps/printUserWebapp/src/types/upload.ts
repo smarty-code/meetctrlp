@@ -28,6 +28,7 @@ export interface ShopContext {
   }
   acceptsCash?: boolean
   acceptsOnline?: boolean
+  promoVideoUrl?: string
 }
 
 export interface UploadedFileItem {

@@ -9,7 +9,8 @@ import { ScanShopQrOverlay } from "./scan-shop-qr-overlay"
 import { PromiseSection } from "./promise-section"
 import { FAQSection } from "./faq-section"
 import { BrandFooter } from "./brand-footer"
-import { faqList } from "../data/mock-shop"
+import { VideoCard } from "./video-card"
+import { mockShop, faqList } from "../data/mock-shop"
 
 const homeFaqs = [
   {
@@ -42,6 +43,10 @@ export const HomeLanding: React.FC = () => {
         <MobileHeader onSearch={() => showToast("Search services coming soon")} />
         <HeroSection isAvailable stickerText="Print it. Pick it. Done." />
         <HomeEntryCard onScanQr={() => setScannerOpen(true)} />
+        <VideoCard
+          videoUrl={mockShop.promoVideoUrl}
+          caption="Watch how printing works with CtrlP"
+        />
         <PromiseSection />
         <FAQSection items={homeFaqs} />
         <BrandFooter />

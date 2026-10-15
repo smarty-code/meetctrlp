@@ -7,19 +7,27 @@ import { DocumentCollageIllustration } from "./illustrations/document-collage-il
 
 interface HomeEntryCardProps {
   onScanQr: () => void
+  title?: string
+  description?: string
+  buttonText?: string
 }
 
-export const HomeEntryCard: React.FC<HomeEntryCardProps> = ({ onScanQr }) => {
+export const HomeEntryCard: React.FC<HomeEntryCardProps> = ({
+  onScanQr,
+  title = "Print at a shop",
+  description = "Scan the QR on the shop counter to open that shop and upload your documents.",
+  buttonText = "Scan QR code",
+}) => {
   return (
     <div className="mx-auto mt-4 w-full max-w-xl px-4 sm:mt-6 sm:px-6 md:mt-8 md:max-w-2xl lg:max-w-3xl">
-      <div className="w-full rounded-xl border border-graphite/20 bg-paper p-5 sm:p-7 md:p-8">
+      <div className="w-full rounded-2xl border border-graphite/20 bg-paper p-5 sm:p-7 md:p-8">
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 pr-1">
             <h2 className="font-heading text-heading-sm leading-snug tracking-heading-sm text-midnight sm:text-heading">
-              Print at a shop
+              {title}
             </h2>
             <p className="mt-1 text-body font-medium text-charcoal sm:text-[16px]">
-              Scan the QR on the shop counter to open that shop and upload your documents.
+              {description}
             </p>
           </div>
           <div className="shrink-0 origin-top-right scale-95 transform sm:scale-105 md:scale-110">
@@ -36,7 +44,7 @@ export const HomeEntryCard: React.FC<HomeEntryCardProps> = ({ onScanQr }) => {
           >
             <span className="flex items-center gap-2">
               <QrCode className="size-5 stroke-[2.5]" />
-              <span>Scan QR code</span>
+              <span>{buttonText}</span>
             </span>
           </Button>
         </div>

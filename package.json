@@ -4,6 +4,11 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "landing:dev": "pnpm --filter landing-page dev",
+    "landing:build": "pnpm --filter landing-page build",
+    "landing:start": "pnpm --filter landing-page start",
+    "landing:lint": "pnpm --filter landing-page lint",
+    "landing:typecheck": "pnpm --filter landing-page typecheck",
     "webapp:dev": "pnpm --filter printUserWebapp dev",
     "webapp:build": "pnpm --filter printUserWebapp build",
     "webapp:start": "pnpm --filter printUserWebapp start",
