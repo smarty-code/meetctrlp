@@ -2,7 +2,7 @@
 
 Everything to test for the work done so far, how to test it, and what "pass" looks like. Each case has an ID; record results in the sheet in section 9. How the code works is in [`DEVELOPER_GUIDE.md`](./DEVELOPER_GUIDE.md).
 
-**Covered:** P1-00 to P1-07 (server, on `fix/upload`), and P2-03 and P2-05 (agent and Rust bridge, on `claude/zen-wiles-090011`). **Not covered yet:** P2-01, P2-02, P2-04, P2-06 and Phase 3. They aren't built, and end-to-end cases E1–E16 in the implementation plan depend on them.
+**Covered:** P1-00 to P1-07 (server), and P2-03 and P2-05 (agent and Rust bridge), all on `fix/upload`. **Not covered yet:** P2-01, P2-02, P2-04, P2-06 and Phase 3. They aren't built, and end-to-end cases E1–E16 in the implementation plan depend on them.
 
 ---
 
@@ -17,7 +17,7 @@ The env files in `apps/server` point at the real `meetctrlp` project. Server tes
 - [ ] `pnpm install` at the repo root.
 - [ ] Server env (section 6.2 of the developer guide): `FIREBASE_SERVICE_ACCOUNT_BASE64`, `FIREBASE_WEB_API_KEY`, `FIREBASE_DATABASE_URL`, `ALLOW_MOCK_PAYMENTS=1` in `apps/server/.env.development.local`, and optionally `FIRESTORE_OP_COUNTERS=1`.
 - [ ] Realtime Database rules from `packages/firebase/database.rules.json` deployed to the test project, and a doorbell visible in the console (Realtime Database → Data).
-- [ ] For the agent cases: check out `claude/zen-wiles-090011`, or merge it with `fix/upload` (both are needed for the H cases), and set `VITE_FIREBASE_API_KEY` and `VITE_FIREBASE_DATABASE_URL` in `apps/print-shop/.env`.
+- [ ] For the agent cases: set `VITE_FIREBASE_API_KEY` and `VITE_FIREBASE_DATABASE_URL` in `apps/print-shop/.env`.
 - [ ] Java 11+ for the rules tests (section 2.3).
 
 ### 1.3 Handy commands
@@ -49,9 +49,9 @@ Watch the doorbell while you test: Firebase console → Realtime Database → Da
 | T3 | `pnpm --filter @ctrlp/firebase typecheck`, `pnpm --filter @ctrlp/types typecheck`, `pnpm --filter @ctrlp/schemas typecheck` | No errors |
 | T4 | `pnpm --filter server build` | Build succeeds |
 | T5 | `pnpm shop:typecheck` and `pnpm --filter printUserWebapp typecheck` | No errors |
-| T6 | `pnpm agent:test` (agent branch) | 61 tests pass. Covers SSE parser, token manager, doorbell client (watchdog at 65 s, polling after 3 broken, no polling after 40 s unreachable, back to streaming after 30 min), handlers. |
-| T7 | `pnpm desktop:test` (agent branch) | Pass |
-| T8 | `cargo build` in `apps/print-shop/src-tauri` (agent branch) | Builds with no new warnings |
+| T6 | `pnpm agent:test` | 61 tests pass. Covers SSE parser, token manager, doorbell client (watchdog at 65 s, polling after 3 broken, no polling after 40 s unreachable, back to streaming after 30 min), handlers. |
+| T7 | `pnpm desktop:test` | Pass (24 desktop tests plus the agent tests) |
+| T8 | `cargo build` in `apps/print-shop/src-tauri` | Builds with no new warnings |
 
 ### 2.3 Rules tests (needs Java)
 
@@ -144,7 +144,7 @@ Keep the Realtime Database console open on `doorbell/<shopId>`.
 
 ## 8. Agent and desktop (P2-03, P2-05)
 
-Run on a real Windows PC, with the app from the agent branch (merged with `fix/upload`). Get the agent log from the app's log export (`host.exportLog`), or watch `cloud.state` in the UI's dev tools.
+Run on a real Windows PC, with the app built from `fix/upload`. Get the agent log from the app's log export (`host.exportLog`), or watch `cloud.state` in the UI's dev tools.
 
 | ID | Steps | Pass |
 | --- | --- | --- |
@@ -161,7 +161,7 @@ Run on a real Windows PC, with the app from the agent branch (merged with `fix/u
 | H11 | Revoke the user's refresh tokens (A7), then wait for the next refresh or restart the app. | `cloud.state.token` = `invalid` and the UI shows the login screen. |
 | H12 | Block `*.firebasedatabase.app` streaming on a test network, or use a network known to buffer. | After about 4 minutes, `cloud.state.doorbell` = `polling`; rings still arrive within about 60 s. |
 
-**Known limit:** cloud jobs don't print yet on the agent branch (the old download route needs the removed agent key). Don't log that as a failure; it closes with P2-01 and P2-04.
+**Known limit:** cloud jobs don't print yet (the old download route needs the removed agent key). Don't log that as a failure; it closes with P2-01 and P2-04.
 
 ---
 

@@ -2,7 +2,7 @@
 
 How the doorbell design works in code, where each piece lives, and how to run it locally. Why it's built this way is in [`DESKTOP_TRAFFIC_SCALING_PLAN.md`](../DESKTOP_TRAFFIC_SCALING_PLAN.md). The task list and contracts are in [`TRAFFIC_SCALING_V2_IMPLEMENTATION.md`](../TRAFFIC_SCALING_V2_IMPLEMENTATION.md). To test it, use [`TESTING_GUIDE.md`](./TESTING_GUIDE.md).
 
-> **State on 15 Oct 2026.** Phase 1 (server) is written on `fix/upload` and isn't committed yet. P2-03 and P2-05 (agent and Rust bridge) are committed as `9291d4d` on `claude/zen-wiles-090011`. P2-01, P2-02, P2-04, P2-06 and Phase 3 aren't built. Sections marked **(planned)** describe code that doesn't exist yet.
+> **State on 15 Oct 2026.** Phase 1 (server), P2-03 and P2-05 (agent and Rust bridge) are all on `fix/upload` (`80ad1bf`), not deployed. P2-01, P2-02, P2-04, P2-06 and Phase 3 aren't built. Sections marked **(planned)** describe code that doesn't exist yet.
 
 ---
 
@@ -63,7 +63,7 @@ Five rules hold everywhere:
 | `@ctrlp/types` | `src/auth.ts` | `ShopPrincipal { uid, shopId, shopUserId, role }`. |
 | `@ctrlp/schemas` | `src/auth.ts` | `logoutRequestSchema { allDevices? }`. |
 
-### Print agent (`apps/print-agent`, branch `claude/zen-wiles-090011`)
+### Print agent (`apps/print-agent`)
 
 All under `src/Ctrlp.PrintAgent.Core/Cloud/` unless noted.
 
@@ -81,7 +81,7 @@ All under `src/Ctrlp.PrintAgent.Core/Cloud/` unless noted.
 | `Host/Program.cs` | Shutdown: stop loops → close the stream → `POST /devices/offline` (2 s). The single-instance lock waits up to 10 s, so a quick restart isn't left without an agent. |
 | `tests/.../Cloud/*` | xUnit on a fake clock and a fake `HttpMessageHandler`. |
 
-### Desktop (`apps/print-shop`, branch `claude/zen-wiles-090011`)
+### Desktop (`apps/print-shop`)
 
 | File | What it does |
 | --- | --- |
@@ -130,7 +130,7 @@ Merging: `work` = any; `last` = the most important event (paid > submitted > que
 
 - **The server still auto-accepts paid online orders** when `autoAcceptPaidOnline` is on, and queues jobs when `autoDispatchAcceptedOrders` is on. P2-01 moves this into the agent's `sync`.
 - The SSE order stream, the heartbeat route and the old agent routes still exist.
-- On the agent branch, cloud jobs can be claimed but **not downloaded**: the server's job `document` route still requires the old agent key. This closes with P2-01 and P2-04.
+- Cloud jobs can be claimed but **not downloaded**: the server's job `document` route still requires the old agent key. This closes with P2-01 and P2-04.
 
 ---
 
@@ -199,7 +199,7 @@ Server, `apps/server`. Set real values outside git; see section 8.
 | `ALLOW_MOCK_PAYMENTS=1` | Online payment in the web app | Put it in `apps/server/.env.development.local` (read only by `next dev`). **Never in production.** |
 | `FIRESTORE_OP_COUNTERS=1` | Cost logging | Optional; logs `request_ops` per request. |
 
-Desktop, `apps/print-shop/.env` (agent branch): `VITE_SERVER_BASE_URL`, `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_DATABASE_URL`.
+Desktop, `apps/print-shop/.env`: `VITE_SERVER_BASE_URL`, `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_DATABASE_URL`.
 
 ### 6.3 Start things
 
@@ -243,6 +243,6 @@ pnpm firebase:emulators
 | **Online payments in production** stop unless `ALLOW_MOCK_PAYMENTS=1` is set there, because there's no gateway yet | Product decision |
 | Rules tests not run (no Java on the dev PC) | Run them before deploying the rules |
 | Indexes and rules not deployed; no staging project; API keys not restricted; cost alerts not configured | Ops tasks (implementation plan 7.5, 12.3) |
-| Cloud jobs can't print on the agent branch | Closes with P2-01 and P2-04 |
+| Cloud jobs can't print (claimed but not downloaded) | Closes with P2-01 and P2-04 |
 | Desktop UI still uses the SSE stream and the heartbeat | P2-06 |
 | The spike folder (`spikes/doorbell/`) is gitignored, so its README and shop kit exist only on the dev PC | Commit the source if the field checks will be run from another PC |

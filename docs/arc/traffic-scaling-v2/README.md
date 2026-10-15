@@ -17,8 +17,8 @@ Shop PCs stop polling our server. Each PC's print agent keeps one cheap HTTPS co
 | --- | --- | --- |
 | P0-02 doorbell spike | Passed (two runs on the dev PC) | Implementation plan 3.2 |
 | P0-03 shop-network field checks | Open | Testing guide section 9 |
-| P0-01, P1-00 to P1-07 (server foundation) | Code written, tests pass; **not committed, not deployed**; rules tests not run | `fix/upload` |
-| P2-03, P2-05 (agent token and doorbell, Rust bridge) | Code committed, tests pass; not verified on a real shop PC | `claude/zen-wiles-090011` (`9291d4d`) |
+| P0-01, P1-00 to P1-07 (server foundation) | Done and committed (`b320f2e`); **not deployed**; rules tests not run | `fix/upload` |
+| P2-03, P2-05 (agent token and doorbell, Rust bridge) | Done, merged (`80ad1bf`); not verified on a real shop PC | `fix/upload` |
 | P2-01, P2-02, P2-04, P2-06, P2-07 | Not started | — |
 | Phase 3 (customer tracking listener, guest trims) | Not started | — |
 
