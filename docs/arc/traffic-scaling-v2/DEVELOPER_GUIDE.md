@@ -317,7 +317,7 @@ curl -s -X POST http://localhost:3000/api/v1/internal/maintenance/daily -H "x-ct
 | --- | --- |
 | **Secrets in git:** `apps/server/.env` and `.env.local` are tracked and hold the service-account private key and S3 secret key. Next.js loads both in production builds. | **Urgent.** Rotate both credentials, untrack the files, set the values as App Hosting secrets. |
 | **Online payments in production** stop unless `ALLOW_MOCK_PAYMENTS=1` is set there, because there's no gateway yet | Product decision |
-| Rules tests not run (no Java on the dev PC) | Run them before deploying the rules |
+| The security rules are tested only against the emulators, not against a real project | `pnpm firebase:rules:test` (testing guide T9) passes, 11 of 11, as of 15 Oct 2026. Rerun it before deploying any rules change |
 | Indexes and rules not deployed; no staging project; API keys not restricted; cost alerts not configured; Cloud Scheduler job not created | Ops tasks (implementation plan 7.5, 12.3; `apps/server/docs/deployment.md`) |
 | The Firestore paths of `sync`, `report`, retry, board and maintenance are tested only against the emulators, not against a real project | `pnpm --filter server test:emulator` (testing guide T11) passes; the staging runs below still cover indexes, real storage and rings |
 | Nothing has run end to end against staging: the 3-hour agent run, the staging print, the per-order cost check, the idle check | Implementation plan 12.2; testing guide sections 8 and 12 |

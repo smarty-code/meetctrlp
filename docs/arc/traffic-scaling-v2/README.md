@@ -17,13 +17,13 @@ Shop PCs stop polling our server. Each PC's print agent keeps one cheap HTTPS co
 | --- | --- | --- |
 | P0-02 doorbell spike | Passed (two runs on the dev PC) | Implementation plan 3.2 |
 | P0-03 shop-network field checks | Open | Testing guide section 13 |
-| P0-01, P1-00 to P1-07 (server foundation) | Done and committed (`b320f2e`); **not deployed**; rules tests not run | `fix/upload` |
+| P0-01, P1-00 to P1-07 (server foundation) | Done and committed (`b320f2e`); **not deployed**; rules tests pass on the emulators | `fix/upload` |
 | P2-03, P2-05 (agent token and doorbell, Rust bridge) | Done, merged (`80ad1bf`); not verified on a real shop PC | `fix/upload` |
 | P2-01, P2-02 (server sync, report, board, history, search) | Done and committed (`8d283a2`); not deployed | `fix/upload` |
 | P2-04 (agent sync service and report outbox) | Done and committed (`3fdaae6`); not run against staging | `fix/upload` |
 | P2-06 (desktop board, token from the agent) | Done and committed (`7fd1485`) | `fix/upload` |
 | P2-07, P3-01 to P3-03 (removals and docs, live tracking, signed cookie, guest trims, scale to zero) | Done and committed; staging cost and idle runs open | `fix/upload` |
 
-**What's left** is ops and verification, not code: a staging project, deploying the indexes and rules, the rules tests (need JDK 21+), API key restrictions, budget alerts, the Cloud Scheduler job, the staging runs (3-hour agent run, end-to-end print, cost and idle checks), the field checks, and the manual cases in the testing guide. See developer guide section 8.
+**What's left** is ops and verification, not code: a staging project, deploying the indexes and rules, API key restrictions, budget alerts, the Cloud Scheduler job, the staging runs (3-hour agent run, end-to-end print, cost and idle checks), the field checks, and the manual cases in the testing guide. See developer guide section 8.
 
 **Urgent, separate from this work:** `apps/server/.env` and `.env.local` are tracked in git with the service-account key and S3 secret. Rotate both credentials and untrack the files. See developer guide section 8.

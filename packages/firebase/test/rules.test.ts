@@ -1,5 +1,5 @@
 // Security rules tests (TRAFFIC_SCALING_V2_IMPLEMENTATION.md 7.3).
-// Run against the emulators with `pnpm firebase:rules:test` from the repo root (needs Java 11+).
+// Run against the emulators with `pnpm firebase:rules:test` from the repo root (needs JDK 21+, which firebase-tools 15 requires).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { after, before, beforeEach, describe, it } from "node:test";

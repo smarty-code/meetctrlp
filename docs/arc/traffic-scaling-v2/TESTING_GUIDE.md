@@ -68,13 +68,20 @@ Watch the doorbell while you test: Firebase console → Realtime Database → Da
 | T8 | `cargo build` in `apps/print-shop/src-tauri` | Builds with no new warnings |
 | T10 | `pnpm --filter printUserWebapp build` | Build succeeds. `pnpm --filter printUserWebapp lint` reports 17 findings, all older than this work; anything new is a failure. |
 
-### 2.3 Rules tests (needs Java)
+### 2.3 Rules tests (needs JDK 21+)
 
 | ID | Command | Pass |
 | --- | --- | --- |
 | T9 | `pnpm firebase:rules:test` | All 11 tests pass: a guest reads only their own tracking document; listing is denied; shop orders and jobs are server-only; a shop A user reads `/doorbell/A` but not `/doorbell/B`; no client writes anywhere |
 
-**These haven't been run yet.** Run them before deploying any rules.
+**Passed on 15 Oct 2026:** 11 of 11 on the dev PC (JDK 21, firebase-tools 15.32.1). Rerun before deploying any rules change.
+
+How it runs: `firebase emulators:exec` starts Firestore and the Realtime Database on the ports in `firebase.json` under the project `demo-ctrlp-rules`, then runs `packages/firebase/test/rules.test.ts`, which loads `firestore.rules` and `database.rules.json` from the package. Each test clears both emulators, then seeds two guests' tracking documents, one order with one job, and `/doorbell/A` and `/doorbell/B`.
+
+- **Never touches a real project.** The script passes `--project demo-ctrlp-rules`, so the `.firebaserc` default is ignored, and a `demo-` project can't reach real services.
+- **Expected noise.** The write tests print `PERMISSION_DENIED … false for 'create' @ L16` (the catch-all in `firestore.rules`) and `FIREBASE WARNING: set at /doorbell/A/workAt failed: permission_denied`. Those are the denials under test; only `not ok` lines or a non-zero exit are failures.
+- **The tests catch weakened rules.** Ten weakened versions of the rules were each run once, and every one failed at least one test: dropping the tracking owner check, allowing `list` on `orderTracking`, allowing tracking writes, allowing unauthenticated tracking reads, opening the catch-all to signed-in users, ignoring the `shopId` match on the doorbell (three variants), making the database root readable, and letting a shop write its own doorbell.
+- Java on PATH and busy ports: same as 2.4.
 
 ### 2.4 Server emulator tests (needs Java)
 
