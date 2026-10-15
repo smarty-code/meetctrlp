@@ -183,11 +183,66 @@ public sealed record RefreshTokenResponse(
 public sealed record OkResponse(
     [property: JsonPropertyName("ok")] bool Ok);
 
-public sealed record AgentCloudCredentialRequest(
-    [property: JsonPropertyName("serverBaseUrl")] string ServerBaseUrl,
-    [property: JsonPropertyName("shopId")] string ShopId,
-    [property: JsonPropertyName("agentId")] string AgentId,
-    [property: JsonPropertyName("credential")] string Credential);
+public sealed record CloudConfigureRequest(
+    [property: JsonPropertyName("serverBaseUrl")] string? ServerBaseUrl,
+    [property: JsonPropertyName("firebaseApiKey")] string? FirebaseApiKey,
+    [property: JsonPropertyName("databaseUrl")] string? DatabaseUrl);
+
+/// <summary><c>expiresAt</c> is epoch milliseconds. A login's ID token seeds the agent's cache.</summary>
+public sealed record CloudSessionRequest(
+    [property: JsonPropertyName("shopId")] string? ShopId,
+    [property: JsonPropertyName("agentId")] string? AgentId,
+    [property: JsonPropertyName("idToken")] string? IdToken = null,
+    [property: JsonPropertyName("expiresAt")] double? ExpiresAt = null);
+
+public sealed record IdTokenRequest(
+    [property: JsonPropertyName("forceRefresh")] bool ForceRefresh = false);
+
+public sealed record IdTokenClaims(
+    [property: JsonPropertyName("shopId")] string? ShopId,
+    [property: JsonPropertyName("shopUserId")] string? ShopUserId,
+    [property: JsonPropertyName("role")] string? Role);
+
+/// <summary><c>expiresAt</c> is epoch milliseconds.</summary>
+public sealed record IdTokenResult(
+    [property: JsonPropertyName("signedIn")] bool SignedIn,
+    [property: JsonPropertyName("idToken")] string? IdToken = null,
+    [property: JsonPropertyName("expiresAt")] long? ExpiresAt = null,
+    [property: JsonPropertyName("claims")] IdTokenClaims? Claims = null);
+
+public sealed record BoardChangedNotification(
+    [property: JsonPropertyName("boardAt")] long BoardAt);
+
+public sealed record OrdersAttentionNotification(
+    [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("orderId")] string OrderId,
+    [property: JsonPropertyName("orderNumber")] string? OrderNumber);
+
+public static class DoorbellStates
+{
+    public const string Connected = "connected";
+    public const string Connecting = "connecting";
+    public const string Polling = "polling";
+    public const string Offline = "offline";
+}
+
+public static class TokenStates
+{
+    public const string Valid = "valid";
+    public const string Refreshing = "refreshing";
+    public const string Invalid = "invalid";
+
+    /// <summary>No session: never signed in on this PC, or signed out.</summary>
+    public const string None = "none";
+}
+
+/// <summary><c>lastSyncAt</c> is epoch milliseconds.</summary>
+public sealed record CloudStateNotification(
+    [property: JsonPropertyName("doorbell")] string Doorbell,
+    [property: JsonPropertyName("token")] string Token,
+    [property: JsonPropertyName("pendingReports")] int PendingReports,
+    [property: JsonPropertyName("lastSyncAt")] long? LastSyncAt = null,
+    [property: JsonPropertyName("lastError")] string? LastError = null);
 
 public sealed record HostIdentityDto(
     [property: JsonPropertyName("deviceIdentifier")] string DeviceIdentifier,

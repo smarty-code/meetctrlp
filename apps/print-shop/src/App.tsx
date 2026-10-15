@@ -12,6 +12,7 @@ import { cn } from "@ctrlp/ui/utils"
 import { ClipboardList, FileText, LayoutDashboard, Printer, Settings } from "lucide-react"
 
 import {
+  agentNotify,
   clearStoredRefreshToken,
   cancelJob,
   exportAgentLog,
@@ -28,7 +29,6 @@ import {
   refreshPrinters,
   retryJob,
   storeRefreshToken,
-  storeAgentCloudCredential,
   waitForAgent,
 } from "./lib/agent"
 import {
@@ -186,14 +186,20 @@ export default function App() {
       const identity = await getHostIdentity()
       setHostName(identity.hostname)
       const registered = await registerDevice(token, identity)
-      if (registered.agentCredential) {
-        await storeAgentCloudCredential({
+      // The agent calls the API with this user's ID token (no device key) and listens to the
+      // shop's doorbell. P2-06 moves these to boot and agent:ready (implementation plan 8.3).
+      await agentNotify({
+        method: "cloud.configure",
+        params: {
           serverBaseUrl,
-          shopId,
-          agentId: registered.deviceId,
-          credential: registered.agentCredential,
-        })
-      }
+          firebaseApiKey: import.meta.env.VITE_FIREBASE_API_KEY ?? "",
+          databaseUrl: import.meta.env.VITE_FIREBASE_DATABASE_URL ?? "",
+        },
+      })
+      await agentNotify({
+        method: "cloud.session",
+        params: { shopId, agentId: registered.deviceId, idToken: token },
+      })
       setDeviceId(registered.deviceId)
       setCloud("connected")
       setCloudMessage(null)
