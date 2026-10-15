@@ -8,7 +8,7 @@ Firebase Admin remains the source for token verification and user admin. Passwor
 
 ## Configuration
 
-Copy `.env.example` into the consuming server app's environment. Never commit populated environment files or credentials.
+Copy `.env.example` into the consuming server app's environment (env files may be committed; see repo root `.gitignore`).
 
 Prefer `FIREBASE_SERVICE_ACCOUNT_BASE64`. Fall back to discrete Admin fields, or Application Default Credentials when none are set:
 

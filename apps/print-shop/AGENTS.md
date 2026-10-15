@@ -44,7 +44,8 @@ From repo root:
 ```powershell
 pnpm desktop:setup
 pnpm desktop:dev      # sidecar + tauri dev (injects cargo/dotnet/MSVC onto PATH)
-pnpm desktop:build    # NSIS installer
+pnpm desktop:prod     # same, but Vite loads apps/print-shop/.env.production (production API)
+pnpm desktop:build    # NSIS installer (uses .env.production)
 pnpm shop:test
 pnpm shop:typecheck
 ```

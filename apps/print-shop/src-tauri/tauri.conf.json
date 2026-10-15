@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "in.meetctrlp.printshop",
   "build": {
-    "beforeDevCommand": "node scripts/publish-sidecar.mjs && pnpm dev",
+    "beforeDevCommand": "node scripts/publish-sidecar.mjs && node scripts/vite-tauri-dev.mjs",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "node scripts/publish-sidecar.mjs && pnpm build",
     "frontendDist": "../dist"

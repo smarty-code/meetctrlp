@@ -34,6 +34,7 @@
     "desktop:setup": "powershell -ExecutionPolicy Bypass -File ./scripts/desktop-setup.ps1",
     "desktop:sidecar": "pnpm --filter print-shop sidecar",
     "desktop:dev": "pnpm --filter print-shop tauri:dev",
+    "desktop:prod": "pnpm --filter print-shop tauri:dev:prod",
     "desktop:build": "pnpm --filter print-shop tauri:build",
     "desktop:test": "pnpm agent:test && pnpm shop:test",
     "desktop:typecheck": "pnpm shop:typecheck",

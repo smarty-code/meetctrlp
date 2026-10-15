@@ -1,5 +1,0 @@
-target/
-gen/
-WixTools/
-.sidecar-publish/
-binaries/*.exe

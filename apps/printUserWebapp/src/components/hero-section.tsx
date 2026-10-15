@@ -17,7 +17,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
       {/* 1. Fluid Background image: spans full viewport width */}
       <div className="pointer-events-none absolute inset-0 z-0 h-full w-full">
         <img
-          src="/assets/hero-bg.png"
+          src="https://res.cloudinary.com/dtczitxk5/image/upload/v1792095790/hero-bg_o3n6rv.avif"
           alt=""
           className="block h-full w-full object-cover object-top"
         />
@@ -44,7 +44,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
           {/* Covered Printer Image */}
           <div className="relative z-10 w-[265px] sm:w-[340px] md:w-[410px] lg:w-[470px]">
             <img
-              src="/assets/printer.png"
+              src="https://res.cloudinary.com/dtczitxk5/image/upload/v1792095791/printer_ryez7r.avif"
               alt="CtrlP Printer"
               className="pointer-events-none h-auto w-full object-contain drop-shadow-[0_8px_18px_rgba(4,44,96,0.16)]"
             />
@@ -53,7 +53,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
           {/* Blue Scissors with Orange paper note on bottom-left */}
           <div className="pointer-events-none absolute bottom-1 left-1 z-20 w-[96px] sm:bottom-2 sm:left-3 sm:w-[125px] md:left-4 md:w-[150px] lg:w-[170px]">
             <img
-              src="/assets/scissors.png"
+              src="https://res.cloudinary.com/dtczitxk5/image/upload/v1792095791/scissors_sjx7ft.avif"
               alt="Craft scissors"
               className="h-auto w-full -rotate-6 transform object-contain drop-shadow-xs"
             />

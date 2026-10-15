@@ -1,11 +1,25 @@
+# =============================================================================
+# Monorepo-wide ignore rules (single source of truth — do not add per-app .gitignore)
+#
+# Environment files (.env, .env.local, .env.production, .env.vercel-upload,
+# .dev.vars, etc.) are intentionally NOT listed here so they can be committed.
+# =============================================================================
+
 # Dependencies
 node_modules/
 .pnpm-store/
 .pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
 
 # Turbo / build caches
 .turbo/
 .cache/
+
+# Build outputs
 dist/
 build/
 out/
@@ -13,6 +27,9 @@ coverage/
 .next/
 .nuxt/
 .output/
+.open-next/
+
+# Deploy / edge tooling
 .vercel/
 .wrangler/
 
@@ -23,8 +40,6 @@ npm-debug.log*
 pnpm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-
-
 
 # OS / editor
 .DS_Store
@@ -40,6 +55,9 @@ Thumbs.db
 # TypeScript / tooling
 *.tsbuildinfo
 
+# TLS keys (not app env)
+*.pem
+
 # Graphify local knowledge graph
 graphify-out/
 
@@ -48,14 +66,25 @@ tmp/
 temp/
 uploads/
 login.json
+apps/server/data/print-jobs/
 
-# .NET / Tauri desktop
+# .NET / Visual Studio
 .vs/
 *.user
 apps/print-agent/**/bin/
 apps/print-agent/**/obj/
+
+# Tauri / print-shop desktop
 apps/print-shop/src-tauri/target/
 apps/print-shop/src-tauri/gen/
 apps/print-shop/src-tauri/.sidecar-publish/
+apps/print-shop/src-tauri/WixTools/
 apps/print-shop/src-tauri/binaries/*.exe
+
+# Spikes (doorbell experiment)
 spikes/doorbell/*
+spikes/doorbell/listener/bin/
+spikes/doorbell/listener/obj/
+spikes/doorbell/listener/publish/
+spikes/doorbell/shop-kit/
+spikes/doorbell/shop-kit.zip

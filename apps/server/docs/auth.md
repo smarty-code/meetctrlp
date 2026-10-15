@@ -10,7 +10,7 @@ Package docs:
 
 ## Environment
 
-Fill `apps/server/.env.local` (gitignored). Do not commit secrets.
+Fill `apps/server/.env.local` (or commit env files; see root `.gitignore`).
 
 ```env
 FIREBASE_SERVICE_ACCOUNT_BASE64=

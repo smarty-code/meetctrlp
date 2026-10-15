@@ -2,7 +2,7 @@
 
 Every variable each app reads, in blocks you can paste whole. Replace each `<…>` and nothing else. How to deploy is in [`apps/server/docs/deployment.md`](../../apps/server/docs/deployment.md): the API runs on **Vercel**, the customer web app on **Firebase App Hosting**, and the desktop is an installer.
 
-**Never commit a filled-in `.env*` file.** Real values go in local, untracked files (`.env.local`, `.env.production`), in Vercel's environment variables, or in App Hosting secrets. The `apphosting.yaml` block below holds only plain values and a secret **name**, so it's safe to commit.
+**Environment files** may live in the repo (see root `.gitignore`) or only on hosts (Vercel, App Hosting secrets). The `apphosting.yaml` block below holds plain values and a secret **name** for Firebase-hosted rollouts.
 
 Values used below:
 

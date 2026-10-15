@@ -6,6 +6,7 @@
   "description": "CtrlP Print Shop Tauri UI",
   "scripts": {
     "dev": "vite",
+    "dev:prod": "vite --mode production",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
@@ -15,6 +16,7 @@
     "sidecar": "node scripts/publish-sidecar.mjs",
     "tauri": "node scripts/run-with-toolchain.mjs",
     "tauri:dev": "node scripts/run-with-toolchain.mjs dev",
+    "tauri:dev:prod": "node scripts/run-with-toolchain.mjs dev --prod",
     "tauri:build": "node scripts/run-with-toolchain.mjs build"
   },
   "dependencies": {

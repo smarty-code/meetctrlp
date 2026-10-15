@@ -68,7 +68,14 @@ if (!fs.existsSync(tauriBin)) {
   process.exit(1)
 }
 
-const child = spawn(tauriBin, process.argv.slice(2), {
+const tauriArgs = process.argv.slice(2)
+if (tauriArgs[0] === "dev" && tauriArgs.includes("--prod")) {
+  process.env.TAURI_ENV_PROD = "1"
+  const prodIndex = tauriArgs.indexOf("--prod")
+  tauriArgs.splice(prodIndex, 1)
+}
+
+const child = spawn(tauriBin, tauriArgs, {
   cwd: shopRoot,
   env: process.env,
   stdio: "inherit",

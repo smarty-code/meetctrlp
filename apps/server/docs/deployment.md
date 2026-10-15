@@ -8,7 +8,7 @@ Where each part runs:
 | Customer web app (`apps/printUserWebapp`) | **Firebase App Hosting** | backend `ctrlp-web` in `meetctrlp` | `apps/printUserWebapp` | [`apps/printUserWebapp/apphosting.yaml`](../../printUserWebapp/apphosting.yaml) |
 | Database, auth, doorbell, rules | **Firebase** | project `meetctrlp` | — | [`firebase.json`](../../../firebase.json), `packages/firebase/*.rules*`, `firestore.indexes.json` |
 | File storage | **Railway** (S3-compatible) | the existing bucket | — | — |
-| Shop desktop | Installer on each shop PC | — | `apps/print-shop` | `apps/print-shop/.env.production` (local, not committed) |
+| Shop desktop | Installer on each shop PC | — | `apps/print-shop` | `apps/print-shop/.env.production` |
 
 Every environment variable, as copy-paste blocks for each part, is in [`docs/deploy/ENVIRONMENT.md`](../../../docs/deploy/ENVIRONMENT.md).
 
@@ -26,15 +26,9 @@ Run the commands from the repo root. The Firebase CLI is a dev dependency of the
 
 1. **Firebase service account:** Google Cloud Console → IAM & Admin → Service Accounts → the `firebase-adminsdk-…` account → Keys. Create a new JSON key, then delete the old key (the one whose ID matches `private_key_id` in the leaked value).
 2. **Railway S3 key:** in Railway, create a new access key for the bucket and delete the old one.
-3. **Untrack the files** (they stay on your disk):
+3. Update committed env files under `apps/server/` (if you track them), your local copies, and Vercel (step 5) with the new credentials. Old values remain in git history until you rotate; rotation is what makes leaked keys useless.
 
-   ```bash
-   git rm --cached apps/server/.env apps/server/.env.local
-   ```
-
-   `apps/server/.gitignore` already lists both, so once untracked they stay out of git. Commit the removal. The old values remain in git history; rotation is what makes them useless.
-
-4. Put the new values in your local `apps/server/.env.local` (template in the env sheet, section 1.1) and in Vercel (step 5).
+4. Put the new values in `apps/server/.env.local` (template in the env sheet, section 1.1) and in Vercel (step 5).
 
 ## Step 1. Accounts and tools
 
