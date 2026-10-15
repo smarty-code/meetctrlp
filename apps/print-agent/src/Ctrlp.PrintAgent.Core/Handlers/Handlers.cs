@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Ctrlp.PrintAgent.Contracts;
+using Ctrlp.PrintAgent.Core.Cloud;
 using Ctrlp.PrintAgent.Ipc;
 
 namespace Ctrlp.PrintAgent.Core.Handlers;
@@ -351,46 +352,142 @@ internal sealed class SecretsClearHandler : RpcHandler<object, OkResponse>
     }
 }
 
-internal sealed class SecretsSetAgentCloudCredentialHandler : RpcHandler<AgentCloudCredentialRequest, OkResponse>
+// The cloud.* notifications only update in-memory state and hand off to the cloud services: the pipe
+// handles frames one after another, so they must return at once.
+
+internal sealed class CloudConfigureHandler : RpcHandler<CloudConfigureRequest, OkResponse>
 {
-    private readonly AgentRuntime _runtime;
+    private readonly AgentCloud _cloud;
 
-    public SecretsSetAgentCloudCredentialHandler(AgentRuntime runtime) => _runtime = runtime;
+    public CloudConfigureHandler(AgentCloud cloud) => _cloud = cloud;
 
-    public override string Method => RpcMethods.SecretsSetAgentCloudCredential;
+    public override string Method => RpcMethods.CloudConfigure;
 
-    protected override OkResponse Handle(AgentCloudCredentialRequest? request, RpcContext context)
+    protected override OkResponse Handle(CloudConfigureRequest? request, RpcContext context)
     {
-        if (request is null || !Uri.TryCreate(request.ServerBaseUrl, UriKind.Absolute, out _) ||
-            string.IsNullOrWhiteSpace(request.ShopId) || string.IsNullOrWhiteSpace(request.AgentId) ||
-            string.IsNullOrWhiteSpace(request.Credential))
+        if (request is null || !Uri.TryCreate(request.ServerBaseUrl, UriKind.Absolute, out _))
         {
-            throw RpcException.InvalidParams("valid agent cloud credentials are required");
+            throw RpcException.InvalidParams("serverBaseUrl is required");
         }
 
-        _runtime.Secrets.SetAgentCloudCredential(new(
-            request.ServerBaseUrl.TrimEnd('/'),
-            request.ShopId,
-            request.AgentId,
-            request.Credential));
-        AgentTrace.Write($"secrets.setAgentCloudCredential agentId={request.AgentId}");
+        var databaseUrl = request.DatabaseUrl?.Trim().TrimEnd('/') ?? "";
+        if (databaseUrl.Length > 0 && !Uri.TryCreate(databaseUrl, UriKind.Absolute, out _))
+        {
+            throw RpcException.InvalidParams("databaseUrl must be an absolute URL");
+        }
+
+        var apiKey = request.FirebaseApiKey?.Trim() ?? "";
+        _cloud.Context.Configure(new CloudConfig(request.ServerBaseUrl!.TrimEnd('/'), apiKey, databaseUrl));
+        AgentTrace.Write(
+            $"cloud.configure server={request.ServerBaseUrl} database={(databaseUrl.Length > 0 ? new Uri(databaseUrl).Host : "(none)")} apiKey={(apiKey.Length > 0 ? "present" : "missing")}");
+        _cloud.Status.Republish();
         return new(true);
     }
 }
 
-internal sealed class SecretsClearAgentCloudCredentialHandler : RpcHandler<object, OkResponse>
+internal sealed class CloudSessionHandler : RpcHandler<CloudSessionRequest, OkResponse>
 {
-    private readonly AgentRuntime _runtime;
+    private readonly AgentCloud _cloud;
 
-    public SecretsClearAgentCloudCredentialHandler(AgentRuntime runtime) => _runtime = runtime;
+    public CloudSessionHandler(AgentCloud cloud) => _cloud = cloud;
 
-    public override string Method => RpcMethods.SecretsClearAgentCloudCredential;
+    public override string Method => RpcMethods.CloudSession;
+
+    protected override OkResponse Handle(CloudSessionRequest? request, RpcContext context)
+    {
+        if (request is null || string.IsNullOrWhiteSpace(request.ShopId) || string.IsNullOrWhiteSpace(request.AgentId))
+        {
+            throw RpcException.InvalidParams("shopId and agentId are required");
+        }
+
+        // Seed first, so the doorbell's first connection uses the login's token instead of refreshing.
+        if (!string.IsNullOrWhiteSpace(request.IdToken))
+        {
+            _cloud.Tokens.Seed(
+                request.IdToken,
+                request.ExpiresAt is { } expiresAt ? DateTimeOffset.FromUnixTimeMilliseconds((long)expiresAt) : null);
+        }
+
+        _cloud.Context.SetSession(new CloudSession(request.ShopId, request.AgentId));
+        _cloud.Sync.Signal("session");
+        _cloud.Status.Republish();
+        AgentTrace.Write($"cloud.session shopId={request.ShopId} agentId={request.AgentId} seeded={!string.IsNullOrWhiteSpace(request.IdToken)}");
+        return new(true);
+    }
+}
+
+internal sealed class CloudClearHandler : RpcHandler<object, OkResponse>
+{
+    private readonly AgentCloud _cloud;
+
+    public CloudClearHandler(AgentCloud cloud) => _cloud = cloud;
+
+    public override string Method => RpcMethods.CloudClear;
 
     protected override OkResponse Handle(object? request, RpcContext context)
     {
-        _runtime.Secrets.ClearAgentCloudCredential();
-        AgentTrace.Write("secrets.clearAgentCloudCredential");
+        _cloud.Context.ClearSession();
+        _cloud.Tokens.Clear();
+        AgentTrace.Write("cloud.clear");
         return new(true);
+    }
+}
+
+internal sealed class SyncRequestHandler : RpcHandler<object, OkResponse>
+{
+    private readonly AgentCloud _cloud;
+
+    public SyncRequestHandler(AgentCloud cloud) => _cloud = cloud;
+
+    public override string Method => RpcMethods.SyncRequest;
+
+    protected override OkResponse Handle(object? request, RpcContext context)
+    {
+        _cloud.Sync.Signal("request");
+        return new(true);
+    }
+}
+
+/// <summary>
+/// The UI's bearer token for each API call. The cached token comes back at once; otherwise this waits for the
+/// single-flight refresh, up to 10 s. <c>signedIn: false</c> means show the login screen.
+/// </summary>
+internal sealed class CloudGetIdTokenHandler : IRpcHandler
+{
+    private static readonly TimeSpan RefreshTimeout = TimeSpan.FromSeconds(10);
+    private readonly AgentCloud _cloud;
+
+    public CloudGetIdTokenHandler(AgentCloud cloud) => _cloud = cloud;
+
+    public string Method => RpcMethods.CloudGetIdToken;
+
+    public async Task<JsonElement> HandleAsync(JsonElement? @params, RpcContext context, CancellationToken cancellationToken)
+    {
+        var request = AgentJson.FromElement<IdTokenRequest>(@params) ?? new IdTokenRequest();
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(RefreshTimeout);
+        IdTokenSnapshot? token;
+        try
+        {
+            token = await _cloud.Tokens.GetAsync(request.ForceRefresh, timeout.Token).ConfigureAwait(false);
+        }
+        catch (TokenInvalidException)
+        {
+            token = null;
+        }
+        catch (TokenUnavailableException exception)
+        {
+            throw new RpcException(RpcErrorCodes.NotReady, exception.Message);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new RpcException(RpcErrorCodes.NotReady, "Token refresh timed out.");
+        }
+
+        var result = token is null
+            ? new IdTokenResult(SignedIn: false)
+            : new IdTokenResult(true, token.IdToken, token.ExpiresAt.ToUnixTimeMilliseconds(), token.Claims);
+        return AgentJson.ToElement(result);
     }
 }
 

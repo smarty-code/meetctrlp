@@ -3,7 +3,8 @@ use super::log;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, UserAttentionType};
+use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_shell::process::CommandChild;
 use tokio::io::{split, ReadHalf, WriteHalf};
 use tokio::sync::{oneshot, Mutex};
@@ -163,6 +164,45 @@ impl AgentBridge {
         result
     }
 
+    /// One-way JSON-RPC frame (no `id`, so the agent sends no reply). Takes only the `inner` mutex,
+    /// which guards the writer, never `call_lock`, which a pending `call` holds for up to 20 s.
+    /// A silent no-op until the bridge is ready: the UI sends its notifications again on `agent:ready`.
+    pub async fn notify(&self, method: &str, params: Value) -> Result<(), String> {
+        let mut guard = self.inner.lock().await;
+        let BridgeState::Ready(ready) = &mut *guard else {
+            log::write(
+                "rpc",
+                format!("notify skipped method={method}: agent not ready"),
+            );
+            return Ok(());
+        };
+        let frame = json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+        });
+        let payload = serde_json::to_vec(&frame).map_err(|err| err.to_string())?;
+        framing::write_frame(&mut ready.writer, &payload)
+            .await
+            .map_err(|err| {
+                let message = err.to_string();
+                log::write(
+                    "rpc",
+                    format!("notify write-fail method={method} error={message}"),
+                );
+                message
+            })?;
+        log::write(
+            "rpc",
+            format!(
+                "notify method={method} bytes={} params={}",
+                payload.len(),
+                redact_params(method, &params)
+            ),
+        );
+        Ok(())
+    }
+
     pub async fn become_ready(
         &self,
         child: CommandChild,
@@ -176,6 +216,12 @@ impl AgentBridge {
             pending: HashMap::new(),
             _child: child,
         });
+
+        // The bridge never reconnects, so this fires once per app start. The UI answers it with
+        // cloud.configure and cloud.session.
+        if let Err(error) = app.emit("agent:ready", json!({})) {
+            log::write("bridge", format!("agent:ready emit failed: {error}"));
+        }
 
         tauri::async_runtime::spawn(async move {
             read_loop(reader, app).await;
@@ -223,12 +269,49 @@ async fn read_loop(mut reader: ReadHalf<PipeStream>, app: AppHandle) {
                     log::write("bridge", format!("orphan response id={id}"));
                 }
             }
-        } else if value.get("method").is_some() {
+        } else if let Some(method) = value.get("method").and_then(Value::as_str) {
             log::write("bridge", format!("event {}", value));
+            if method == "orders.attention" {
+                // Raised here in Rust, because a minimized web view is throttled and may not run JS.
+                raise_attention(&app, value.get("params"));
+            }
             let _ = app.emit("agent:event", value);
         } else {
             log::write("bridge", format!("ignored frame {value}"));
         }
+    }
+}
+
+/// A Windows notification ("New order ORD-1234") plus a taskbar flash for `orders.attention`.
+fn raise_attention(app: &AppHandle, params: Option<&Value>) {
+    let text = |key: &str| params.and_then(|p| p.get(key)).and_then(Value::as_str);
+    let label = text("orderNumber")
+        .or_else(|| text("orderId"))
+        .unwrap_or_default();
+    let title = match text("type") {
+        Some("order_paid") => format!("Paid order {label}"),
+        _ => format!("New order {label}"),
+    };
+
+    if let Err(error) = app
+        .notification()
+        .builder()
+        .title(title.trim_end())
+        .body("Open CtrlP Print Shop to review it.")
+        .show()
+    {
+        log::write("bridge", format!("attention notification failed: {error}"));
+    }
+
+    match app.get_webview_window("main") {
+        Some(window) => {
+            if let Err(error) =
+                window.request_user_attention(Some(UserAttentionType::Informational))
+            {
+                log::write("bridge", format!("attention flash failed: {error}"));
+            }
+        }
+        None => log::write("bridge", "attention flash skipped: no main window"),
     }
 }
 
@@ -306,12 +389,22 @@ pub fn split_pipe(stream: PipeStream) -> (ReadHalf<PipeStream>, WriteHalf<PipeSt
 fn is_quiet_rpc(method: &str) -> bool {
     matches!(
         method,
-        "agent.status" | "agent.ping" | "printers.list" | "host.telemetry" | "jobs.list"
+        "agent.status"
+            | "agent.ping"
+            | "printers.list"
+            | "host.telemetry"
+            | "jobs.list"
+            | "cloud.getIdToken"
     )
 }
 
+/// Methods whose params or results carry a refresh token or an ID token.
+fn carries_secrets(method: &str) -> bool {
+    method.starts_with("secrets.") || method == "cloud.session" || method == "cloud.getIdToken"
+}
+
 fn redact_params(method: &str, params: &Value) -> String {
-    if method.starts_with("secrets.") {
+    if carries_secrets(method) {
         "{redacted}".to_string()
     } else {
         params.to_string()
@@ -319,7 +412,7 @@ fn redact_params(method: &str, params: &Value) -> String {
 }
 
 fn summarize_rpc_value(method: &str, value: &Value) -> String {
-    if method.starts_with("secrets.") {
+    if carries_secrets(method) {
         return "{redacted}".to_string();
     }
     if let Some(printers) = value.get("printers").and_then(Value::as_array) {

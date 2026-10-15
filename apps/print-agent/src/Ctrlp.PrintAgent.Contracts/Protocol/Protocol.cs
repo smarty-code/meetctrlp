@@ -28,11 +28,16 @@ public static class RpcMethods
     public const string SecretsGetRefreshToken = "secrets.getRefreshToken";
     public const string SecretsSetRefreshToken = "secrets.setRefreshToken";
     public const string SecretsClearRefreshToken = "secrets.clearRefreshToken";
-    public const string SecretsSetAgentCloudCredential = "secrets.setAgentCloudCredential";
-    public const string SecretsClearAgentCloudCredential = "secrets.clearAgentCloudCredential";
     public const string HostIdentity = "host.identity";
     public const string HostTelemetry = "host.telemetry";
     public const string HostExportLog = "host.exportLog";
+
+    // Notifications from the UI (no id, no response), except cloud.getIdToken.
+    public const string CloudConfigure = "cloud.configure";
+    public const string CloudSession = "cloud.session";
+    public const string CloudClear = "cloud.clear";
+    public const string SyncRequest = "sync.request";
+    public const string CloudGetIdToken = "cloud.getIdToken";
 }
 
 public static class RpcNotifications
@@ -47,6 +52,9 @@ public static class RpcNotifications
     public const string JobCompleted = "job.completed";
     public const string JobFailed = "job.failed";
     public const string QueueChanged = "queue.changed";
+    public const string BoardChanged = "board.changed";
+    public const string OrdersAttention = "orders.attention";
+    public const string CloudState = "cloud.state";
 }
 
 public static class RpcErrorCodes

@@ -1,4 +1,5 @@
 using Ctrlp.PrintAgent.Contracts;
+using Ctrlp.PrintAgent.Core.Cloud;
 using Ctrlp.PrintAgent.Ipc;
 
 namespace Ctrlp.PrintAgent.Core;
@@ -23,13 +24,15 @@ public sealed class AgentRuntime
         IPrinterCatalog printers,
         IJobStore jobs,
         ISecretStore? secrets = null,
-        IHostIdentity? host = null)
+        IHostIdentity? host = null,
+        AgentCloud? cloud = null)
     {
         Options = options;
         Printers = printers;
         Jobs = jobs;
         Secrets = secrets ?? new MemorySecretStore();
         Host = host ?? new FallbackHostIdentity(options);
+        Cloud = cloud ?? AgentCloud.CreateDetached(Secrets);
         State = AgentRunState.Starting;
     }
 
@@ -38,6 +41,7 @@ public sealed class AgentRuntime
     public IJobStore Jobs { get; }
     public ISecretStore Secrets { get; }
     public IHostIdentity Host { get; }
+    public AgentCloud Cloud { get; }
     public AgentRunState State { get; private set; }
     public CancellationToken ShutdownToken => _shutdown.Token;
 
@@ -85,8 +89,11 @@ public sealed class AgentRuntime
         dispatcher.Register(new Handlers.SecretsGetHandler(this));
         dispatcher.Register(new Handlers.SecretsSetHandler(this));
         dispatcher.Register(new Handlers.SecretsClearHandler(this));
-        dispatcher.Register(new Handlers.SecretsSetAgentCloudCredentialHandler(this));
-        dispatcher.Register(new Handlers.SecretsClearAgentCloudCredentialHandler(this));
+        dispatcher.Register(new Handlers.CloudConfigureHandler(Cloud));
+        dispatcher.Register(new Handlers.CloudSessionHandler(Cloud));
+        dispatcher.Register(new Handlers.CloudClearHandler(Cloud));
+        dispatcher.Register(new Handlers.SyncRequestHandler(Cloud));
+        dispatcher.Register(new Handlers.CloudGetIdTokenHandler(Cloud));
         dispatcher.Register(new Handlers.HostIdentityHandler(this));
         dispatcher.Register(new Handlers.HostTelemetryHandler(this));
         dispatcher.Register(new Handlers.HostExportLogHandler());

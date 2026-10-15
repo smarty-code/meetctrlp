@@ -13,7 +13,16 @@ pub async fn boot(app: AppHandle) -> Result<(), String> {
         "boot",
         format!("start pipe={pipe} tokenLen={}", token.len()),
     );
-    let args = ["--pipe", pipe.as_str(), "--token", token.as_str()];
+    // The agent watches this process and shuts down (marking the PC offline) when the app exits.
+    let parent_pid = std::process::id().to_string();
+    let args = [
+        "--pipe",
+        pipe.as_str(),
+        "--token",
+        token.as_str(),
+        "--parent-pid",
+        parent_pid.as_str(),
+    ];
 
     // Tauri copies externalBin next to the app EXE as `ctrlp-print-agent.exe`.
     // `sidecar("binaries/...")` looks under target/debug/binaries, which `tauri dev` does not create.

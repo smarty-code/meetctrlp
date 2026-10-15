@@ -2,35 +2,44 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Ctrlp.PrintAgent.Contracts;
+using Ctrlp.PrintAgent.Core.Cloud;
 
 namespace Ctrlp.PrintAgent.Core;
 
 /// <summary>
 /// Pulls only jobs assigned to this machine, stages their documents privately, and
-/// mirrors local execution state back to the server. The device credential is scoped
-/// to its shop/agent and never appears in SQLite or diagnostic logs.
+/// mirrors local execution state back to the server, as the signed-in shop user.
+/// Interim: AgentSyncService and ReportOutbox (implementation plan 10.4, 10.5) replace
+/// this poll loop once the server's sync and report endpoints exist. Until then the
+/// doorbell and <c>sync.request</c> only cut its wait short.
 /// </summary>
-public sealed class AgentCloudSynchronizer
+public sealed class AgentCloudSynchronizer : ISyncTrigger
 {
     private readonly IJobStore _jobs;
-    private readonly ISecretStore _secrets;
-    private readonly HttpClient _http;
+    private readonly AgentCloudContext _context;
+    private readonly CloudApiClient _api;
+    private readonly HttpClient _download;
     private readonly string _stagingRoot;
     private readonly Action<string>? _log;
+    private readonly AsyncSignal _signal = new();
 
     public AgentCloudSynchronizer(
         IJobStore jobs,
-        ISecretStore secrets,
+        AgentCloudContext context,
+        CloudApiClient api,
         string stagingRoot,
-        HttpClient? http = null,
+        HttpClient? download = null,
         Action<string>? log = null)
     {
         _jobs = jobs;
-        _secrets = secrets;
+        _context = context;
+        _api = api;
         _stagingRoot = stagingRoot;
-        _http = http ?? new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        _download = download ?? new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
         _log = log;
     }
+
+    public void Signal(string reason) => _signal.Set();
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
@@ -56,7 +65,7 @@ public sealed class AgentCloudSynchronizer
                 : TimeSpan.FromSeconds(Math.Min(30, Math.Max(3, delay.TotalSeconds * 2)));
             try
             {
-                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+                await _signal.WaitAsync(delay, TimeProvider.System, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -67,8 +76,8 @@ public sealed class AgentCloudSynchronizer
 
     public async Task<bool> SynchronizeOnceAsync(CancellationToken cancellationToken)
     {
-        var credential = _secrets.GetAgentCloudCredential();
-        if (credential is null)
+        var credential = _context.Session;
+        if (credential is null || _context.Config is null)
         {
             return false;
         }
@@ -90,8 +99,7 @@ public sealed class AgentCloudSynchronizer
             }
         }
 
-        using var response = await SendAsync(
-            credential,
+        using var response = await _api.SendAsync(
             HttpMethod.Get,
             $"/api/v1/shops/{Uri.EscapeDataString(credential.ShopId)}/agents/{Uri.EscapeDataString(credential.AgentId)}/jobs?limit=10",
             null,
@@ -134,8 +142,8 @@ public sealed class AgentCloudSynchronizer
         {
             return;
         }
-        var credential = _secrets.GetAgentCloudCredential();
-        if (credential is null)
+        var credential = _context.Session;
+        if (credential is null || _context.Config is null)
         {
             return;
         }
@@ -156,8 +164,7 @@ public sealed class AgentCloudSynchronizer
             errorCode = status == "FAILED" ? "AGENT_EXECUTION_FAILED" : null,
             errorMessage = status == "FAILED" ? job.Error : null,
         });
-        using var response = await SendAsync(
-            credential,
+        using var response = await _api.SendAsync(
             HttpMethod.Patch,
             $"/api/v1/shops/{Uri.EscapeDataString(credential.ShopId)}/orders/{Uri.EscapeDataString(job.CloudOrderId)}/jobs/{Uri.EscapeDataString(job.CloudJobId)}",
             payload,
@@ -177,8 +184,7 @@ public sealed class AgentCloudSynchronizer
 
         if (status == "COMPLETED" && !string.IsNullOrWhiteSpace(job.CloudDocumentId))
         {
-            using var shred = await SendAsync(
-                credential,
+            using var shred = await _api.SendAsync(
                 HttpMethod.Post,
                 $"/api/v1/shops/{Uri.EscapeDataString(credential.ShopId)}/orders/{Uri.EscapeDataString(job.CloudOrderId!)}/documents/{Uri.EscapeDataString(job.CloudDocumentId)}/shred",
                 "{}",
@@ -194,7 +200,7 @@ public sealed class AgentCloudSynchronizer
     }
 
     private async Task StageAndEnqueueAsync(
-        AgentCloudCredential credential,
+        CloudSession credential,
         JsonElement remote,
         CancellationToken cancellationToken)
     {
@@ -212,8 +218,7 @@ public sealed class AgentCloudSynchronizer
             ? retryElement.GetInt32()
             : 0;
 
-        using var claim = await SendAsync(
-            credential,
+        using var claim = await _api.SendAsync(
             HttpMethod.Post,
             $"/api/v1/shops/{Uri.EscapeDataString(credential.ShopId)}/orders/{Uri.EscapeDataString(orderId)}/jobs/{Uri.EscapeDataString(jobId)}/claim",
             JsonSerializer.Serialize(new { agentId = credential.AgentId, idempotencyKey = $"agent-claim-{jobId}-{attempt}" }),
@@ -246,7 +251,7 @@ public sealed class AgentCloudSynchronizer
     }
 
     private async Task StageClaimedJobAsync(
-        AgentCloudCredential credential,
+        CloudSession credential,
         JsonElement remote,
         string jobId,
         string orderId,
@@ -255,8 +260,7 @@ public sealed class AgentCloudSynchronizer
         int attempt,
         CancellationToken cancellationToken)
     {
-        using var ticket = await SendAsync(
-            credential,
+        using var ticket = await _api.SendAsync(
             HttpMethod.Get,
             $"/api/v1/shops/{Uri.EscapeDataString(credential.ShopId)}/orders/{Uri.EscapeDataString(orderId)}/jobs/{Uri.EscapeDataString(jobId)}/document",
             null,
@@ -275,7 +279,7 @@ public sealed class AgentCloudSynchronizer
         var mimeType = Text(ticketJson.RootElement, "mimeType");
         var extension = mimeType == "image/png" ? ".png" : mimeType == "image/jpeg" ? ".jpg" : ".pdf";
         var stagedPath = Path.Combine(directory, $"document{extension}");
-        using var download = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        using var download = await _download.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
         download.EnsureSuccessStatusCode();
         await using (var source = await download.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false))
         await using (var destination = File.Create(stagedPath))
@@ -311,7 +315,7 @@ public sealed class AgentCloudSynchronizer
     }
 
     private async Task ReportStagingFailureAsync(
-        AgentCloudCredential credential,
+        CloudSession credential,
         string orderId,
         string jobId,
         int attempt,
@@ -328,8 +332,7 @@ public sealed class AgentCloudSynchronizer
                 // The server caps errorMessage at 500 characters.
                 errorMessage = reason.Length > 500 ? reason[..500] : reason,
             });
-            using var response = await SendAsync(
-                credential,
+            using var response = await _api.SendAsync(
                 HttpMethod.Patch,
                 $"/api/v1/shops/{Uri.EscapeDataString(credential.ShopId)}/orders/{Uri.EscapeDataString(orderId)}/jobs/{Uri.EscapeDataString(jobId)}",
                 payload,
@@ -343,23 +346,6 @@ public sealed class AgentCloudSynchronizer
         {
             _log?.Invoke($"cloud staging failure report failed: {exception.GetType().Name}: {exception.Message}");
         }
-    }
-
-    private Task<HttpResponseMessage> SendAsync(
-        AgentCloudCredential credential,
-        HttpMethod method,
-        string path,
-        string? body,
-        CancellationToken cancellationToken)
-    {
-        var request = new HttpRequestMessage(method, new Uri(new Uri(credential.ServerBaseUrl), path));
-        request.Headers.Add("x-ctrlp-agent-key", credential.Credential);
-        request.Headers.Add("x-ctrlp-agent-id", credential.AgentId);
-        if (body is not null)
-        {
-            request.Content = new StringContent(body, Encoding.UTF8, "application/json");
-        }
-        return _http.SendAsync(request, cancellationToken);
     }
 
     private static string? Text(JsonElement source, string property) =>

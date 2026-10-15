@@ -152,24 +152,41 @@ pub async fn set_refresh_token(
     .await
 }
 
+/// One-way messages the UI may send to the agent (implementation plan 9.2). Anything else is refused,
+/// so the web view can't reach other agent methods through this command.
+const NOTIFY_METHODS: &[&str] = &[
+    "cloud.configure",
+    "cloud.session",
+    "cloud.clear",
+    "sync.request",
+];
+
 #[tauri::command]
-pub async fn set_agent_cloud_credential(
+pub async fn agent_notify(
     bridge: State<'_, AgentBridge>,
-    server_base_url: String,
-    shop_id: String,
-    agent_id: String,
-    credential: String,
+    method: String,
+    params: Option<Value>,
+) -> Result<(), String> {
+    if !NOTIFY_METHODS.contains(&method.as_str()) {
+        log::write("command", format!("agent_notify refused method={method}"));
+        return Err(format!("{method} is not an agent notification"));
+    }
+    bridge
+        .notify(&method, params.unwrap_or_else(|| json!({})))
+        .await
+}
+
+/// The bearer token for an API call. The agent answers from its cache, or refreshes (single flight).
+#[tauri::command]
+pub async fn agent_get_id_token(
+    bridge: State<'_, AgentBridge>,
+    force_refresh: Option<bool>,
 ) -> Result<Value, String> {
     traced(
         &bridge,
-        "set_agent_cloud_credential",
-        "secrets.setAgentCloudCredential",
-        json!({
-            "serverBaseUrl": server_base_url,
-            "shopId": shop_id,
-            "agentId": agent_id,
-            "credential": credential,
-        }),
+        "agent_get_id_token",
+        "cloud.getIdToken",
+        json!({ "forceRefresh": force_refresh.unwrap_or(false) }),
     )
     .await
 }
@@ -201,6 +218,7 @@ const QUIET_COMMANDS: &[&str] = &[
     "agent_ping",
     "get_host_telemetry",
     "list_jobs",
+    "agent_get_id_token",
 ];
 
 fn is_quiet_command(command: &str) -> bool {

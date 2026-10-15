@@ -5,7 +5,8 @@ const SECRET_COMMANDS = new Set([
   "get_refresh_token",
   "set_refresh_token",
   "clear_refresh_token",
-  "set_agent_cloud_credential",
+  "agent_notify",
+  "agent_get_id_token",
 ])
 
 const QUIET_COMMANDS = new Set([
@@ -14,6 +15,7 @@ const QUIET_COMMANDS = new Set([
   "agent_ping",
   "get_host_telemetry",
   "list_jobs",
+  "agent_get_id_token",
 ])
 
 export function isTauriRuntime() {
@@ -108,13 +110,47 @@ export function storeRefreshToken(refreshToken: string) {
   return call<{ ok: boolean }>("set_refresh_token", { refreshToken })
 }
 
-export function storeAgentCloudCredential(input: {
-  serverBaseUrl: string
-  shopId: string
-  agentId: string
-  credential: string
-}) {
-  return call<{ ok: boolean }>("set_agent_cloud_credential", input)
+/** One-way messages to the agent; it sends no reply (implementation plan 9.2). */
+export type AgentNotification =
+  | {
+      method: "cloud.configure"
+      params: { serverBaseUrl: string; firebaseApiKey: string; databaseUrl: string }
+    }
+  | {
+      method: "cloud.session"
+      // expiresAt is epoch milliseconds; a login's ID token seeds the agent so it doesn't refresh at once.
+      params: { shopId: string; agentId: string; idToken?: string; expiresAt?: number }
+    }
+  | { method: "cloud.clear"; params?: Record<string, never> }
+  | { method: "sync.request"; params?: Record<string, never> }
+
+export function agentNotify(notification: AgentNotification) {
+  return call<void>("agent_notify", {
+    method: notification.method,
+    params: notification.params ?? {},
+  })
+}
+
+export type AgentIdToken = {
+  signedIn: boolean
+  idToken?: string
+  /** Epoch milliseconds. */
+  expiresAt?: number
+  claims?: { shopId?: string; shopUserId?: string; role?: string }
+}
+
+/** The API bearer token, cached and refreshed by the agent, which owns this PC's login. */
+export function getAgentIdToken(forceRefresh = false) {
+  return call<AgentIdToken>("agent_get_id_token", { forceRefresh })
+}
+
+/** From the agent's `cloud.state` notification. */
+export type AgentCloudState = {
+  doorbell: "connected" | "connecting" | "polling" | "offline"
+  token: "valid" | "refreshing" | "invalid" | "none"
+  pendingReports: number
+  lastSyncAt?: number
+  lastError?: string
 }
 
 export function clearStoredRefreshToken() {
@@ -153,4 +189,14 @@ export async function listenAgentEvents(onEvent: (payload: unknown) => void) {
 
   const { listen } = await import("@tauri-apps/api/event")
   return listen("agent:event", (event) => onEvent(event.payload))
+}
+
+/** Fires once per app start, when the bridge to the agent is up. Answer it with cloud.configure and cloud.session. */
+export async function listenAgentReady(onReady: () => void) {
+  if (!isTauriRuntime()) {
+    return () => undefined
+  }
+
+  const { listen } = await import("@tauri-apps/api/event")
+  return listen("agent:ready", () => onReady())
 }

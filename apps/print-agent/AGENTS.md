@@ -15,8 +15,9 @@ A long-running .NET 8 process that:
 2. Authenticates the UI with `agent.hello` + token.
 3. Discovers local printers (winspool + Print Schema/GDI) and caches capabilities.
 4. Persists local print work in `%LOCALAPPDATA%\Ctrlp\PrintAgent\queue.db` (SQLite WAL) and publishes job lifecycle notifications to the connected UI.
-5. Stores the shop refresh token and machine fingerprint for the UI.
-6. Runs detached from the desktop window with a stable per-user pipe and a single-instance lock.
+5. Stores the shop refresh token and machine fingerprint for the UI, and uses that refresh token itself: it owns the PC's Firebase login (`Core/Cloud/FirebaseTokenManager`) and hands the UI ID tokens (`cloud.getIdToken`).
+6. Listens to the shop's Realtime Database doorbell over plain HTTPS SSE (`Core/Cloud/DoorbellClient`); no Firebase SDK.
+7. Starts and stops with the desktop app (`--parent-pid`), with a stable per-user pipe and a single-instance lock. On the way out it closes the stream and marks the PC offline.
 
 Windows-only. Needs the .NET 8 SDK.
 
@@ -30,7 +31,7 @@ Ipc         framing, dispatcher, NamedPipeServerStream.
 Core        AgentRuntime + handlers + SQLite job journal + background worker.
 Windows     EnumPrinters, Print Schema/GDI catalog, Credential Manager, machine fingerprint.
 Host        Program, CLI, log file, parent watcher.
-Tests       framing + hello/auth/printers/jobs (no Host).
+Tests       framing + hello/auth/printers/jobs + cloud (SSE parser, token manager, doorbell, cloud.* handlers; fake clock and HttpMessageHandler). No Host.
 ```
 
 Do not reverse those dependencies.
@@ -84,7 +85,7 @@ Do **not**:
 
 - PDF/JPEG/PNG jobs are rendered through PDFium/GDI and submitted through `PrintDocument`; never send raw document bytes to `WritePrinter`. A successful submission is spool acceptance, not a physical-paper guarantee.
 - Restart recovery marks an ambiguous in-flight print as failed for an explicit operator retry; it never blindly duplicates output.
-- The agent stores a device-scoped cloud credential (not a Firebase token), claims only its assigned cloud jobs, stages/verifies them, reports lifecycle state, and acknowledges shred after a successful spool.
+- The agent calls the API as the signed-in shop user (`Authorization: Bearer <ID token>`, one refresh and retry on a 401); there is no device key any more. It claims only its assigned cloud jobs, stages/verifies them, reports lifecycle state, and acknowledges shred after a successful spool. That job loop is still the old poll (`AgentCloudSynchronizer`); the doorbell and `sync.request` only cut its wait short until `AgentSyncService` and `ReportOutbox` replace it (traffic scaling v2, P2-04).
 - Rules for the cloud sync loop (`src/Ctrlp.PrintAgent.Core/Cloud/AgentCloudSynchronizer.cs`). Keep them when changing it:
   - **Separate jobs:** an order has one cloud job per document. Stage each polled job in its own try/catch so one bad document never holds back its siblings.
   - **Failed staging:** if staging fails after a successful claim, report the job `FAILED` (`AGENT_STAGING_FAILED`). A claimed job left in `DISPATCHING` can't be retried from the shop.
