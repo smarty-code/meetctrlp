@@ -1,6 +1,7 @@
 # Traffic scaling v2: implementation plan
 
-> **Status:** Draft for engineering review, revision 2, 15 Oct 2026. No code has been written.
+> **Status:** Final, revision 3, 15 Oct 2026. **Approved for implementation.** No production code has been written yet.
+> **Revision 3:** the doorbell spike passed (3.2). This revision records its results and folds in what it found: a new polling-fallback rule and a 65 s watchdog (10.3), ring timeouts treated as "unknown" (6.9), and no second token refresh on `auth_revoked` (10.2). It also fixes problems found by re-reading the plan against the code; see the revision 3 rows in section 16. Field checks on shop networks are still open. They run alongside Phase 1 as P0-03 and must pass before the agent reaches shops, but they don't block coding.
 > **Revision 2:** the minimized-window test failed. A minimized WebView2 window doesn't deliver Firestore listener updates reliably. Everything time-critical now runs in the agent, which listens to a Realtime Database "doorbell" over its documented REST stream. The desktop window has no Firebase SDK.
 > **Design:** [`DESKTOP_TRAFFIC_SCALING_PLAN.md`](./DESKTOP_TRAFFIC_SCALING_PLAN.md) (version 2.1) explains *why*. This document covers *what changes where, in what order, and how we know it works*.
 > **Components:** `apps/server`, `apps/print-shop` (Tauri UI and Rust bridge), `apps/print-agent` (C#), `apps/printUserWebapp`, `packages/firebase`, `packages/schemas`, `packages/types`, Firebase project config.
@@ -8,11 +9,18 @@
 
 ---
 
-## How to review this
+## Before you start
 
-Check these first. Each one is expensive to change once Phase 2 starts.
+**Settled.** The design and the defaults in design doc section 14 are accepted. The doorbell spike passed on the dev PC (3.2). Start with Phase 1 (section 13).
 
-1. **The doorbell spike (section 3).** It proves that a plain HTTPS event stream to Realtime Database stays up on real shop networks, and measures its bandwidth.
+**Still open, and running in parallel:**
+
+- **P0-03, shop-network field checks.** Shop broadband, mobile hotspot, a PC with antivirus HTTPS scanning, a 40-minute cut, and sleep/resume, plus the bandwidth figure from the Firebase console. These must pass before the new agent goes to shops. If a network buffers the stream, the design doesn't change; that shop runs on the polling fallback (10.3).
+- **P0-04, spike clean-up.** The spike's test user and rules are still on project `meetctrlp`.
+
+These parts are expensive to change once Phase 2 starts. Read them before writing code:
+
+1. **The doorbell (sections 3, 6.9, 10.3).** Spike results and the reconnect rules that came out of them.
 2. **Auth (section 5):**
    - the agent owns the PC's Firebase login and refreshes ID tokens with Google's Secure Token API;
    - the desktop window asks the agent for a token;
@@ -65,7 +73,7 @@ Things found in the code that should be fixed regardless are in section 16.
                  Realtime Database  /doorbell/{shopId} = { boardAt, workAt, last }
                              │ REST stream (text/event-stream, ?auth=<ID token>), one per shop PC
                              ▼
-                 Print agent (Windows process; not throttled)
+                 Print agent (Windows process; not throttled; starts and stops with the desktop app)
                    ├─ token manager ── Secure Token API (Google) ── refresh token in Credential Manager
                    ├─ workAt changed ─▶ POST .../agents/{agentId}/sync ─▶ accepted orders + claimed jobs + URLs
                    ├─ download (Railway), print, POST .../agents/{agentId}/jobs/report
@@ -90,15 +98,15 @@ Things found in the code that should be fixed regardless are in section 16.
 | **Firebase project** | `firebase.json`, `.firebaserc`; Realtime Database instance (`asia-southeast1`); Firestore and Realtime Database rules; indexes; customer web app registration; budget alerts | — | Rule and index drafts in `packages/firebase/docs/` (moved, rewritten) |
 | **`packages/firebase`** | `firestore.rules`, `database.rules.json`, `firestore.indexes.json`, rules tests, `createCustomToken` and `getServiceAccessToken` helpers | — | — |
 | **`packages/schemas` / `types`** | Schemas for `sync`, `report`, `board`, history and search; `ShopPrincipal`; pipe message shapes | Session response gets `firebaseToken` | Heartbeat schema; per-job PATCH and claim schemas |
-| **Server: auth** | `ShopPrincipal`, local `verifyIdToken` | `requireShopUser` → `requireShopPrincipal`; registration fails if claims can't be set | Per-request `lookupIdToken` and `authLookups` reads |
+| **Server: auth** | `ShopPrincipal`, local `verifyIdToken` | `requireShopUser` → `requireShopPrincipal`; registration fails if claims can't be set and returns a token with claims; logout revokes only with `allDevices` | Per-request `lookupIdToken` and `authLookups` reads |
 | **Server: realtime (new module)** | `ringShop` (doorbell ring helper) | Called after commits in order, job and payment paths | — |
-| **Server: orders** | `orderTracking` copy, `searchKeys`, `completedDocumentIds`, single order-write helper, history and search endpoints | Lifecycle times; server-timestamp `updatedAt`; transitions idempotent by status; payment confirm no longer auto-accepts; accept takes `agentId` | `statusHistory`, transition idempotency docs, SSE stream, the old full `GET /orders` |
-| **Server: print jobs** | `syncAgent` (auto-accept and claim), `reportAgentJobs`, `board` endpoint, storage delete on COMPLETED | Routing prefers the caller's PC; retry clears the lease | Agent jobs list and fallback; per-job claim, PATCH, document and shred routes; job `PRINTING` |
+| **Server: orders** | `orderTracking` copy, `searchKeys`, `completedDocumentIds`, single order-write helper, history and search endpoints | Lifecycle times; transitions idempotent by status; payment confirm no longer auto-accepts and is idempotent by state; mock payment gated by env; accept takes `agentId` and doesn't re-queue on replay | `statusHistory`, transition idempotency docs, SSE stream, the old full `GET /orders` |
+| **Server: print jobs** | `syncAgent` (auto-accept, claim, re-deliver stuck jobs), `reportAgentJobs`, `board` endpoint, storage delete on COMPLETED | Routing prefers the caller's PC; retry clears the lease, re-routes properly, and can rescue QUEUED or stuck DISPATCHING jobs; one active job per document | Agent jobs list and fallback; per-job claim, PATCH, document and shred routes; job `PRINTING` |
 | **Server: devices** | `/devices/offline` marks this PC's printers OFFLINE | `registerShopDevice` issues no credential | Heartbeat route, `markStaleAgentsOffline`, `requireAgentCredential`, `apiKeyHash` |
 | **Server: print-user** | Signed session cookie; `firebaseToken` on session start | Read the session once per request; shop config cached 60 s | Per-minute session touch writes |
 | **Desktop UI** | `board.ts` (initial and delta), `order-history.ts`, visibility handling | API token comes from the agent; boot, login and sign-out; Orders screen data source; connection badge | Heartbeat, SSE client, full order list, token state, agent-credential hand-off |
-| **Rust bridge** | `notify()` (one-way frame), `agent_notify` and `agent_get_id_token` commands, native notifications (`tauri-plugin-notification`), `agent:ready` event | — | `set_agent_cloud_credential` |
-| **Print agent** | `FirebaseTokenManager`, `DoorbellClient` (SSE, watchdog, polling fallback), `AgentSyncService`, `ReportOutbox`, handlers for `cloud.*` and `sync.request` | SQLite gains report-state and shop columns; separate download client | Poll loop, per-job routes, agent API key and its Credential Manager entry |
+| **Rust bridge** | `notify()` (one-way frame), `agent_notify` and `agent_get_id_token` commands, native notifications (`tauri-plugin-notification`), `agent:ready` event | Sidecar gets `--parent-pid`, so the agent exits with the app | `set_agent_cloud_credential` |
+| **Print agent** | `FirebaseTokenManager`, `DoorbellClient` (SSE, watchdog, polling fallback), `AgentSyncService`, `ReportOutbox`, handlers for `cloud.*` and `sync.request` | SQLite gains report-state and shop columns; separate download client; de-duplication by job and lease; marks the PC offline on shutdown | Poll loop, per-job routes, agent API key and its Credential Manager entry |
 | **Customer web app** | Lazy Firebase module, tracking listener, "shop hasn't confirmed" state | Session and cart reuse between pages; one quote | 6 s tracking poll, dead tracking and payment code |
 | **Hosting** | `FIREBASE_DATABASE_URL`, `PRINT_USER_COOKIE_SECRET` | `minInstances: 0` | — |
 
@@ -114,36 +122,60 @@ Firestore listener updates aren't delivered reliably to a minimized WebView2 win
 - the agent holds the realtime connection;
 - native notifications come from the Rust side.
 
-### 3.2 Doorbell spike (P0-02, 1 day)
+### 3.2 Doorbell spike (P0-02): passed, 15 Oct 2026
 
-**Goal:** prove that a Realtime Database REST stream stays up from shop PCs, and measure latency and bandwidth.
+**Verdict: go.** On the dev PC's network the stream delivered every ring that reached the database, fast and cheaply, and it survived token expiry. The parts that need real shops are P0-03 (3.3).
 
-**Setup** (throwaway project in `spikes/`, not shipped):
+**What was built** (in `spikes/doorbell/`, not shipped; see its `README.md`):
 
-1. A test Firebase project with a Realtime Database in `asia-southeast1`, the rules from 7.2, and a test user with claim `shopId: "spike"`.
-2. A C# console app (.NET 8) that:
-   - turns a stored refresh token into an ID token with the Secure Token API;
-   - opens `GET {databaseUrl}/doorbell/spike.json?auth=<idToken>` with `Accept: text/event-stream`;
-   - logs every event with a timestamp.
-3. A ring script (Node) that `PATCH`es the doorbell with a service-account token every 10–120 s at random, logging the write time.
+- **Listener:** a C# .NET 8 console app standing in for `DoorbellClient` (10.3). It uses the Secure Token API, the SSE stream, a watchdog, backoff and the polling fallback, and logs JSONL.
+- **Ringer:** a Node script that rings the way `ringShop` (6.9) will, with a PATCH with server timestamps, a 2 s timeout and one retry.
+- **Analyzer:** a script that turns both logs into the table below.
+- **Shop kit:** a single `.exe` plus launcher for the field checks.
 
-**Measure** (Windows 10 and 11, on networks like the shops'):
+It ran against project `meetctrlp` with the Realtime Database instance `meetctrlp-default-rtdb` (`asia-southeast1`), the rules from 7.2, and a test user with claim `shopId: "spike"`.
 
-| Item | Pass |
+**Results** (72-minute run on the dev PC, Windows 11, home broadband; report in `spikes/doorbell/logs/user-72min/report.md`):
+
+| Item | Pass criterion | Result |
+| --- | --- | --- |
+| Rules | Own shop readable; other shop, no token, root, and writes denied | **Pass.** All 5 checks. |
+| Ring → event latency | p95 under 500 ms | **Pass.** Database commit → event: p50 54 ms, p95 77 ms, worst 201 ms, over 53 live rings (clock error ±46 ms). |
+| No missed values | The last value always arrives | **Pass.** 53 live, 4 caught up by the first value after a reconnect or poll, 3 never written (the ringer's own upload failed). Nothing that reached the database was lost. |
+| Keep-alive interval | Recorded | **30 s**, exactly, over 80 keep-alives (max 30.2 s). Sets the watchdog to **65 s** (10.3). |
+| Bandwidth | 25 KB or less per connection-hour | **Pass.** Idle cost (keep-alives plus one TLS handshake an hour) is about **6.4 KB/h**; each ring adds about 160 B per PC. 1,000 PCs × 12 h/day comes to about **2.3 GB/month** (10 GB free). Body bytes on a second run were 12.7 KB/h with about 50 test rings an hour. **Still to confirm** on the console's usage page (P0-03). |
+| Token expiry | `auth_revoked` at about 60 min; back within 5 s; first `put` is the latest value | **Pass.** `auth_revoked` at exactly 60.0 min. Refresh plus reconnect took 1.3 s, and the first value was the latest. |
+| 307 redirect | Followed | **Not seen** on the real database. Following a 307 with `?auth=` intact was shown against the mock server. |
+| Short network drop | Reconnect within 30 s of the network returning | **Found a bug in the plan's fallback rule** (finding 1 below). After the fix, a 40 s outage against the mock server reconnected within 4 s of the server returning. |
+| Long cut (40 min), sleep and resume | Reconnect within 30 s | **Open:** P0-03. |
+| Shop networks: broadband, mobile hotspot, antivirus HTTPS scanning, proxy | Events arrive unbuffered | **Open:** P0-03. The dev PC's broadband passed. |
+
+**What the spike changed in this plan:**
+
+1. **Polling fallback rule (10.3).** The draft rule, "5 failed connects within 10 minutes", is triggered by any Wi-Fi drop longer than about 30 s, because backoff starts at 1 s. When the network came back 33 s later, the listener stayed on 60 s polling for 30 minutes. Polling helps only when the server is reachable but the stream doesn't work, which is what buffering looks like. When the PC is offline, polling fails too. New rule: only *broken* streams count, and 3 in a row switch to polling. *Unreachable* attempts (DNS, connect, token refresh network errors) never count.
+2. **Watchdog: 65 s** (2 × the measured 30 s keep-alive, plus 5 s slack).
+3. **A ring timeout doesn't mean the ring failed (6.9).** Several PATCHes timed out at 2 s on the client but had already landed, and the listener received them. Log a timeout as `ring_unknown`, not `ring_failed`. Retrying is harmless, because rings are timestamps.
+4. **Reuse one connection for rings (6.9).** New TLS connections took 3–10 s on a bad path. Production rings come from Cloud Run over Google's network, so this matters less there, but it costs nothing.
+5. **No second refresh on `auth_revoked` (10.2, 10.3).** With the proactive refresh at 55 minutes, the cached token is already fresh when the stream is revoked at 60 minutes. Reconnect with it.
+
+**Polling cost, for reference:** each poll returned about 140 B of body. Headers dominate, so a PC on the fallback uses an estimated 30–60 KB/h (not measured on the console).
+
+### 3.3 Field checks (P0-03): open, run alongside Phase 1
+
+Use the shop kit and steps 4.3–4.5 and 5 of `spikes/doorbell/README.md`. Run the ringer on the dev PC.
+
+| Check | Pass |
 | --- | --- |
-| Ring → event latency | p95 under 500 ms; no missed values (the last value always arrives) |
-| Keep-alive interval | Recorded; it sets the watchdog |
-| Bytes per connection-hour (Realtime Database usage page) | 25 KB or less (that keeps 1,000 PCs × 12 h/day under about 9 GB/month) |
-| Token expiry | `auth_revoked` arrives at about 60 minutes; refresh and reconnect within 5 s; the first `put` carries the latest value |
-| 307 redirect | `HttpClient` follows it, including on reconnect |
-| Network cut 2 and 40 minutes; Windows sleep and resume | Reconnects within 30 s of the network returning |
-| Broadband, mobile hotspot, a network with antivirus HTTPS scanning (common in shops), a corporate proxy if available | Events arrive unbuffered. Any network that buffers or blocks is noted. |
+| 2 or 3 real shop networks, including at least one PC with third-party antivirus HTTPS scanning (Quick Heal, K7, Kaspersky, ESET, Avast), and a mobile hotspot | Events arrive unbuffered; p95 under 500 ms |
+| 40-minute network cut on a PC that isn't the ringer | Reconnect within 30 s of the network returning; the first value is the latest |
+| Windows sleep and resume (5 and 40 minutes) | Reconnect within 30 s of waking |
+| Firebase console → Realtime Database → Usage → Downloads, over a run with one known listener | 25 KB or less per connection-hour |
 
-**Outcome:**
+**Outcomes:**
 
-- **Pass:** proceed.
-- **Some networks buffer or block the stream:** keep the design, and rely on the agent's polling fallback there (10.3): a 60 s `GET` of the doorbell value, costing Realtime Database bandwidth only.
-- **Realtime Database unusable everywhere:** stop and revisit the design.
+- **All pass:** ship the agent to shops when Phase 2 is done.
+- **Some networks buffer or block:** no design change. Record which ones; those shops run on the polling fallback, with jobs up to 60 s late. Check E11 on one of them.
+- **Unusable on most shop networks:** stop before P2-03 and revisit the design.
 
 ---
 
@@ -157,11 +189,11 @@ Paths as today unless marked **new**.
 | --- | --- | --- |
 | `status` | unchanged values | SUBMITTED, SHOP_ACCEPTED, PRINTING, READY, COMPLETED, REJECTED, CANCELLED |
 | `lifecycle` | **extended** | Existing: `submittedAt`, `acceptedAt`, `acceptedByUserId`, `readyAt`, `completedAt`, `completedByUserId`. Add: `printingAt`, `rejectedAt`, `cancelledAt`, `paidAt`. Replaces `statusHistory`. |
-| `updatedAt` | **server timestamp, always** | `FieldValue.serverTimestamp()` on create and on every write. `board?since=` depends on it. |
-| `createdAt` | check type | Must be a `Timestamp` for range queries; change the writer if it's an ISO string today |
+| `updatedAt` | **server timestamp, always** | `FieldValue.serverTimestamp()` on create and on every write. Every writer already does this today; `applyOrderChange` keeps it so. `board?since=` depends on it. |
+| `createdAt` | unchanged | Already a server `Timestamp` (`order.service.ts` 372, 554), so range queries work. The exception, `documents[].shreddedAt`, is an ISO string; leave it. |
 | `completedDocumentIds` | **new**, `string[]` | Added with `arrayUnion` by reports. READY when it covers every `documents[].id`. |
 | `searchKeys` | **new**, `string[]` | Lowercased: order number, pickup code, phone digits, filename words of 3 or more letters. At most about 40. |
-| `statusHistory/*` | **removed** | Writes at `order.service.ts` 375, 557, 626, 819; reads in `readHistory` (240) |
+| `statusHistory/*` | **removed** | Writes at `order.service.ts` 375, 557, 626, 819; reads in `readHistory` (240). `getShopOrder` reads the whole subcollection on every call today, including inside dispatch and queueing, so dropping it also removes those reads. |
 
 **Single writer.** Every order write goes through `applyOrderChange(transaction, orderRef, current, change)`. It:
 
@@ -171,7 +203,7 @@ Paths as today unless marked **new**.
 4. skips no-op writes;
 5. returns a `ring` hint (6.9).
 
-Writers to route through it: `transitionOrder`, `acceptShopOrder`, `rejectShopOrder`, `markShopOrderPrinting`, `markShopOrderReady`, `completeShopOrder`, `cancelShopOrder`, `recordCashPayment`, `confirmOnlinePayment`, and the sync and report paths.
+Writers to route through it: `transitionOrder`, `acceptShopOrder`, `rejectShopOrder`, `markShopOrderPrinting`, `markShopOrderReady`, `completeShopOrder`, `cancelShopOrder`, `recordCashPayment`, `confirmOnlinePayment`, `createPdfOrder` (`document.service.ts` 149), `createSinglePagePrintOrder` (`order.service.ts` 876), and the sync and report paths. The order writes in `claimPrintJob`, `updatePrintJob` and `confirmDocumentShredded` go away with those functions (6.3).
 
 ### 4.2 `orderTracking/{orderId}` (new, Firestore)
 
@@ -195,12 +227,17 @@ A customer-safe copy, the only order data a guest can read. Rules can't hide fie
 
 | Field | Change |
 | --- | --- |
-| `status` | **`PRINTING` removed.** QUEUED → DISPATCHING → COMPLETED / FAILED / CANCELLED; FAILED → QUEUED on retry |
-| `leaseId`, `claimedAt` | Set by claim (in `sync`), **cleared** by retry |
+| `status` | **`PRINTING` removed.** QUEUED → DISPATCHING → COMPLETED / FAILED / CANCELLED. Retry (6.3) moves a job back to QUEUED from FAILED, from QUEUED (to re-route it), or from DISPATCHING when it has been stuck for more than 15 minutes. |
+| `leaseId`, `claimedAt` | Set by claim (in `sync`), **cleared** by retry. `claimedAt` is also refreshed when `sync` re-delivers a stuck job (6.3). |
 | `updatedAt` | **Server timestamp, always.** Used by `board?since=` for jobs. |
 | `pagesPrinted`, `spoolerJobId`, `errorCode`, `errorMessage`, `completedAt` | Set by the final report |
 
 Idempotency documents for claim, update and retry are removed: the lease and the status precondition make them idempotent. Dispatch keeps its key.
+
+**One active job per document.** Today `queueIncomingOrder` passes a random key for each document, and the accept route queues again on a replayed accept, so duplicate jobs for the same document happen (`print-job.service.ts` 893–929). After this change:
+
+- `queueIncomingOrder` uses the key `queue:{orderId}:{documentId}`;
+- `dispatchPrintJob` returns 409 `JOB_ACTIVE` if the document already has a QUEUED or DISPATCHING job, and 409 `DOCUMENT_SHREDDED` if its file was deleted.
 
 ### 4.4 `shops/{shopId}/agents/{agentId}`
 
@@ -219,6 +256,8 @@ Unchanged fields. `/devices/offline` sets `status: OFFLINE` for this agent's pri
 ### 4.7 Shop users (Firebase Auth)
 
 Claims `{ shopId, shopUserId, role }` are set at registration (`auth.service.ts` 206–214). **Make that required:** roll back registration if setting claims fails.
+
+**Return a token that carries the claims.** The ID token from sign-up is minted before the claims are set (`auth.service.ts` 189, then 207), so under claims-only auth the first session would get `CLAIMS_MISSING`. After setting claims, call `refreshIdToken(refreshToken)` (`packages/firebase/src/auth-rest.ts` 186) and return the new tokens.
 
 There are no staff-management routes yet. When they're built, they must set claims and, on deactivation, disable the user and revoke refresh tokens.
 
@@ -245,7 +284,8 @@ There are no staff-management routes yet. When they're built, they must set clai
 
 - **Missing claims** → 401 `CLAIMS_MISSING`. No fallback; there are no existing users.
 - **Revocation checks** (`verifyIdToken(token, true)`) on `logout` and future staff-management routes.
-- **Route audit (36 route files):** produce a table of route → fields used, attached to the PR. Routes that need `name`, `email` or `phone` read the user document; `/api/auth/me` returns the full user.
+- **Route audit:** there are 55 `route.ts` files under `apps/server/app/api`: 37 use shop auth, 8 are guest routes, and 5 also accept the agent-key header. Produce a table of shop route → fields used and attach it to the PR. Routes that need `name`, `email` or `phone` read the user document; `/api/auth/me` returns the full user.
+- **Sign-out no longer revokes by default.** Today `logoutShopUser` calls `revokeRefreshTokens` (`auth.service.ts` 261), which signs that user out on **every** PC. A shop often uses one login on several PCs, and the agent now holds a long-lived refresh token, so signing out on PC A would log PC B out within the hour and stop it printing. New body: `POST /api/auth/logout { allDevices?: boolean }`. Revoke only when `allDevices` is true. The desktop's sign-out sends false. Staff deactivation still revokes (4.7).
 
 ### 5.2 The PC's login is owned by the agent
 
@@ -254,7 +294,7 @@ The refresh token already lives in Windows Credential Manager (`Ctrlp.PrintShop/
 **Agent token manager:**
 
 - **Endpoint:** `POST https://securetoken.googleapis.com/v1/token?key=<firebaseApiKey>` with form `grant_type=refresh_token&refresh_token=…`. The response has `id_token`, `refresh_token`, `expires_in` and `user_id`. This is the documented Firebase Auth REST call; our server already uses it in `refreshIdToken`.
-- **When it refreshes:** at 55 of 60 minutes, on an `auth_revoked` stream event, and on a 401 from our API (once). Only one refresh runs at a time.
+- **When it refreshes:** at 55 of 60 minutes, and on a 401 from our API (once). Only one refresh runs at a time. An `auth_revoked` stream event refreshes only if the cached token has less than 5 minutes left; normally the 55-minute refresh has already happened, and the stream just reconnects with the cached token.
 - **Rotation:** if Google returns a different `refresh_token`, store it.
 - **Failure:** the agent reports `cloud.state { token: "invalid" }`, and the UI shows the login screen.
 
@@ -274,18 +314,19 @@ The refresh token already lives in Windows Credential Manager (`Ctrlp.PrintShop/
   1. Wait for the agent, then `cloud.configure`.
   2. `cloud.getIdToken`. If it returns `signedIn: false`, show the login screen.
   3. Otherwise `GET /api/auth/me`, register the device, and send `cloud.session`.
-- **Sign-out:**
-  1. `POST /api/auth/logout` (revokes refresh tokens).
-  2. `POST /devices/offline`.
+- **Sign-out** (the same order as 8.3):
+  1. `POST /devices/offline` (marks this PC's printers OFFLINE; needs the token, so it goes first).
+  2. `POST /api/auth/logout { allDevices: false }`: no revoke (5.1).
   3. `cloud.clear`: the agent stops the stream, forgets the token, and holds pending reports.
   4. `secrets.clearRefreshToken`.
+- **App exit:** the agent exits with the desktop app (10.1) and calls `POST /devices/offline` on its way out.
 - **`POST /api/auth/refresh`** stays on the server for other clients; the desktop no longer calls it.
 
-**API key:** the desktop needs only the Firebase Web API key and the database URL; it doesn't need a registered Firebase web app. Restrict the key in Google Cloud to the Identity Toolkit and Token Service APIs.
+**API key:** the desktop needs only the Firebase Web API key and the database URL; it doesn't need a registered Firebase web app. The agent uses the key only for the Token Service API (the doorbell authenticates with `?auth=<idToken>`), so restrict the desktop key to the Token Service API.
 
 ### 5.3 Agent calls to the API
 
-- The agent sends `Authorization: Bearer <idToken>`.
+- The agent sends `Authorization: Bearer <idToken>`. The 5 agent routes already accept a shop Bearer as an alternative to the agent key, so this mode works today.
 - Inside each transaction, the server checks `principal.shopId == job.shopId` (or the order's shop) and `job.agentId == path agentId`.
 - Removed: `requireAgentCredential`, the headers `x-ctrlp-agent-key` / `x-ctrlp-agent-id`, `apiKeyHash`, `secrets.setAgentCloudCredential`, and the Credential Manager entry `Ctrlp.PrintShop/agentCloud`.
 
@@ -293,7 +334,7 @@ The refresh token already lives in Windows Credential Manager (`Ctrlp.PrintShop/
 
 - `POST /api/v1/public/shops/{slug}/session` also returns `firebaseToken = createCustomToken(printUserId)`.
 - The tracking page signs in with it and reads `orderTracking/{orderId}` where `printUserId == auth.uid`. No custom claims are needed.
-- With Identity Platform, each guest who signs in counts as a monthly active user (50 k free).
+- **Cost check before P3-01:** if the project has been upgraded to Identity Platform, each guest who signs in counts as a monthly active user (50 k free, then about $0.0046–0.0055 each). The repo shows no sign of Identity Platform: no tenants, MFA, blocking functions or v2 admin calls, and phone login is password-based. Confirm in the console (Authentication → Settings). Sign-in happens only on the tracking page, so MAU is roughly the number of orders: free at 1,000 a day, and about $1,200/month at 10,000 a day if Identity Platform is on. With legacy Firebase Auth, custom-token sign-in is free.
 
 ---
 
@@ -315,8 +356,8 @@ Paths under `apps/server/` unless noted.
 **Tasks:**
 
 - `requireShopPrincipal`; rewire `readAuthorizedShopUser`, `runShopOrder` and `withOwnShop`, keeping the `shopId` match.
-- Registration: claims required (4.7).
-- `logoutShopUser`: take the uid from the verified token.
+- Registration: claims required, and the returned tokens refreshed so they carry the claims (4.7).
+- `logoutShopUser`: take the uid from the verified token (it already does, through `lookupIdToken`); revoke only with `allDevices: true` (5.1).
 - Export `createCustomToken` from `packages/firebase` (used for guests).
 
 ### 6.2 Orders module
@@ -334,9 +375,11 @@ Paths under `apps/server/` unless noted.
   - ring `order_submitted` (board).
 - `createShopOrder`: the same fields (no tracking copy); ring `order_submitted`.
 - `confirmOnlinePayment`:
-  - **remove auto-accept** (about line 802);
+  - **remove auto-accept** (line 802; the shop config is read outside the transaction there today);
   - set `payment.status`, `payment.reference`, `lifecycle.paidAt`;
-  - callers (webhook, `mockConfirmGuestPayment`) **remove `queueIncomingOrder`** and ring `order_paid` (work + board).
+  - **idempotent by state:** if the payment is already PAID, return the order with no write and no ring. Today a new idempotency key rewrites `payment.reference` and `confirmedAt`;
+  - callers (the webhook at `internal/payments/.../confirmed/route.ts` 32–35, and `mockConfirmGuestPayment` at `print-user.service.ts` 449–458) **remove `queueIncomingOrder`** and ring `order_paid` (work + board).
+- **Gate the mock payment route now (P1-00, security).** `POST /public/session/orders/{orderId}/payments/mock-confirm` has no environment check, so in production any guest can mark their own ONLINE order PAID, which auto-accepts and prints it. Return 404 unless `ALLOW_MOCK_PAYMENTS=1`, set only in local and staging environments.
 - **Delete:**
   - `subscribeShopOrders` and `orders/stream/route.ts`;
   - the GET handler in `orders/route.ts`, replaced by history (6.4); keep POST;
@@ -356,11 +399,15 @@ Paths under `apps/server/` unless noted.
 2. **Claim.** Query collection group `printJobs` where `shopId`, `agentId == agentId`, `status == QUEUED`, ordered by `createdAt`, limit 10.
    - One transaction: set each still-QUEUED job to DISPATCHING with a new `leaseId` and `claimedAt`.
    - Orders still SHOP_ACCEPTED → PRINTING (`applyOrderChange`).
-3. **After commit:**
-   - sign a download URL for each claimed job (`createPresignedDownloadUrl`, 15 min, signed locally);
+3. **Re-deliver stuck jobs.** Query collection group `printJobs` where `shopId`, `agentId == agentId`, `status == DISPATCHING`, `claimedAt < now − 15 min`, limit 10. Return them with the **same** `leaseId` and a fresh URL, and set `claimedAt` to now.
+   - **Why:** if the agent dies between the claim response and its local `Enqueue`, it has no record of the job, and nothing today ever reclaims it. There is no lease expiry anywhere, so the job and its order would stay DISPATCHING and PRINTING forever.
+   - The agent skips any job it already has locally with the same lease (10.4), so re-delivery never prints twice.
+   - Costs at least 1 read per `sync`, even when empty.
+4. **After commit:**
+   - sign a download URL for each claimed job (`createPresignedDownloadUrl`, signed locally). Use **60 minutes**, not today's 15 (`DOWNLOAD_TTL_SECONDS = 900`, `document.service.ts` 14). The per-job document route is being deleted, so the agent can't fetch a fresh URL. Ten files downloaded one after another on a slow shop line can take longer than 15 minutes;
    - ring the board once if anything changed;
    - also ring work if step 1 queued jobs for **other** agents.
-4. **Output:** `{ accepted: [orderId], claimed: [{ orderId, jobId, documentId, leaseId, resolvedSettings, printerSystemName, printerName, pagesTotal, download: { url, sha256Hash, mimeType, pageCount, expiresIn } }], more }`. `more` is true when either query hit its limit.
+5. **Output:** `{ accepted: [orderId], claimed: [{ orderId, jobId, documentId, leaseId, resolvedSettings, printerSystemName, printerName, pagesTotal, redelivered, download: { url, sha256Hash, mimeType, pageCount, expiresIn } }], more }`. `more` is true when any query hit its limit.
 
 **`reportAgentJobs(principal, agentId, input)`**, route `POST .../agents/{agentId}/jobs/report`:
 
@@ -370,15 +417,28 @@ Paths under `apps/server/` unless noted.
   2. If the job is already in the reported status with the same lease, it's a replay: continue to step 5.
   3. If the lease doesn't match, report `lease_mismatch`. If the job isn't DISPATCHING, report `invalid_state`.
   4. Otherwise set the final status and fields. On COMPLETED, `arrayUnion(documentId)` into `completedDocumentIds`. If that now covers every document and the order is PRINTING, `applyOrderChange` to READY.
-  5. **After commit, on COMPLETED:** `deleteObject(storageKey)`, then set `documents[i].shreddedAt`. If the delete fails, report `retry`.
+  5. **After commit, on COMPLETED:** if no other QUEUED or DISPATCHING job in the order uses the same `documentId` (one query on the order's `printJobs`), `deleteObject(storageKey)`, then set `documents[i].shreddedAt`. If the delete fails, report `retry`. Today `confirmDocumentShredded` only sets `shreddedAt` and never deletes the object (`document.service.ts` 239–284).
 - **Ring the board once per request.**
 - **Output:** `{ results: [{ jobId, result: ok | retry | lease_mismatch | invalid_state | not_found }] }` with HTTP 200. HTTP 5xx only when the whole request failed.
 
 **Change:**
 
-- `retryPrintJob`: clear `leaseId`, `claimedAt` and `startedAt`; increment `retryCount`; ring work.
+- `retryPrintJob` (also the operator's way to rescue a job). Allowed from:
+  - FAILED (as today);
+  - QUEUED, to re-route a job whose PC is gone;
+  - DISPATCHING with `claimedAt` older than 15 minutes, when the PC died and isn't coming back.
+
+  It then:
+  - clears `leaseId`, `claimedAt` and `startedAt` (today it keeps them, line 869), increments `retryCount`, and rings work;
+  - with a new `printerId`: re-reads the printer and checks it exists and is enabled, then sets `agentId`, `printerName` and `printerSystemName` from it. Today only `printerId` changes (871), so the old PC claims the job and prints to the old printer;
+  - leaves the old agent's late report to get `lease_mismatch`.
+
+  A live agent refreshes `claimedAt` through re-delivery, so only a job whose PC has stopped syncing becomes rescuable. The desktop asks the operator to confirm a rescue, because a large job may still be printing.
+
+  Today the only way out of DISPATCHING is the per-job PATCH, which no UI calls.
 - `routePrintJob(…, { preferAgentId })`: among capable, enabled, ONLINE printers, prefer the agent, then default, then fewest `activeSpoolJobs`.
-- `dispatchPrintJob` (manual): ring work.
+- `dispatchPrintJob` (manual): the guards in 4.3 (`JOB_ACTIVE`, `DOCUMENT_SHREDDED`); ring work.
+- `queueIncomingOrder`: the deterministic key `queue:{orderId}:{documentId}` (4.3).
 - `assertJobTransition`: no PRINTING.
 
 **Delete:**
@@ -414,13 +474,13 @@ Paths under `apps/server/` unless noted.
 
 - **`POST .../orders/{orderId}/accept`** body: `{ agentId? }`.
   - With `autoDispatchAcceptedOrders`: `queueIncomingOrder(order, { preferAgentId })`, then ring work.
-  - A replay on an already accepted order returns 200 and doesn't queue again.
+  - A replay on an already accepted order returns 200 and doesn't queue again. Today it queues a second set of jobs, because the accept route calls `queueIncomingOrder` even when `transitionOrder` returned early (accept route 20–22, `order.service.ts` 601–602).
 
 ### 6.6 Devices
 
 - **Delete:** the heartbeat route, `recordDeviceHeartbeat`, `markStaleAgentsOffline`, `HEARTBEAT_INTERVAL_SECONDS`, and `deviceHeartbeatRequestSchema`.
 - **`registerShopDevice`:** no credential issuance. Writes `{ id, shopId, hostname, osVersion, appVersion, agentVersion, registeredByUserId, lastActiveAt, updatedAt }`. Returns `{ deviceId }`.
-- **`markDeviceOffline`:** also sets this agent's printers OFFLINE (one batch).
+- **`markDeviceOffline`:** also sets this agent's printers OFFLINE (one batch). Today it marks only the agent document, and nothing on the server ever sets a printer OFFLINE (`device.service.ts` 171); routing ignores agent status. Called by the desktop's sign-out and by the agent when it exits (10.1).
 
 ### 6.7 `lastActiveAt`
 
@@ -428,7 +488,7 @@ Paths under `apps/server/` unless noted.
 
 ### 6.8 Guest API (print-user)
 
-**Signed cookie.** The value is `v1.<printUserId>.<expiresAtEpochSeconds>.<ipHash>.<hmac>`, with HMAC-SHA256 using the new secret `PRINT_USER_COOKIE_SECRET`.
+**Signed cookie.** The value is `v1.<printUserId>.<expiresAtEpochSeconds>.<ipHash>.<hmac>`, with HMAC-SHA256 using the new secret `PRINT_USER_COOKIE_SECRET`. Today the cookie is the raw `printUserId` (`print-user-http.ts` 25), checked by reading the session document and comparing the IP on every call, so this is also a hardening step.
 
 `requirePrintUserSession` then:
 
@@ -451,8 +511,20 @@ Paths under `apps/server/` unless noted.
 
 - **Access token:** `getServiceAccessToken()` uses the Admin app's credential (`getAccessToken()`), whose scopes include `firebase.database` and `userinfo.email`. It's cached until 5 minutes before expiry.
 - **Request:** `PATCH {FIREBASE_DATABASE_URL}/doorbell/{shopId}.json` with `Authorization: Bearer <token>` and body `{ "boardAt": {".sv":"timestamp"}, "workAt"?: {".sv":"timestamp"}, "last": { "type", "orderId", "orderNumber" } }`.
-- **Timeout and retry:** 2 s timeout; one retry after 200 ms; then a structured log (`ring_failed`, shopId, event). It never throws.
+- **Connection:** one module-level keep-alive connection per instance (Node's `fetch` pools by default; don't create a new agent or dispatcher per call). A cold TLS handshake cost seconds on a bad path in the spike.
+- **Timeout and retry:** 2 s timeout; one retry after 200 ms. It never throws.
+- **Logging the outcome** (the spike showed timed-out PATCHes that had already been applied):
+  - an HTTP 2xx → nothing to log;
+  - a timeout on both attempts → `ring_unknown` (shopId, event). The write may have landed;
+  - an HTTP error or a refused connection on both attempts → `ring_failed` (shopId, event, status).
 - **Awaited before the response is sent,** because Cloud Run takes CPU away after the response.
+- **What catches up after a lost ring.** Only a later change to the doorbell value does, because the agent acts on `workAt` changes. An agent reconnect re-reads the current value, so it doesn't help if the ring never landed. The catch-ups are:
+  - the shop's next work ring;
+  - an agent restart (the first value after a start always syncs);
+  - the desktop's stale-work nudge (8.4), when the window is visible;
+  - the operator's "Sync now".
+
+  The `ring_failed` alert (12.3) makes the case visible. Design doc decision 9 covers the option of a safety sync.
 - **Local development:** the Realtime Database emulator (port 9000), with `FIREBASE_DATABASE_URL=http://127.0.0.1:9000?ns=<project>-default-rtdb`.
 
 **Ring table** (each row after its transaction commits):
@@ -484,6 +556,8 @@ Shop-wide coalescing: two rings within the same request become one call.
   - `reportAgentJobsRequestSchema` / `reportAgentJobsResponseSchema`;
   - `boardResponseSchema`, `orderHistoryQuerySchema`, `orderSearchQuerySchema`;
   - `acceptOrderRequestSchema` (`{ agentId? }`);
+  - `logoutRequestSchema` (`{ allDevices? }`);
+  - `retryPrintJobRequestSchema` gains the QUEUED and stuck-DISPATCHING cases (no shape change);
   - pipe shapes: `cloudConfigureSchema`, `cloudSessionSchema`, `cloudStateSchema`, `ordersAttentionSchema`.
 - **Remove:**
   - `deviceHeartbeatRequestSchema`;
@@ -540,6 +614,7 @@ Clients never write anywhere. The server bypasses rules (Admin SDK for Firestore
 | Collection | Scope | Fields | Used by |
 | --- | --- | --- | --- |
 | `printJobs` | Collection group | `shopId` ASC, `agentId` ASC, `status` ASC, `createdAt` ASC | `sync` claim |
+| `printJobs` | Collection group | `shopId` ASC, `agentId` ASC, `status` ASC, `claimedAt` ASC | `sync` re-delivery of stuck jobs |
 | `printJobs` | Collection group | `shopId` ASC, `status` ASC | Full board (unfinished jobs) |
 | `printJobs` | Collection group | `shopId` ASC, `updatedAt` ASC | Board changes (jobs) |
 | `orders` | Collection | `status` ASC, `payment.status` ASC | `sync` auto-accept |
@@ -558,7 +633,7 @@ Clients never write anywhere. The server bypasses rules (Admin SDK for Firestore
    - the web key to the Identity Toolkit, Token Service and Firestore APIs and the customer domain;
    - the desktop key to the Identity Toolkit and Token Service APIs.
 4. Deploy indexes and wait until they're built; then deploy rules: `firebase deploy --only firestore:indexes`, then `firebase deploy --only firestore:rules,database`.
-5. Server env: `FIREBASE_DATABASE_URL` (plain) and `PRINT_USER_COOKIE_SECRET` (secret), in `apps/server/apphosting.yaml` and `docs/deployment.md`.
+5. Server env: `FIREBASE_DATABASE_URL` (plain), `PRINT_USER_COOKIE_SECRET` (secret) and `ALLOW_MOCK_PAYMENTS` (local and staging only). `apps/server/apphosting.yaml` lists only run settings today (`minInstances: 1`), so set them where the existing variables are set, and document them in `apps/server/docs/deployment.md` (the variables table at 64–78).
 6. Budget alerts (12.3).
 
 ---
@@ -569,7 +644,7 @@ There's no Firebase dependency in the desktop. `App.tsx` keeps owning state, and
 
 ### 8.1 Config
 
-- **Env:** add `VITE_FIREBASE_API_KEY` and `VITE_FIREBASE_DATABASE_URL`, passed to the agent in `cloud.configure`. Add them to `.env.example` and type them in `vite-env.d.ts`.
+- **Env:** add `VITE_FIREBASE_API_KEY` and `VITE_FIREBASE_DATABASE_URL`, passed to the agent in `cloud.configure`. Add them to `.env.example` (today it has only `VITE_SERVER_BASE_URL`), and add an `ImportMetaEnv` interface to `vite-env.d.ts` (today it's only the `vite/client` reference).
 
 ### 8.2 Tokens
 
@@ -592,11 +667,11 @@ There's no Firebase dependency in the desktop. `App.tsx` keeps owning state, and
   4. Otherwise `fetchCurrentUser`, `connectDevice`, then `cloud.session`.
 - **`handleSignOut`:**
   1. `markDeviceOffline` (also marks printers OFFLINE).
-  2. `logoutSession`.
+  2. `logoutSession` with `allDevices: false` (5.1).
   3. `agentNotify("cloud.clear")`.
   4. `clearStoredRefreshToken`.
-- **Window close:** `onCloseRequested` calls `markDeviceOffline` with a 2 s timeout, then closes (best effort).
-- **On `agent:ready`** (agent restarted): send `cloud.configure` and `cloud.session` again.
+- **Window close:** nothing in the UI. Closing the window exits the app; the agent exits with it and marks the PC offline itself (10.1). A JS `onCloseRequested` handler would also need the `core:window:allow-destroy` permission, which isn't granted, and would miss crashes.
+- **On `agent:ready`:** send `cloud.configure` and `cloud.session`. The bridge never reconnects (9.1) and the agent now starts and stops with the app, so this fires once per app start.
 
 ### 8.4 Board (`src/lib/board.ts`, new)
 
@@ -611,7 +686,11 @@ There's no Firebase dependency in the desktop. `App.tsx` keeps owning state, and
   - on focus, restore or a visibility change when `dirty`, or after more than 60 s since the last fetch;
   - after the operator's own actions (accept, reject, ready, complete, dispatch, retry, cash), from the response, with no extra fetch.
 - **In-app notifications** (the existing `pushNotification`) for new SUBMITTED orders in a delta. Native notifications while minimized come from Rust (9.1).
-- **Nudge:** if the board shows a QUEUED job for this PC's agent older than 60 s, send `sync.request` to the agent, at most once a minute.
+- **Stale-work nudge:** send `sync.request` to the agent, at most once a minute, if the board shows either of these:
+  - a QUEUED job for this PC's agent older than 60 s;
+  - an ONLINE order that is SUBMITTED and PAID for more than 60 s while the shop's `autoAcceptPaidOnline` is on.
+
+  This catches a lost ring (6.9) the next time the board is fetched, for example on focus or restore. It adds no requests of its own, because it reads a board the UI already has.
 
 ### 8.5 History and search (`src/lib/order-history.ts`, new)
 
@@ -637,15 +716,15 @@ It replaces the heartbeat-driven `cloud` state, the "Order stream: …" label, a
 - **`App.tsx`:**
   - the heartbeat effect (353–371), `beatOnce`, `lastHeartbeatAt`;
   - the stream effect (334–351);
-  - the stream-state references (989, 1168, 1210);
+  - the stream-state references: the label at 989 and the `streamState` prop at 1081, plus `SettingsScreen.tsx` 32, 52 and 378. Reword the copy at 1168 ("Live counts from the order stream") and 1210 ("No orders in the live stream yet.");
   - `idToken` state.
 - **`cloud.ts`:**
   - `sendDeviceHeartbeat`, `listShopOrders` (old full list), `parseOrderStreamMessage`, `streamShopOrders`;
-  - `updateOrderPrintJob`, `markDocumentShredded`;
+  - `updateOrderPrintJob`, `markDocumentShredded` (already unused);
   - `refreshSession` usage at boot.
 - **`agent.ts`:** `storeAgentCloudCredential`.
-- **`orders.ts`:** the SSE event types; keep the reducer, adapted to `BOARD_*`.
-- **Tests:** the SSE-parser tests in `orders.test.ts` become board-merge tests.
+- **`protocol.ts` / `orders.ts`:** remove the SSE union `OrderStreamEvent` (`protocol.ts` 195–199) and the reducer's `connection` case. `ORDERS_SNAPSHOT` becomes `BOARD_SNAPSHOT` / `BOARD_DELTA`. **Keep** `ORDER_STATUS_CHANGED` and `PRINT_JOB_CHANGED`: operator-action responses feed them (`App.tsx` 639–641, 660, 684, 800, 826).
+- **Tests:** the SSE-parser test in `orders.test.ts` (46–53) becomes board-merge tests; keep the reducer-merge test (55–66).
 
 ---
 
@@ -654,7 +733,7 @@ It replaces the heartbeat-driven `cloud` state, the "Order stream: …" label, a
 ### 9.1 Rust (`src-tauri/src/agent/bridge.rs`, `commands.rs`, `lib.rs`, `capabilities/default.json`)
 
 - **`AgentBridge::notify(method, params)`:**
-  - writes a JSON-RPC frame **without `id`**, using the writer but not `call_lock`;
+  - writes a JSON-RPC frame **without `id`**. It takes the `inner` mutex, which holds the writer, but not `call_lock`, which a pending `call` holds for up to 20 s;
   - is a silent no-op when the bridge isn't ready (the UI re-sends on `agent:ready`).
 - **Commands:**
   - `agent_notify(method, params)`, allowlisted to `cloud.configure`, `cloud.session`, `cloud.clear` and `sync.request`;
@@ -668,8 +747,9 @@ It replaces the heartbeat-driven `cloud` state, the "Order stream: …" label, a
   This runs in Rust, so it works while the web view is throttled.
 - **New dependency:** `tauri-plugin-notification`, plus capability permission `notification:default`.
 - **Events:** emit `agent:ready` when the bridge becomes ready.
+- **Agent lifetime (`boot.rs`):** pass `--parent-pid <app pid>` to the sidecar. The agent already supports it (`ParentProcessWatcher`, `Program.cs` 70–73) but it isn't passed today (`boot.rs` 16), so the agent outlives the window. It keeps polling and printing after the app closes, and after sign-out, because nothing clears its agent key. See design doc decision 10.
 - **Remove** `set_agent_cloud_credential`.
-- **Known limit, not in scope:** the bridge never reconnects after the agent process dies. The UI shows the agent failed until restart.
+- **Known limit, not in scope:** the bridge never reconnects after the agent process dies (`read_loop` breaks on a pipe error; `connect_pipe` runs only at boot). The UI shows the agent failed until the app restarts.
 - **One call at a time:** the bridge serialises calls (`call_lock`). `cloud.getIdToken` returns a cached token in milliseconds; a refresh (about hourly) takes about 0.2–1 s.
 
 ### 9.2 Messages
@@ -679,7 +759,7 @@ It replaces the heartbeat-driven `cloud` state, the "Order stream: …" label, a
 | UI → agent | `cloud.configure` | notification | `{ serverBaseUrl, firebaseApiKey, databaseUrl }` | Boot and `agent:ready` |
 | UI → agent | `cloud.session` | notification | `{ shopId, agentId, idToken?, expiresAt? }` | After login or boot device registration; `agent:ready` |
 | UI → agent | `cloud.clear` | notification | `{}` | Sign-out |
-| UI → agent | `sync.request` | notification | `{}` | The board's stale-queue nudge; Settings "Sync now" |
+| UI → agent | `sync.request` | notification | `{}` | The board's stale-work nudge; Settings "Sync now" |
 | UI → agent | `cloud.getIdToken` | request | `{ forceRefresh? }` → `{ signedIn, idToken?, expiresAt?, claims?: { shopId, shopUserId, role } }` | Each API call |
 | Agent → UI | `board.changed` | notification | `{ boardAt }` | The doorbell's `boardAt` changed |
 | Agent → UI | `orders.attention` | notification | `{ type, orderId, orderNumber }` | `last.type` is `order_submitted` or `order_paid`, not seen before (handled in Rust too) |
@@ -705,14 +785,16 @@ No new NuGet packages: `System.Net.Http` and `System.Text.Json` cover everything
   - `cloud.getIdToken` returns the cached token if it's valid for more than 60 s, and otherwise awaits the single-flight refresh (10 s timeout).
 - **`Core/AgentRuntime.cs` and `Host/Program.cs`:**
   - construct the cloud services before the dispatcher and inject them;
-  - the worker's job-event callback writes to the outbox instead of calling `ReportAsync`.
+  - the worker's job-event callback writes to the outbox instead of calling `ReportAsync`;
+  - **shutdown** (the parent app exited, or `shutdown`): close the stream, then make a best-effort `POST /devices/offline` (2 s timeout) if a session is active, then exit. Pending reports stay in SQLite and flush on the next start.
 - **Remove:** the `agentCloud` credential from `WindowsCredentialStore`, `ISecretStore`, `MemorySecretStore`, and the `AgentCloudCredential` record.
 
 ### 10.2 `FirebaseTokenManager` (new, `Core/Cloud/`)
 
 - **Inputs:** `firebaseApiKey` (from `cloud.configure`) and the refresh token from `ISecretStore`.
 - **State:** `{ idToken, expiresAt, claims }`, held in memory only.
-- **Refresh** with the Secure Token API (5.2): single-flight; scheduled at 55 minutes while signed in; on demand on a 401 or `auth_revoked`. Store a rotated refresh token.
+- **Refresh** with the Secure Token API (5.2): single-flight; scheduled at 55 minutes while signed in; on demand on a 401, or on `auth_revoked` when the cached token has less than 5 minutes left. Store a rotated refresh token.
+- **Reuse:** port `TokenClient.cs` from `spikes/doorbell/listener/`.
 - **Failure:** an HTTP 400 from Google (`TOKEN_EXPIRED`, `USER_DISABLED`, `INVALID_REFRESH_TOKEN`) sets `token: invalid` and stops the doorbell. Network errors retry with backoff (1 s doubling to 60 s).
 - **`cloud.session` with `idToken`** seeds the cache, so there's no refresh straight after login.
 - **`cloud.clear`:** forget everything in memory. The refresh token is cleared by the UI's `secrets.clearRefreshToken`.
@@ -722,15 +804,15 @@ No new NuGet packages: `System.Net.Http` and `System.Text.Json` cover everything
 **Stream:**
 
 - Request: `GET {databaseUrl}/doorbell/{shopId}.json?auth=<idToken>`, with `Accept: text/event-stream`, `HttpCompletionOption.ResponseHeadersRead` and an infinite timeout. Follow 307s (`HttpClient` does by default).
-- An SSE parser handles `event:` and `data:` lines, multi-line data, CRLF and comments. Unit-tested.
+- An SSE parser handles `event:` and `data:` lines, multi-line data, CRLF and comments. Unit-tested. Port `SseParser.cs` from `spikes/doorbell/listener/`; it already passed against the real database and the mock server.
 
 | Event | Action |
 | --- | --- |
 | `put` (path `/`) | Replace the cached value |
 | `patch` | Merge keys |
-| `keep-alive` | Reset the watchdog |
+| `keep-alive` | Reset the watchdog. Arrives after exactly 30 s of silence (spike). |
 | `cancel` | Rules denied the read: log, set `doorbell: offline`, ask the token manager to force a refresh, reconnect once |
-| `auth_revoked` | Refresh the token, then reconnect |
+| `auth_revoked` | Reconnect with the cached token if it has 5 minutes or more left; otherwise refresh first (10.2). Arrives at exactly 60 min on a connection. |
 
 **After each value change:**
 
@@ -740,9 +822,18 @@ No new NuGet packages: `System.Net.Http` and `System.Text.Json` cover everything
 
 **Staying connected:**
 
-- **Watchdog:** reconnect if no event arrives for 2× the keep-alive interval measured in the spike.
-- **Reconnect** at once after a clean end. After failures: 1 s doubling to 60 s, with jitter.
-- **Polling fallback:** 5 failed connects within 10 minutes switches to polling `GET {databaseUrl}/doorbell/{shopId}.json?auth=` every 60 s for 30 minutes, then tries the stream again. `cloud.state.doorbell = "polling"`.
+- **Watchdog: 65 s.** Reconnect if no event, keep-alive included, arrives for 65 s (2 × the measured 30 s keep-alive, plus slack).
+- **Every connection attempt ends in one of these outcomes** (as in the spike's listener):
+
+  | Outcome | When | Next step |
+  | --- | --- | --- |
+  | Healthy | It received a `put` and stayed up 5 s or more, or it ended with `auth_revoked` | Reconnect at once; reset backoff and the broken count |
+  | Unreachable | DNS failure, connect failure, TLS failure, or a token refresh network error | Back off (1 s doubling to 60 s, with jitter). **Doesn't count** toward the fallback: polling would fail too. |
+  | Broken | The server answered but the stream didn't work: an HTTP error other than 401, no `put`, closed within 5 s, `cancel`, or the watchdog fired | Back off; add 1 to the broken count |
+  | Fatal | The token is invalid (10.2) | Stop; `cloud.state.token = "invalid"` |
+
+- **Polling fallback:** **3 broken in a row** switches to polling `GET {databaseUrl}/doorbell/{shopId}.json?auth=` every 60 s for 30 minutes, then tries the stream again. `cloud.state.doorbell = "polling"`. A buffering network hits this in about 4 minutes (3 watchdog periods plus backoff); a blocking one in seconds.
+- **Wake-ups:** on Windows network-availability and address-change events, and on resume from sleep (a jump in wall-clock time against the monotonic clock), cut short any backoff wait and reconnect at once. Also close the current stream on resume, because a socket from before sleep is usually dead. The spike's listener wakes on network events but only logs the clock gap, so the resume part is new.
 - **On `cloud.clear`, sign-out, or no session:** close the stream.
 
 ### 10.4 `AgentSyncService` (replaces the poll loop in `AgentCloudSynchronizer`)
@@ -754,7 +845,7 @@ No new NuGet packages: `System.Net.Http` and `System.Text.Json` cover everything
   3. `Enqueue` locally with `CloudOrderId`, `CloudDocumentId`, `LeaseId`, `CloudShopId`, `CloudAgentId`.
   4. On a staging failure, outbox a FAILED report with `AGENT_STAGING_FAILED`.
 - **Repeat at once while `more`.** Publish `cloud.state.lastSyncAt`.
-- **Skip** jobs already in SQLite with the same `cloud_job_id` and a non-terminal state (de-duplication).
+- **Skip** any job already in SQLite with the same `cloud_job_id` **and** `lease_id`, whatever its local state. Re-delivered jobs (6.3) come with the same lease, so a job that already printed, or is waiting for its report to go out, is never printed twice. A job retried by the operator has a new lease and is printed again, as intended. Today `lease_id` is stored (`SqliteJobStore.cs` 117) but never used.
 - **On a 401:** the token manager refreshes, then retry once.
 
 ### 10.5 `ReportOutbox` (new) and SQLite
@@ -770,6 +861,8 @@ No new NuGet packages: `System.Net.Http` and `System.Text.Json` cover everything
 **Flow:**
 
 - The worker callback sets `pending` when a local job ends (COMPLETED, FAILED or CANCELLED) and signals the outbox. No HTTP happens in the callback.
+- **Local cancel** (`jobs.cancel`) must also set `pending`. Today it publishes no event, and CANCELLED reaches the cloud only through the sweep that's being removed.
+- **At start,** jobs left `printing` are marked `failed` (`SqliteJobStore.cs` 63–72, existing). They get `pending`, so the outbox reports them FAILED.
 - The outbox batches pending reports for the active shop and agent (up to 20, waiting 1 s to gather a batch) and calls `POST .../jobs/report`.
 - For each result:
   - `ok` → `acked`;
@@ -791,7 +884,7 @@ No new NuGet packages: `System.Net.Http` and `System.Text.Json` cover everything
 
 1. **SSE parser:** `put`, `patch`, `keep-alive`, `cancel`, `auth_revoked`; multi-line data; CRLF.
 2. **Token manager:** refresh succeeds; rotated token stored; single-flight; invalid refresh token → `invalid`; network backoff.
-3. **Doorbell client:** reconnects after a drop; the watchdog fires; `auth_revoked` → refresh → reconnect; 5 failures → polling → back to streaming; a newer `workAt` signals sync exactly once per change; attention de-duplication.
+3. **Doorbell client:** reconnects after a drop; the watchdog fires at 65 s; `auth_revoked` with a fresh cached token → reconnect with no refresh; `auth_revoked` with a nearly expired token → refresh → reconnect; 40 s unreachable → **no** fallback, and back on the stream within 5 s of the server returning; 3 broken (HTTP 500, or no data until the watchdog) → polling → back to streaming after 30 minutes; a healthy connection resets the count; a newer `workAt` signals sync exactly once per change; attention de-duplication.
 4. **Sync service:** coalescing (10 signals → 1 call); the `more` loop; staging; de-duplication; a staging failure → FAILED outboxed.
 5. **Outbox:** result mapping; backoff and `Retry-After`; held for another shop; migration from `cloud_acked`.
 6. **Handlers:** notifications return in under 10 ms; `cloud.getIdToken` returns the cached token without HTTP.
@@ -825,9 +918,10 @@ The customer is in a foreground browser tab, so a Firestore listener is fine her
 - **Fallback:** no token, or the listener errors → one `GET /public/session/orders/{orderId}` and a Refresh button.
 - **"Shop hasn't confirmed your order yet":** status `SUBMITTED` for more than 10 minutes since `paidAt ?? submittedAt`.
 - **Remove:**
-  - the poll (78–106), `pollLatestOrderStatus`, `POLLING_INTERVAL_MS`;
+  - the poll (78–106) and `POLLING_INTERVAL_MS` (`tracking-constants.ts` 113). Keep `pollLatestOrderStatus` (`tracking-repository.ts` 607–619) as the one-shot fetch behind the fallback's Refresh button; it already powers the manual Refresh (`use-order-tracking.ts` 113);
   - the FAILED and PRINT_FAILED mappings;
-  - the dead code `createFromSubmittedOrder`, `createDemoOrder`, `getRealDocumentsFromSession`, `getCachedOrderTracking`, `saveCachedOrderTracking`;
+  - the dead code `createFromSubmittedOrder`, `createDemoOrder`, `getRealDocumentsFromSession` and `getCachedOrderTracking`;
+  - the tracking cache: `saveCachedOrderTracking` (504–514) and its calls in `fetchOrderTracking` (603) and `transitionOrderStatus` (635). It's written but never read;
   - the simulator bar and `transitionOrderStatus`.
 
 ### 11.2 Fewer guest API calls
@@ -836,8 +930,9 @@ The customer is in a foreground browser tab, so a Firestore listener is fine her
 - **One quote:**
   - remove the quote in `initiateOnlinePaymentTransaction` (`payment-repository.ts` 56);
   - debounce the quote after review edits (`use-review-order.ts` 182) by 500 ms;
-  - delete `refreshPriceAuthoritatively`.
-- **Dead code:** `src/hooks/use-payment.ts` and the redirect-only payment page logic.
+  - delete `refreshPriceAuthoritatively` (already has no callers).
+- **Draft load:** the mount effect in `use-review-order.ts` (90–117) copies `loadDraft` (56–85). Call `loadDraft` instead, so the debounce and the cart reuse apply in one place.
+- **Dead code:** `src/hooks/use-payment.ts` (no importers) and the redirect-only payment page logic.
 
 ### 11.3 The proxy stays
 
@@ -859,7 +954,7 @@ Revisit above about 2,000 orders a day.
 - **Idle check:** a PC open 1 hour with no orders.
   - 0 API requests (logs);
   - 0 Firestore reads (Monitoring);
-  - doorbell bytes within the spike's measured budget (Realtime Database usage).
+  - doorbell bytes at about 10 KB or less for the hour (Realtime Database usage). The spike measured about 6.4 KB.
 
 ### 12.3 Budget and usage alerts
 
@@ -869,7 +964,9 @@ Revisit above about 2,000 orders a day.
   - writes above 16,000/day;
   - Cloud Run requests above 50,000/day;
   - Realtime Database sent bytes on pace for more than 7 GB/month.
-- **Log-based metric** on `ring_failed`; alert above 10 an hour.
+- **Log-based metrics:**
+  - `ring_failed`: alert above 10 an hour. Rings that never landed leave work waiting (6.9);
+  - `ring_unknown`: chart only. A timeout that probably landed.
 
 ---
 
@@ -879,36 +976,39 @@ Estimates are for one engineer who knows the code. Dependencies are by task ID.
 
 ### Phase 0: gate
 
-| ID | Task | Depends on | Estimate | Done when |
+| ID | Task | Depends on | Estimate | Status / done when |
 | --- | --- | --- | --- | --- |
-| P0-01 | Firebase project setup: `firebase.json`, `.firebaserc`, Realtime Database in `asia-southeast1`, web app registration, key restrictions, env values (7.1, 7.5) | — | 0.5 d | All three emulators start; config values recorded |
-| P0-02 | Doorbell spike (3.2) | P0-01 | 1 d | Results table filled in this doc; keep-alive interval and bytes/hour recorded; go/no-go decided |
+| P0-01 | Firebase project setup: `firebase.json`, `.firebaserc`, web app registration, key restrictions, env values (7.1, 7.5) | — | 0.5 d | **Partly done.** The Realtime Database instance already exists (`meetctrlp-default-rtdb`, `asia-southeast1`), and the 7.2 Realtime Database rules are deployed on `meetctrlp`. Still needed: the files, the emulators, a staging project, key restrictions and env values. Done when all three emulators start and the config values are recorded. |
+| P0-02 | Doorbell spike (3.2) | — | 1 d | **Done, 15 Oct 2026: go.** |
+| P0-03 | Field checks on shop networks (3.3) | P0-02 | 1 d (mostly waiting) | All 3.3 rows recorded in this doc. Runs alongside Phase 1. **Gates shipping the agent to shops, not coding.** |
+| P0-04 | Spike clean-up: `node scripts/setup.mjs cleanup --keep-rules` in `spikes/doorbell` (deletes the test user and `/doorbell/spike`, keeps the 7.2 rules). Delete the shop-kit copies, and `spikes/doorbell/.secrets/` and `shop-kit/` on the dev PC. | P0-03 | 0.1 d | The `doorbell-spike-agent` user is gone from `meetctrlp`. |
 
 ### Phase 1: foundation (server, rules, model)
 
 | ID | Task | Depends on | Estimate | Done when |
 | --- | --- | --- | --- | --- |
+| P1-00 | **Security, do first:** gate the mock payment route behind `ALLOW_MOCK_PAYMENTS` (6.2) | — | 0.1 d | The route returns 404 in production; a test covers both settings. Can ship on its own today. |
 | P1-01 | Firestore and Realtime Database rules, with tests (7.2, 7.3) | P0-01 | 1 d | All tests in 7.3 pass |
 | P1-02 | Indexes file and deploy (7.4) | P0-01 | 0.25 d | Indexes built in staging |
-| P1-03 | `ShopPrincipal` auth, claims required, route audit (5.1, 6.1) | — | 1 d | No `lookupIdToken` on request paths; audit table in the PR |
+| P1-03 | `ShopPrincipal` auth, claims required, registration returns a token with claims, logout `allDevices`, route audit (4.7, 5.1, 6.1) | — | 1.25 d | No `lookupIdToken` on request paths; a newly registered user's first API call succeeds; audit table in the PR |
 | P1-04 | Guest `firebaseToken` on session start (5.4) | P1-03 | 0.25 d | The emulator can sign in with it |
-| P1-05 | `applyOrderChange`, lifecycle, drop `statusHistory`, transitions by status, server-timestamp `updatedAt` on orders and jobs, `searchKeys`, `completedDocumentIds`, tracking copy (4.1–4.3, 6.2) | — | 2 d | Every writer uses the helper; unit tests for transitions and the copy |
+| P1-05 | `applyOrderChange` for every writer in 4.1, lifecycle, drop `statusHistory`, transitions by status, payment confirm idempotent by state, one active job per document, `searchKeys`, `completedDocumentIds`, tracking copy (4.1–4.3, 6.2) | — | 2.25 d | Every writer uses the helper; unit tests for transitions, the copy, and the dispatch guards |
 | P1-06 | `ringShop` and every call site in the ring table; `FIREBASE_DATABASE_URL` (6.9) | P1-05, P0-01 | 0.75 d | Rings visible in the emulator for each event; failures logged, never thrown |
 | P1-07 | Op counters and budget alerts (12.1, 12.3) | — | 0.5 d | Log lines in staging; alerts configured |
-| **Phase 1** | | | **5.75 d** | |
+| **Phase 1** | | | **6.35 d** | |
 
 ### Phase 2: agent-driven delivery
 
 | ID | Task | Depends on | Estimate | Done when |
 | --- | --- | --- | --- | --- |
-| P2-01 | Server `sync` and `report`, retry lease fix, routing preference, accept `agentId`, remove server auto-accept, `devices/offline` printers, `lastActiveAt`, maintenance job (6.3, 6.5–6.7, 6.10) | P1-03, P1-05, P1-06 | 2.5 d | Unit tests (auto-accept race, claim, leases, replays, READY, shred retry); old agent routes deleted |
+| P2-01 | Server `sync` (with re-delivery) and `report`, retry rescue and re-routing, routing preference, accept `agentId`, remove server auto-accept, `devices/offline` printers, `lastActiveAt`, maintenance job (6.3, 6.5–6.7, 6.10) | P1-03, P1-05, P1-06 | 3 d | Unit tests (auto-accept race, claim, re-delivery, leases, replays, READY, shred retry, shared-document delete guard, retry from each state); old agent routes deleted |
 | P2-02 | Server `board`, history and search endpoints (6.4) | P1-05 | 1 d | Delta correctness tests (overlap, duplicate removal, caps, left-active-set) |
-| P2-03 | Agent `FirebaseTokenManager` and `DoorbellClient`, with the polling fallback and tests (10.2, 10.3) | P0-02 | 2 d | Tests 10.6 #1–3 pass; runs against staging for 3 hours without leaks |
+| P2-03 | Agent `FirebaseTokenManager` and `DoorbellClient`, with the polling fallback and tests (10.2, 10.3). Port `SseParser.cs`, `TokenClient.cs` and the outcome rules from `spikes/doorbell/listener/`. | P0-02 | 1.5 d | Tests 10.6 #1–3 pass; runs against staging for 3 hours without leaks |
 | P2-04 | Agent `AgentSyncService`, `ReportOutbox`, SQLite migration, download client, with tests (10.4–10.6) | P2-01, P2-03 | 2 d | Tests 10.6 #4–6 pass; end-to-end print in staging |
-| P2-05 | Rust `notify`, commands, native notifications, `agent:ready`; C# protocol and handlers (9, 10.1) | — | 0.75 d | Notifications arrive; a toast shows while minimized; handler latency test passes |
-| P2-06 | Desktop: token from the agent, boot, login and sign-out, board client with visibility, connection badge, history and search, stale-queue nudge (8.2–8.6) | P2-02, P2-05 | 1.5 d | Orders screen works with no stream; board-merge tests pass |
+| P2-05 | Rust `notify`, commands, native notifications, `agent:ready`, `--parent-pid`; C# protocol, handlers, and shutdown that marks the PC offline (9, 10.1) | — | 1 d | Notifications arrive; a toast shows while minimized; handler latency test passes; closing the app ends the agent and marks its printers OFFLINE |
+| P2-06 | Desktop: token from the agent, boot, login and sign-out, board client with visibility, connection badge, history and search, stale-work nudge, retry on stuck jobs (8.2–8.6) | P2-02, P2-05 | 1.5 d | Orders screen works with no stream; board-merge tests pass |
 | P2-07 | Removals (8.7, 6.6) and docs (section 17) | P2-04, P2-06 | 0.5 d | Grep finds none of the removed symbols; docs updated |
-| **Phase 2** | | | **10.25 d** | |
+| **Phase 2** | | | **10.5 d** | |
 
 ### Phase 3: customer side and trims
 
@@ -919,14 +1019,15 @@ Estimates are for one engineer who knows the code. Dependencies are by task ID.
 | P3-03 | `minInstances: 0`, `deployment.md`, staging cost and idle runs (12.2) | P2-07 | 0.5 d | Cost check and idle check pass |
 | **Phase 3** | | | **3.5 d** | |
 
-**Total: about 21 days** (Phase 0: 1.5, Phase 1: 5.75, Phase 2: 10.25, Phase 3: 3.5).
+**Total remaining: about 22 days** (Phase 0: 1.6 for P0-01, P0-03 and P0-04; Phase 1: 6.35; Phase 2: 10.5; Phase 3: 3.5). P0-02 (1 day) is done.
 
 **Paths through the work:**
 
-- **Critical path:** P0-01 → P0-02 → P2-03 → P2-04 → end to end.
+- **Critical path:** P2-03 → P2-04 → end to end (P0-02 is done). P0-03 must pass before the agent ships to shops.
 - **Server line:** P1-03 → P1-05 → P1-06 → P2-01 → P2-02.
 - **UI line:** P2-05 → P2-06.
 - **Two engineers** (server and rules; desktop and agent) finish in about 2.5 weeks.
+- **Start now:** P1-00 (ships on its own), P0-01, P1-03 and P1-05 on the server line; P0-03 field checks in parallel; P2-03 and P2-05 on the agent line, since they don't need the server changes.
 
 **Release order** (no existing users): indexes → rules (both databases) → server → desktop installer → web app.
 
@@ -938,14 +1039,15 @@ Estimates are for one engineer who knows the code. Dependencies are by task ID.
 
 | Area | Cases |
 | --- | --- |
-| Server: auth | Valid token and claims → principal; missing claims → 401; expired → 401; wrong shop → 403 |
-| Server: orders | Transition table (replay → no write; wrong state → 409); lifecycle times; tracking copy only for guest orders and only on visible changes; server-timestamp `updatedAt`; `searchKeys` |
-| Server: sync | Auto-accept only when enabled and paid; a race between two agents → one accept; queued jobs prefer the caller; claim only this agent's QUEUED jobs; `more`; ring decisions |
-| Server: report | Replay `ok`; `lease_mismatch`; `invalid_state`; READY after the last document (also with duplicate jobs); a failed delete → `retry`; retry clears the lease |
+| Server: auth | Valid token and claims → principal; missing claims → 401; expired → 401; wrong shop → 403; registration returns a token that carries claims; logout revokes only with `allDevices: true` |
+| Server: orders | Transition table (replay → no write; wrong state → 409); lifecycle times; tracking copy only for guest orders and only on visible changes; server-timestamp `updatedAt`; `searchKeys`; payment confirm on an already PAID order → no write, no ring; mock confirm → 404 without `ALLOW_MOCK_PAYMENTS`; accept replay → no second queue; dispatch → `JOB_ACTIVE` / `DOCUMENT_SHREDDED` |
+| Server: sync | Auto-accept only when enabled and paid; a race between two agents → one accept; queued jobs prefer the caller; claim only this agent's QUEUED jobs; re-deliver this agent's DISPATCHING jobs older than 15 minutes with the same lease and a fresh URL, and not younger ones; `more`; ring decisions |
+| Server: report | Replay `ok`; `lease_mismatch`; `invalid_state`; READY after the last document (also with duplicate jobs); a failed delete → `retry`; no delete while another active job uses the document |
+| Server: retry | From FAILED, from QUEUED, and from DISPATCHING older than 15 minutes (but not younger); clears the lease; a new printer sets `agentId`, `printerName` and `printerSystemName`; a disabled printer is refused |
 | Server: board | Full versus delta; 5 s overlap; caps → full; left-active-set; jobs by `updatedAt` |
-| Server: ring | Body shape; awaited; one retry; never throws; coalesced per request |
+| Server: ring | Body shape; awaited; one retry; never throws; coalesced per request; timeout → `ring_unknown`, HTTP error → `ring_failed` |
 | Server: guest | Cookie sign and verify, expiry, IP mismatch, tampering; config cache |
-| Desktop (Vitest) | Board merging (snapshot, delta, duplicates, moving out of active tabs); visible-only fetch with a dirty flag; stale-queue nudge; shop-time date parameters |
+| Desktop (Vitest) | Board merging (snapshot, delta, duplicates, moving out of active tabs); visible-only fetch with a dirty flag; stale-work nudge (queued job and paid unaccepted order); shop-time date parameters |
 | Agent (xUnit) | 10.6 |
 | Rules | 7.3 |
 
@@ -956,17 +1058,20 @@ Estimates are for one engineer who knows the code. Dependencies are by task ID.
 | E1 | ONLINE order, 2 files, window visible | Auto-accepted by `sync`; claimed; printed; READY. Payment → claim p95 under 2 s (warm). |
 | E2 | Same, window **minimized for 1 hour** beforehand | Same timings. A native toast "New order" appears. |
 | E3 | CASH order while minimized | Native toast; the operator restores the window, sees it on the board, accepts; printed; READY; cash; COMPLETED |
-| E4 | App closed when a paid order arrives | The order stays SUBMITTED; the customer sees "hasn't confirmed" after 10 minutes. App opened → first doorbell value → `sync` → accepted and printed. |
+| E4 | App closed when a paid order arrives | Closing the app ended the agent and marked its printers OFFLINE. The order stays SUBMITTED; the customer sees "hasn't confirmed" after 10 minutes. App opened → first doorbell value → `sync` → accepted and printed. |
 | E5 | Job fails → operator retries | FAILED → QUEUED (new lease); the stale report is rejected; prints on retry |
 | E6 | Network cut for 2 minutes during printing | The report is queued, then sent; no duplicate print; the doorbell reconnects |
 | E7 | Network cut for 40 minutes; Windows sleep and resume | The doorbell reconnects; the first value triggers `sync`; nothing missed |
-| E8 | Session longer than 3 hours | Hourly `auth_revoked` → refresh → reconnect; no 401s on the API |
+| E8 | Session longer than 3 hours | Refresh at 55 minutes; hourly `auth_revoked` → reconnect with the cached token, back within 5 s; no 401s on the API |
 | E9 | Two PCs, one paid order | One accept wins; jobs go to the winner's printers; the other PC claims nothing |
 | E10 | Sign out, then a different shop signs in on the same PC | Doorbell switches shop; reports for the first shop are held |
-| E11 | Stream blocked on a test network | Polling fallback within 10 minutes; jobs still arrive within about 60 s |
+| E10b | Same login on PCs A and B; sign out on A | B stays signed in and keeps printing past the next hourly refresh |
+| E11 | Stream buffered or blocked on a test network (or a P0-03 shop network that failed) | Polling fallback within 5 minutes; jobs still arrive within about 60 s. Wi-Fi off for 2 minutes on a good network does **not** switch to polling. |
 | E12 | Customer tracking from payment to handover | Live updates; 0 API requests after load; fallback works with Firestore blocked |
 | E13 | Idle PC for 1 hour | 0 API requests; 0 Firestore reads; doorbell bytes within budget |
-| E14 | A ring fails (inject an error) | The next ring, reconnect or "Sync now" catches up; `ring_failed` is logged |
+| E14 | The `order_paid` ring fails (inject an error), window minimized | `ring_failed` is logged. The order waits until the next work ring, an agent restart, or "Sync now". The stale-work nudge (8.4) also catches it the next time the board is fetched: any board ring for the shop while visible, or focus or restore. An agent reconnect alone doesn't. |
+| E15 | Kill the agent right after `sync` returns a claimed job, before it's queued locally; restart the app more than 15 minutes later | The next `sync` re-delivers the job with the same lease; it prints once. Killing it **after** printing but before the report: re-delivery is skipped locally, and the outbox reports it. |
+| E16 | A PC dies for good with a job DISPATCHING | After 15 minutes the operator retries it to another printer; it prints there; a late report from the dead PC gets `lease_mismatch` |
 
 ### 14.3 Cost acceptance
 
@@ -1021,7 +1126,8 @@ API: SHOP_ACCEPTED, jobs QUEUED (this PC first) → ring {workAt} → agent sync
 ### 15.4 Token renewal on the stream
 
 ```text
-~60 min: Realtime Database sends auth_revoked → agent: Secure Token API → new idToken → reopen stream
+55 min: agent refreshes the ID token (Secure Token API); the open stream keeps its old token
+60 min: Realtime Database sends auth_revoked → agent reopens the stream with the cached fresh token (no second refresh)
 First put carries the current value → workAt unchanged → no sync
 ```
 
@@ -1039,7 +1145,22 @@ A late report with the old lease → lease_mismatch → agent marks it rejected
 
 | Finding | Where | Handled by |
 | --- | --- | --- |
-| A minimized WebView2 window doesn't deliver listener updates; Tauri's throttling switch is WebKit-only | Spike 3.1 | This revision (agent-held doorbell) |
+| A minimized WebView2 window doesn't deliver listener updates; Tauri's throttling switch is WebKit-only | Spike 3.1 | Revision 2 (agent-held doorbell) |
+| **Rev 3:** the draft fallback rule ("5 failed connects in 10 minutes") put a PC on polling for 30 minutes after a 33 s Wi-Fi drop | Spike 3.2 | 10.3: only broken streams count, 3 in a row |
+| **Rev 3:** ring PATCHes that time out may already have landed | Spike 3.2 | 6.9: `ring_unknown` versus `ring_failed`; 12.3 |
+| **Rev 3:** the draft said an agent reconnect catches up a lost ring. It doesn't, because the doorbell value never changed | 6.9, E14, design doc 11 | 6.9 lists what does catch up; 8.4 nudge also covers paid orders waiting for auto-accept; design doc decision 9 |
+| **Rev 3:** with a 55-minute proactive refresh, refreshing again on `auth_revoked` wastes a call | 10.2 | Reconnect with the cached token |
+| **Rev 3, security:** the mock payment route has no environment check; any guest can mark their own ONLINE order PAID in production | `payments/mock-confirm/route.ts`, `print-user.service.ts` 439 | **P1-00** (do first) |
+| **Rev 3:** the agent outlives the window (`--parent-pid` isn't passed), and keeps polling and printing with its agent key after the app closes and after sign-out | `boot.rs` 16, `Program.cs` 70–73 | 9.1, 10.1; design doc decision 10 |
+| **Rev 3:** sign-out revokes refresh tokens, which signs the same login out on every PC | `auth.service.ts` 261 | 5.1: revoke only with `allDevices` |
+| **Rev 3:** the registration ID token is minted before the claims are set | `auth.service.ts` 189, 207 | 4.7: refresh after setting claims |
+| **Rev 3:** there's no lease expiry; a job claimed by an agent that dies before queuing it stays DISPATCHING forever, and no UI can rescue it | `print-job.service.ts` 263–277 | 6.3: re-delivery in `sync`; retry from stuck DISPATCHING |
+| **Rev 3:** an accept replay queues a second set of jobs; manual dispatch can create duplicate jobs for a document; a shredded document can still be dispatched | accept route 20–22; `print-job.service.ts` 484–624, 893–929 | 4.3, 6.3, 6.5 |
+| **Rev 3:** retry with a new printer keeps the old `agentId` and system printer name | `print-job.service.ts` 871 | 6.3 |
+| **Rev 3:** payment confirmation isn't idempotent by state; a new key rewrites the payment reference | `confirmOnlinePayment` | 6.2 |
+| **Rev 3:** local cancel isn't reported to the cloud except by the sweep | `jobs.cancel` handler | 10.5 |
+| **Rev 3:** the guest cookie is the raw `printUserId` | `print-user-http.ts` 25 | 6.8 (signed cookie, P3-02) |
+| **Rev 3:** local-storage download links are signed with the client-visible `FIREBASE_WEB_API_KEY` (local backend only) | `document.service.ts` 58 | Separate ticket: use a server-only secret |
 | Shredding marks `shreddedAt` but never deletes the storage object | `confirmDocumentShredded` | P2-01 |
 | Files of rejected or cancelled orders are never deleted | — | P2-01 (maintenance) |
 | `retryPrintJob` keeps the old lease and timestamps | `print-job.service.ts` about 869 | P2-01 |
@@ -1062,22 +1183,23 @@ Done in P2-07, except where noted.
 
 | Doc | What changes |
 | --- | --- |
-| [`PRINT_SHOP_DESKTOP.md`](./PRINT_SHOP_DESKTOP.md) | Status line; §1 ("agent independently polls" → wakes on the doorbell); §2 (REST + SSE → REST + agent doorbell); §4 methods and commands tables plus the polling paragraph; §9 auth (the agent owns token refresh; no heartbeat) |
-| [`Order_to_Print_Execution_Runbook.md`](../developer-requirement/desktop-app/Order_to_Print_Execution_Runbook.md) | "Shipped flow" steps 5 and 7 (doorbell → `sync` → report outbox); credentials (the agent holds the user's refresh token and ID token, no agent key); synchronizer tests now exist |
-| `apps/print-shop/AGENTS.md` | Line 60: no SSE; the board comes from `board?since=` on `board.changed`. Line 16 ("no Firebase SDK") stays true. |
-| `apps/print-agent/AGENTS.md` | Sync-loop rules at 87–92 (doorbell-driven `sync`, report outbox). Line 79 ("no Firebase SDK") stays true; note that the doorbell is plain HTTPS. |
+| [`PRINT_SHOP_DESKTOP.md`](./PRINT_SHOP_DESKTOP.md) | Status line; line 45 ("Detached single-instance process" → exits with the app); §1 ("agent independently polls" → wakes on the doorbell); §2 (REST + SSE → REST + agent doorbell); §4 methods and commands tables plus the polling paragraph; §9 auth (the agent owns token refresh; no heartbeat) |
+| [`Order_to_Print_Execution_Runbook.md`](../developer-requirement/desktop-app/Order_to_Print_Execution_Runbook.md) | "Shipped flow" steps 5 and 7 (doorbell → `sync` → report outbox); credentials (the agent holds the user's refresh token and ID token, no agent key); point to the new agent tests (10.6). None exist for the synchronizer today. |
+| `apps/print-shop/AGENTS.md` | Line 16: replace "server-mediated SSE" with the board from `board?since=` on `board.changed`; "no Firebase SDK" stays true. Line 60 (login) stays. |
+| `apps/print-agent/AGENTS.md` | Line 87 (device-scoped credential, becomes the user's ID token) and the sync-loop rules at 88–93 (doorbell-driven `sync`, report outbox, de-duplication by job and lease). Line 18 (refresh token: now also used by the agent), line 19 (detached: now exits with the app) and line 33 (tests list). Line 79 ("no Firebase SDK") stays true; note that the doorbell is plain HTTPS. |
 | [`apps/server/docs/auth.md`](../../apps/server/docs/auth.md) | Claims-based principal (P1-03) |
 | [`apps/server/docs/print-user.md`](../../apps/server/docs/print-user.md) | Signed cookie, `firebaseToken`, tracking copy (P3-02) |
 | [`apps/server/docs/deployment.md`](../../apps/server/docs/deployment.md) | Remove the SSE section; `minInstances: 0`; `FIREBASE_DATABASE_URL`, `PRINT_USER_COOKIE_SECRET`; client Firebase env (P3-03) |
 | [`packages/firebase/docs/`](../../packages/firebase/docs/) | Point to the real rules and indexes; document `createCustomToken` and `getServiceAccessToken` (P1-01) |
-| [`DESKTOP_TRAFFIC_SCALING_PLAN.md`](./DESKTOP_TRAFFIC_SCALING_PLAN.md) | Spike results (P0-02); mark phases done |
+| [`DESKTOP_TRAFFIC_SCALING_PLAN.md`](./DESKTOP_TRAFFIC_SCALING_PLAN.md) | Spike results: **done** in version 2.2. Still to do: P0-03 results, and mark phases done as they land. |
+| This document | Fill in the 3.3 table (P0-03) |
 
 ---
 
 ## 18. Out of scope
 
 - A live "online now" indicator (design doc 9.1).
-- Running the agent as a Windows service (design doc 9.2).
+- Running the agent as a Windows service, or keeping it running after the app closes (design doc 9.2 and decision 10).
 - Firestore listeners in the desktop window while visible (design doc 9.3).
 - Moving print jobs to `shops/{shopId}/printJobs` (design doc 9.4).
 - Removing the web app proxy (design doc 8.4).

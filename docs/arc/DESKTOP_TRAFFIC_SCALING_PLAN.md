@@ -1,6 +1,7 @@
 # Desktop traffic and server load: serverless plan
 
-> **Status:** Proposed, version 2.1, 15 Oct 2026. Revised after the minimized-window spike: a minimized WebView2 window doesn't deliver Firestore listener updates reliably, so nothing time-critical may run in the desktop's web view. Nothing in this document is implemented yet. Version 1 (server hub and SSE) is in git history (`ccadc8b`).
+> **Status:** **Accepted**, version 2.2, 15 Oct 2026. The doorbell spike passed (7.1): the stream delivered every ring, with p95 latency of 77 ms, an idle cost of about 6.4 KB per PC-hour, and clean recovery at token expiry. Field checks on real shop networks are still running (implementation plan 3.3). Nothing in this document is implemented yet.
+> **History:** version 2.1 was revised after the minimized-window spike: a minimized WebView2 window doesn't deliver Firestore listener updates reliably, so nothing time-critical may run in the desktop's web view. Version 1 (server hub and SSE) is in git history (`ccadc8b`).
 > **Hosting:** Firebase App Hosting (serverless, on Cloud Run). See [`apps/server/docs/deployment.md`](../../apps/server/docs/deployment.md).
 > **Implementation plan:** [`TRAFFIC_SCALING_V2_IMPLEMENTATION.md`](./TRAFFIC_SCALING_V2_IMPLEMENTATION.md) lists the file-level changes, contracts, work breakdown and tests.
 > **Scope:** `apps/server`, `apps/print-shop` (desktop UI), `apps/print-agent` (C# agent), and the customer web app `apps/printUserWebapp`.
@@ -30,7 +31,7 @@
 | Our server requests/day | ~2.9 M | ~260 k | **~45 k** |
 | Firestore reads/day | ~8.6 M | ~0.3 M | **~55–60 k** |
 | Firestore writes/day | ~1.4 M | ~0.3 M | **~30 k** |
-| Realtime Database download/month | — | — | **~3–5 GB (10 GB free)** |
+| Realtime Database download/month | — | — | **~2.5 GB measured idle cost, plus rings (10 GB free)** |
 | Instances kept running by open streams | 1+ all day | 1–13 all day | **none** |
 | Cost while no orders arrive | ~$120–235/month | ~$85+/month | **~$0** |
 
@@ -106,7 +107,10 @@ Findings from reading the code.
 - **Printers are never marked offline** when the app closes.
 - **Agent online status has no reader.** Its `status`/`lastSeenAt` are written on every heartbeat and read only by the sweep that marks agents stale.
 - **About 5–7 agent requests per job:** claim, document ticket, a status `PATCH` per local event, a shred confirmation, and re-reports.
-- **The agent dies with the app.** It's a sidecar spawned by Tauri and killed when the app exits. It talks to the UI over the named pipe `\\.\pipe\ctrlp-print-agent`.
+- **The agent outlives the window.** It's a detached, per-user, single-instance sidecar. Tauri never kills it, and `--parent-pid` isn't passed, so after the app closes, and even after sign-out, it keeps polling and printing with its agent key. It talks to the UI over the named pipe `\\.\pipe\ctrlp-print-agent`. This plan makes it exit with the app (decision 10).
+- **The mock payment route has no environment check.** In production any guest can mark their own ONLINE order PAID (implementation plan P1-00).
+- **Sign-out revokes refresh tokens,** which signs the same login out on every PC.
+- **There's no lease expiry.** A job claimed by an agent that dies before queuing it stays DISPATCHING forever.
 
 ### 3.3 Cost of today's code
 
@@ -209,7 +213,7 @@ Example: an ONLINE order with 2 files, API instance warm. Times are estimates to
 | Need | How it's met | Cost |
 | --- | --- | --- |
 | Don't auto-accept a paid order no PC will print | The **agent's `sync`** auto-accepts paid orders. With no PC running, nobody syncs and the order waits as `SUBMITTED` and paid. | 0 extra |
-| Don't route jobs to a PC that's off | Accept, whether from `sync` or the Accept button, routes to the caller's printers first. Printers are marked OFFLINE on sign-out and window close (best effort). | 1 request per exit |
+| Don't route jobs to a PC that's off | Accept, whether from `sync` or the Accept button, routes to the caller's printers first. Printers are marked OFFLINE on sign-out, and by the agent as it exits with the app (best effort). A job stuck on a dead PC can be retried to another printer after 15 minutes. | 1 request per exit |
 | Tell the customer the shop hasn't seen the order | The tracking page shows "The shop hasn't confirmed your order yet" after 10 minutes in `SUBMITTED`. | 0 |
 | "Last active" in admin views | `lastActiveAt` on the device, written at most every 10 minutes on requests the PC already makes. | ≤6 writes per active hour, 0 when idle |
 
@@ -237,6 +241,7 @@ A live "online now" indicator isn't needed. If it becomes one, see 9.1: it costs
 - Custom claims `{ shopId, shopUserId, role }` are already set at registration. Make that step required: today a failure is only logged.
 - Read principal fields from the token. No `authLookups` or user reads on the request path.
 - **Deactivating staff:** disable the Firebase user and revoke refresh tokens. The agent's next token refresh fails, and existing ID tokens expire within an hour. Sensitive routes check revocation immediately.
+- **Ordinary sign-out doesn't revoke** (decision 11), because one login often runs on several PCs.
 
 ### 6.2 Doorbell
 
@@ -282,31 +287,40 @@ A live "online now" indicator isn't needed. If it becomes one, see 9.1: it costs
 
 ## 7. Phase 2: agent-driven delivery
 
-### 7.1 First, a doorbell spike (half a day to a day)
+### 7.1 Doorbell spike: passed (15 Oct 2026)
 
-A C# console app streams `/doorbell/{testShop}.json` with an ID token, while a script rings it.
+A C# console app streamed `/doorbell/spike.json` with an ID token while a script rang it. The run lasted 72 minutes on the dev PC, against project `meetctrlp`. Full results are in implementation plan 3.2 and `spikes/doorbell/README.md`.
 
-**Measure:**
+| Measured | Result |
+| --- | --- |
+| Commit → event latency | p50 54 ms, p95 77 ms (target under 500 ms) |
+| Missed values | None. Everything that reached the database arrived. |
+| Keep-alive interval | 30 s, so the watchdog is 65 s |
+| Idle bandwidth | About 6.4 KB per connection-hour (budget 25 KB) |
+| Token expiry | `auth_revoked` at exactly 60 minutes; back in 1.3 s with the latest value |
+| Rules | A shop reads only its own doorbell; nobody writes |
 
-- ring-to-event latency (target p95 under 500 ms);
-- the keep-alive interval and bytes per hour per connection (Realtime Database usage page);
-- `auth_revoked` at token expiry, and reconnection;
-- 307 redirect handling;
-- behaviour across network drops, Windows sleep, and a shop-like network with a proxy or antivirus HTTPS scanning.
+**What it changed:**
 
-**If a network buffers or blocks the stream,** use the fallback in 7.2: polling the tiny doorbell value.
+- The polling fallback now counts only *broken* streams, 3 in a row. The draft rule ("5 failed connects in 10 minutes") put a PC on polling for 30 minutes after a 33-second Wi-Fi drop.
+- A ring that times out may still have landed, so it's logged as "unknown".
+
+**Still open:** real shop networks (especially antivirus HTTPS scanning), a 40-minute cut, sleep/resume, and the console's bandwidth figure. If a network buffers or blocks the stream, use the fallback in 7.2: polling the tiny doorbell value.
 
 ### 7.2 Agent
 
 - **Token owner:** refreshes the ID token with Google's Secure Token API using the refresh token already in Credential Manager. It refreshes at 55 minutes, or on `auth_revoked` or a 401.
 - **Doorbell stream:**
   - one `HttpClient` SSE stream with an automatic reconnect;
-  - a watchdog that reconnects if nothing arrives within 2× the keep-alive interval;
+  - a watchdog that reconnects if nothing arrives within 65 s (2× the measured 30 s keep-alive, plus slack);
+  - switches to polling only after 3 broken streams in a row. Being offline doesn't count;
   - remembers the last handled `workAt` and `boardAt`.
 - **On `workAt` change** (including the first value after any reconnect): call `sync`, and repeat while `more` is true.
 - **On `boardAt` change:** send `board.changed` to the UI.
 - **On `last.type` = `order_submitted` or `order_paid`:** send `orders.attention`. The Rust side shows a native notification and flashes the taskbar, independent of the web view.
 - **Print and report:** unchanged locally. One final report per job goes through a SQLite outbox, with retries only on network errors, 429 and 5xx. 404 and 409 are final.
+- **Never print twice:** a job already known locally with the same lease is skipped, whatever its state.
+- **Lifetime:** the agent exits with the desktop app and marks the PC's printers OFFLINE on the way out (decision 10).
 - **Fallback if the stream can't stay up** (from the spike): a plain `GET /doorbell/{shopId}.json` every 60 s. It costs Realtime Database bandwidth only, no Firestore reads or server requests.
 
 ### 7.3 Server endpoints
@@ -314,7 +328,8 @@ A C# console app streams `/doorbell/{testShop}.json` with an ID token, while a s
 - **`POST .../agents/{agentId}/sync`:**
   1. Auto-accepts up to 10 paid `SUBMITTED` orders (if the shop's `autoAcceptPaidOnline` is on), routing to this agent's printers first.
   2. Claims up to 10 QUEUED jobs for this agent.
-  3. Returns `{ accepted, claimed (with download URLs), more }`.
+  3. Re-delivers this agent's jobs that have been DISPATCHING for more than 15 minutes, with the same lease and a fresh URL. This recovers from an agent that died between the claim and queuing the job locally.
+  4. Returns `{ accepted, claimed (with 60-minute download URLs), more }`.
 - **`POST .../agents/{agentId}/jobs/report`:** batch final reports. Checks the lease, updates `completedDocumentIds`, sets READY after the last document, deletes the storage object on COMPLETED (the report succeeds only once the object is deleted), and rings `boardAt`.
 - **`GET .../board?since=`:**
   - without `since`: active orders and unfinished jobs;
@@ -424,9 +439,9 @@ App start ≈ 3 requests (me, register, board) and the board's first reads (abou
 
 | Usage | Requests/day | Reads/day | Writes/day | Realtime Database | Above the free tier, per month |
 | --- | --- | --- | --- | --- | --- |
-| 1,000 PCs open 12 h, no orders | ~3 k (app starts) | ~8 k | ~1 k | ~3–5 GB/month: keep-alives and hourly reconnects; the spike measures it | $0 |
+| 1,000 PCs open 12 h, no orders | ~3 k (app starts) | ~8 k | ~1 k | ~2.3 GB/month measured (6.4 KB per PC-hour for keep-alives and hourly reconnects); a PC on the polling fallback uses an estimated 30–60 KB/h | $0 |
 | + 1,000 orders/day | ~40–45 k (free: 66 k) | ~55–60 k (free: 50 k) | ~30 k (free: 20 k) | about the same | well under $1 |
-| + 10,000 orders/day | ~360 k | ~550 k | ~300 k | about the same | about $45–60 |
+| + 10,000 orders/day | ~360 k | ~550 k | ~300 k | about the same | about $45–60, plus about $1,200 if Identity Platform is on (guest sign-ins above 50 k MAU; see 15) |
 
 **What drives the cost:**
 
@@ -440,8 +455,8 @@ App start ≈ 3 requests (me, register, board) and the board's first reads (abou
 
 | Risk | Handling |
 | --- | --- |
-| A shop's network buffers or blocks the SSE stream | Spike first (7.1); keep-alive watchdog; fallback 60 s poll of the doorbell value (bandwidth only) |
-| A ring fails after a write | One retry. The next ring, the next reconnect (initial value) or the operator's "Sync now" catches up, because `sync` looks at state, not events. |
+| A shop's network buffers or blocks the SSE stream | Spike passed on broadband (7.1); shop networks checked before the agent ships (implementation plan 3.3); 65 s watchdog; fallback 60 s poll of the doorbell value after 3 broken streams (bandwidth only) |
+| A ring fails after a write | One retry, then a `ring_failed` alert. A ring that never landed leaves `workAt` unchanged, so an agent reconnect doesn't catch up. What does: the shop's next work ring, an agent restart, the desktop's stale-work nudge on the next board fetch, or the operator's "Sync now". All work, because `sync` looks at state, not events. Decision 9 covers an optional safety sync. A ring that times out may still have landed (spike), so timeouts are logged separately as `ring_unknown`. |
 | Realtime Database outage | Jobs wait. The operator's Accept or "Sync now" still works through the API. |
 | Merged rings drop a notification | Notifications are a convenience. The board, fetched on focus, shows every order. |
 | The agent's refresh token is revoked | The refresh fails; the agent reports `tokenValid: false`; the UI shows the login screen |
@@ -478,16 +493,18 @@ There are no existing users, so each phase replaces the old path outright.
 
 | Phase | Contents | Rough effort |
 | --- | --- | --- |
-| 0 | Firebase project setup (including Realtime Database) and the doorbell spike (7.1) | 1.5 days |
-| 1 | 6.1–6.5: local token checks, rules and indexes for both databases, data changes, ring helper, counters and alerts | about 5.5 days |
-| 2 | 7.2–7.5: agent token, doorbell, sync and outbox; server sync/report/board/history endpoints; desktop board and native notifications; removals | about 10 days |
+| 0 | Firebase project setup, the doorbell spike (7.1, **done**), shop-network field checks, spike clean-up | 1.6 days left |
+| 1 | 6.1–6.5: the mock-payment gate (first), local token checks, rules and indexes for both databases, data changes, ring helper, counters and alerts | about 6.35 days |
+| 2 | 7.2–7.5: agent token, doorbell, sync and outbox; agent lifetime; server sync/report/board/history endpoints with re-delivery and job rescue; desktop board and native notifications; removals | about 10.5 days |
 | 3 | 8.1–8.3: tracking listener, guest trims, `minInstances: 0` | about 3.5 days |
 
 The task-level breakdown is in the [implementation plan](./TRAFFIC_SCALING_V2_IMPLEMENTATION.md#13-work-breakdown).
 
 ---
 
-## 14. Decisions (proposed defaults)
+## 14. Decisions (accepted 15 Oct 2026)
+
+Accepted with the design. Each can be revisited on its own.
 
 1. **The agent auto-accepts paid orders** during `sync`, so paid orders wait while no PC is on. *Default: yes.*
 2. **Up to 1 hour of access after a staff member is deactivated.** Sensitive routes are immediate. *Default: accept.*
@@ -497,18 +514,22 @@ The task-level breakdown is in the [implementation plan](./TRAFFIC_SCALING_V2_IM
 6. **Old READY orders:** flag ones older than 3 days in the UI; no automatic status change. *Default: flag only.*
 7. **Web app proxy:** keep it until about 2,000 orders/day. *Default: keep.*
 8. **`minInstances: 0`** after Phase 2. *Default: yes.*
+9. **No safety sync on a timer.** A ring that never lands leaves paid orders and queued jobs waiting until the next work ring, an agent restart, the desktop's stale-work nudge, or "Sync now". The alternative is one `sync` per PC each time the stream reconnects for the hourly token. That bounds the wait to about an hour, and costs about 12 k requests and up to 24 k reads a day at 1,000 PCs (about $0.50/month), but it ends "idle means zero". *Default: no timer; turn it on if the `ring_failed` alert fires in practice.*
+10. **The agent exits with the desktop app.** Today it outlives the window and keeps printing with no one watching; nothing clears its credential at sign-out either. Tying it to the app (`--parent-pid`) keeps "closed app → paid orders wait" true, gives the shop an obvious way to stop taking orders, and lets the agent mark its printers OFFLINE on the way out. The alternative is to keep it running without the window: more uptime, but it would need a tray icon with "Pause orders" and a quit option, and it moves toward 9.2. *Default: exit with the app.*
+11. **Desktop sign-out doesn't revoke refresh tokens.** Revoking signs the same login out on every PC within the hour. Revocation stays for staff deactivation and an explicit "sign out all devices". *Default: don't revoke.*
 
 ---
 
 ## 15. Not verified yet
 
-- **Doorbell:**
-  - the keep-alive interval and bytes per connection-hour;
-  - ring-to-event latency from `asia-southeast1` to Indian shop networks;
-  - behaviour behind shop proxies and antivirus HTTPS scanning (7.1).
+- **Doorbell** (measured on the dev PC in 7.1; these remain for real shops, implementation plan 3.3):
+  - behaviour behind shop proxies and antivirus HTTPS scanning, and on mobile hotspots;
+  - reconnect after a 40-minute cut and after sleep/resume;
+  - bytes per connection-hour from the Firebase console (the spike's figure is a client-side estimate);
+  - a 307 redirect from the real database (none was seen).
 - **Simultaneous connections:** whether REST streams count toward the 200 k limit (irrelevant at 1,000 PCs).
 - **Firestore region and prices.**
-- **Identity Platform:** if enabled, each guest who signs in counts as a monthly active user (50 k free).
+- **Identity Platform:** if enabled, each guest who signs in counts as a monthly active user (50 k free, then about $0.005 each). The repo shows no sign of it; check the console before P3-01. It doesn't matter at 1,000 orders a day, but dominates the cost at 10,000.
 - **Per-order counts** in 10.1 are estimates from reading the code.
 - **Cold-start time** of the API on App Hosting.
 
@@ -526,7 +547,8 @@ The task-level breakdown is in the [implementation plan](./TRAFFIC_SCALING_V2_IM
 | Endpoint | `POST .../agents/{agentId}/sync`, `POST .../agents/{agentId}/jobs/report` | 2 |
 | Endpoint | `GET .../board?since=`, `GET .../orders?status=&from=&to=&cursor=`, `GET .../orders/search?q=` | 2 |
 | Pipe | UI → agent: `cloud.configure`, `cloud.session`, `cloud.clear`, `sync.request` (notifications); `cloud.getIdToken` (request). Agent → UI: `board.changed`, `orders.attention`, `cloud.state`. | 2 |
-| Behaviour | Payment confirmation no longer auto-accepts; the agent's `sync` does. Accept routes to the caller's printers first. | 2 |
+| Behaviour | Payment confirmation no longer auto-accepts; the agent's `sync` does. Accept routes to the caller's printers first. Retry also rescues QUEUED and stuck DISPATCHING jobs. The agent exits with the app. | 2 |
+| Behaviour | `POST /api/auth/logout` takes `{ allDevices? }` and revokes only when it's true. Registration returns a token with claims. The mock payment route needs `ALLOW_MOCK_PAYMENTS`. | 1 |
 | Removed | Heartbeat; agent jobs list; per-job claim, PATCH, document and shred routes; SSE stream; full order list; agent API key | 2 |
 | Removed | Guest tracking poll | 3 |
 
@@ -571,6 +593,7 @@ Neither set reads other documents, so rule checks cost nothing extra.
 | Collection | Scope | Fields | Used by |
 | --- | --- | --- | --- |
 | `printJobs` | Collection group | `shopId` ASC, `agentId` ASC, `status` ASC, `createdAt` ASC | `sync` claim |
+| `printJobs` | Collection group | `shopId` ASC, `agentId` ASC, `status` ASC, `claimedAt` ASC | `sync` re-delivery |
 | `printJobs` | Collection group | `shopId` ASC, `status` ASC | Board: unfinished jobs |
 | `printJobs` | Collection group | `shopId` ASC, `updatedAt` ASC | Board: job changes |
 | `orders` | Collection | `status` ASC, `payment.status` ASC | `sync` auto-accept |
@@ -585,14 +608,16 @@ Single-field automatic indexes cover the board's active orders (`status in [...]
 | --- | --- | --- |
 | Doorbell region | `asia-southeast1` | Firebase |
 | Agent token refresh | At 55 minutes, or on `auth_revoked` or 401 | Agent |
-| Stream watchdog | Reconnect after 2× the measured keep-alive interval with no event | Agent |
-| Stream reconnect backoff | 1 s doubling to 60 s with jitter, after failed connects only | Agent |
-| Doorbell poll fallback | 60 s, only when the stream can't stay up | Agent |
-| `sync` batch | Up to 10 accepts and 10 claims; repeat while `more` | Agent → API |
+| Stream watchdog | 65 s with no event (keep-alive measured at 30 s) | Agent |
+| Stream reconnect backoff | 1 s doubling to 60 s with jitter, after failed connects only; cut short by network-change and resume events | Agent |
+| Doorbell poll fallback | 60 s for 30 minutes, after 3 broken streams in a row (offline attempts don't count) | Agent |
+| `sync` batch | Up to 10 accepts, 10 claims and 10 re-deliveries; repeat while `more` | Agent → API |
+| Stuck job | DISPATCHING for more than 15 minutes: re-delivered by `sync`, and the operator may retry it elsewhere | API |
+| Agent download URL | 60 minutes | API |
 | Report retry | 1 s doubling to 5 min; network, 429 and 5xx only | Agent |
 | Board refresh | On `board.changed`, debounced 300 ms, only while visible; once on focus | Desktop UI |
 | Board overlap | `updatedAt > since − 5 s`, de-duplicated | API, UI |
-| Ring retry | Once, then log | API |
+| Ring retry | Once, then log: `ring_unknown` on timeout, `ring_failed` on an error | API |
 | `lastActiveAt` write | At most every 10 minutes, only on existing requests | API |
 | "Shop hasn't confirmed" warning | 10 minutes in `SUBMITTED` | Web app |
 | Shop config cache | 60 s per instance | API |
