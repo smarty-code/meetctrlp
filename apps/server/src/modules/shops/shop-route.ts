@@ -36,6 +36,17 @@ export async function withOwnShop(
   });
 }
 
+export function parseQuery<T>(request: Request, schema: RequestSchema<T>) {
+  const parsed = schema.safeParse(Object.fromEntries(new URL(request.url).searchParams));
+
+  if (!parsed.success) {
+    const first = parsed.error.issues[0];
+    throw new AuthServiceError(400, first?.message ?? "invalid query");
+  }
+
+  return parsed.data;
+}
+
 export async function parseBody<T>(request: Request, schema: RequestSchema<T>) {
   const parsed = schema.safeParse(await readJsonBody(request));
 

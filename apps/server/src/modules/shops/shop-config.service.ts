@@ -160,8 +160,26 @@ async function requireShopData(shopId: string) {
   return snapshot.data() as Record<string, unknown>;
 }
 
+const CONFIG_CACHE_MS = 60_000;
+const shopDataCache = new Map<string, { data: Record<string, unknown>; at: number }>();
+
+/** Drops this instance's cached shop document after a write to pricing, hours, automation or capabilities. */
+export function invalidateShopConfig(shopId: string) {
+  shopDataCache.delete(shopId);
+}
+
+/**
+ * The shop's config, from a 60 s per-instance cache of the shop document. "Open now" is computed
+ * on every call, so it stays current.
+ */
 export async function getShopConfigByShopId(shopId: string) {
-  return readConfig(await requireShopData(shopId));
+  const cached = shopDataCache.get(shopId);
+  if (cached && Date.now() - cached.at < CONFIG_CACHE_MS) {
+    return readConfig(cached.data);
+  }
+  const data = await requireShopData(shopId);
+  shopDataCache.set(shopId, { data, at: Date.now() });
+  return readConfig(data);
 }
 
 export async function getShopConfig(user: ShopPrincipal) {
@@ -193,6 +211,7 @@ export async function updateShopPricing(
     });
   });
 
+  invalidateShopConfig(user.shopId);
   return getShopConfig(user);
 }
 
@@ -218,6 +237,7 @@ export async function updateShopCapabilities(
     });
   });
 
+  invalidateShopConfig(user.shopId);
   return getShopConfig(user);
 }
 
@@ -234,6 +254,7 @@ export async function updateOrderAutomation(
       updatedAt: FieldValue.serverTimestamp(),
     });
   });
+  invalidateShopConfig(user.shopId);
   return getShopConfig(user);
 }
 
@@ -259,6 +280,7 @@ export async function updateShopHours(
     });
   });
 
+  invalidateShopConfig(user.shopId);
   return getShopConfig(user);
 }
 

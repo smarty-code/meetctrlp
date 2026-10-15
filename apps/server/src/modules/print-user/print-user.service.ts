@@ -13,7 +13,6 @@ import type {
 } from "@ctrlp/schemas";
 
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
-import { systemPrincipal } from "@/src/modules/auth/principal";
 import { inspectDocument } from "@/src/modules/documents/inspect-document";
 import {
   confirmOnlinePayment,
@@ -21,7 +20,6 @@ import {
   findPrintUserOrderByIdempotencyKey,
   getShopOrderById,
 } from "@/src/modules/orders/order.service";
-import { queueIncomingOrder } from "@/src/modules/printing/print-job.service";
 import { getShopConfigByShopId, quoteDocumentPrint } from "@/src/modules/shops/shop-config.service";
 import {
   MAX_FILE_BYTES,
@@ -451,17 +449,9 @@ export async function mockConfirmGuestPayment(session: PrintUserSession, orderId
     throw new AuthServiceError(409, allowed.reason);
   }
 
-  const result = await confirmOnlinePayment(session.shopId, orderId, {
+  const { order: paid } = await confirmOnlinePayment(session.shopId, orderId, {
     paymentReference: `mock-${orderId}`,
     idempotencyKey,
   });
-
-  if (result.autoAccepted) {
-    const config = await getShopConfigByShopId(session.shopId);
-    if (config.orderAutomation.autoDispatchAcceptedOrders) {
-      await queueIncomingOrder(systemPrincipal(session.shopId, "payment-provider"), orderId);
-    }
-  }
-
-  return result.order;
+  return paid;
 }

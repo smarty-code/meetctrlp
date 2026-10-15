@@ -1,8 +1,8 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { createPresignedDownloadUrl, uploadObject } from "@ctrlp/firebase";
+import { createPresignedDownloadUrl, deleteObject, isMissingObjectError, uploadObject } from "@ctrlp/firebase";
 import { getFirebaseWebApiKey } from "@ctrlp/firebase/config";
 import { FieldValue, getFirebaseFirestore } from "@ctrlp/firebase/firestore";
 import type { ShopPrincipal } from "@ctrlp/types";
@@ -12,6 +12,11 @@ import { inspectDocument } from "@/src/modules/documents/inspect-document";
 import { createShopOrder, getShopOrder, type OrderDto } from "@/src/modules/orders/order.service";
 
 const DOWNLOAD_TTL_SECONDS = 900;
+/**
+ * Agent downloads from `sync` last an hour: the agent can't ask for a fresh link, and ten files
+ * downloaded one after another on a slow shop line can take longer than 15 minutes.
+ */
+export const AGENT_DOWNLOAD_TTL_SECONDS = 3600;
 
 export type StoredOrderDocument = {
   id: string;
@@ -157,6 +162,41 @@ export async function createPdfOrder(
   return getShopOrder(user, order.id);
 }
 
+/**
+ * A short-lived link to a stored document: presigned for S3, or an HMAC-signed link to this
+ * server's content route for local storage. Null when the file is gone.
+ */
+export async function documentDownload(
+  shopId: string,
+  orderId: string,
+  document: Partial<StoredOrderDocument> & { id?: string; docId?: string },
+  origin: string,
+  ttlSeconds = DOWNLOAD_TTL_SECONDS,
+) {
+  const docId = document.docId ?? document.id ?? "";
+  if (document.shreddedAt || !document.storageKey || !document.sha256Hash) {
+    return null;
+  }
+
+  const details = {
+    storageKey: document.storageKey,
+    sha256Hash: document.sha256Hash,
+    mimeType: document.mimeType ?? "application/pdf",
+    pageCount: document.pageCount ?? 1,
+    expiresIn: ttlSeconds,
+  };
+
+  if (document.storageBackend === "s3") {
+    return { url: await createPresignedDownloadUrl(document.storageKey, ttlSeconds), ...details };
+  }
+
+  const expiresAt = Date.now() + ttlSeconds * 1000;
+  const url = new URL(`/api/v1/shops/${shopId}/orders/${orderId}/documents/${docId}/content`, origin);
+  url.searchParams.set("exp", String(expiresAt));
+  url.searchParams.set("sig", signDownload(shopId, orderId, docId, expiresAt));
+  return { url: url.toString(), ...details };
+}
+
 export async function createDocumentDownloadUrl(
   user: ShopPrincipal,
   orderId: string,
@@ -168,38 +208,11 @@ export async function createDocumentDownloadUrl(
   if (document.shreddedAt) {
     throw new AuthServiceError(409, "DOCUMENT_SHREDDED");
   }
-  if (!document.storageKey || !document.sha256Hash) {
+  const download = await documentDownload(user.shopId, orderId, document, origin);
+  if (!download) {
     throw new AuthServiceError(404, "this document has no stored file");
   }
-
-  if (document.storageBackend === "s3") {
-    return {
-      url: await createPresignedDownloadUrl(document.storageKey, DOWNLOAD_TTL_SECONDS),
-      storageKey: document.storageKey,
-      sha256Hash: document.sha256Hash,
-      mimeType: document.mimeType,
-      pageCount: document.pageCount,
-      expiresIn: DOWNLOAD_TTL_SECONDS,
-    };
-  }
-
-  const expiresAt = Date.now() + DOWNLOAD_TTL_SECONDS * 1000;
-  const signature = signDownload(user.shopId, orderId, docId, expiresAt);
-  const url = new URL(
-    `/api/v1/shops/${user.shopId}/orders/${orderId}/documents/${docId}/content`,
-    origin,
-  );
-  url.searchParams.set("exp", String(expiresAt));
-  url.searchParams.set("sig", signature);
-
-  return {
-    url: url.toString(),
-    storageKey: document.storageKey,
-    sha256Hash: document.sha256Hash,
-    mimeType: document.mimeType,
-    pageCount: document.pageCount,
-    expiresIn: DOWNLOAD_TTL_SECONDS,
-  };
+  return download;
 }
 
 export async function readDocumentContent(shopId: string, orderId: string, docId: string) {
@@ -236,49 +249,43 @@ export async function recordDocumentAccess(
   return { logId: randomUUID() };
 }
 
-export async function confirmDocumentShredded(
-  user: ShopPrincipal,
-  orderId: string,
-  docId: string,
-) {
-  const orderRef = getFirebaseFirestore().doc(`shops/${user.shopId}/orders/${orderId}`);
+/**
+ * Deletes a printed document's file, then marks it `shreddedAt`. Returns false if the delete
+ * failed, so the caller can retry. A file that is already gone counts as deleted.
+ */
+export async function shredOrderDocument(shopId: string, orderId: string, docId: string) {
+  const orderRef = getFirebaseFirestore().doc(`shops/${shopId}/orders/${orderId}`);
   const snapshot = await orderRef.get();
-  if (!snapshot.exists) {
-    throw new AuthServiceError(404, "ORDER_NOT_FOUND");
+  const documents = (snapshot.get("documents") ?? []) as StoredOrderDocument[];
+  const document = documents.find((entry) => entry.docId === docId || entry.id === docId);
+  if (!snapshot.exists || !document || document.shreddedAt) {
+    return true;
   }
 
-  const documents = [...((snapshot.get("documents") ?? []) as StoredOrderDocument[])];
-  const index = documents.findIndex((entry) => entry.docId === docId || entry.id === docId);
-  if (index < 0) {
-    throw new AuthServiceError(404, "DOCUMENT_NOT_FOUND");
-  }
-
-  if (documents[index].shreddedAt) {
-    return { id: orderId, shredded: true };
+  try {
+    if (document.storageBackend === "s3") {
+      await deleteObject(document.storageKey);
+    } else if (document.storageKey) {
+      await rm(localPath(document.storageKey), { force: true });
+    }
+  } catch (error) {
+    if (!isMissingObjectError(error)) {
+      console.error("Failed to delete printed document", shopId, orderId, docId, error);
+      return false;
+    }
   }
 
   await getFirebaseFirestore().runTransaction(async (transaction) => {
     const fresh = await transaction.get(orderRef);
-    if (!fresh.exists) {
-      throw new AuthServiceError(404, "ORDER_NOT_FOUND");
-    }
     const next = [...((fresh.get("documents") ?? []) as StoredOrderDocument[])];
-    const nextIndex = next.findIndex((entry) => entry.docId === docId || entry.id === docId);
-    if (nextIndex < 0) {
-      throw new AuthServiceError(404, "DOCUMENT_NOT_FOUND");
-    }
-    if (next[nextIndex].shreddedAt) {
+    const index = next.findIndex((entry) => entry.docId === docId || entry.id === docId);
+    if (!fresh.exists || index < 0 || next[index].shreddedAt) {
       return;
     }
-    next[nextIndex] = {
-      ...next[nextIndex],
-      shreddedAt: new Date().toISOString(),
-    };
-    transaction.update(orderRef, {
-      documents: next,
-      updatedAt: FieldValue.serverTimestamp(),
-    });
+    next[index] = { ...next[index], shreddedAt: new Date().toISOString() };
+    // Not customer-visible, so this skips the single writer's tracking copy on purpose.
+    transaction.update(orderRef, { documents: next, updatedAt: FieldValue.serverTimestamp() });
   });
 
-  return { id: orderId, shredded: true };
+  return true;
 }

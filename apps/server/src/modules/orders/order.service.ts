@@ -232,7 +232,7 @@ function printJobPath(shopId: string, orderId: string) {
   return path.join(process.cwd(), "data", "print-jobs", shopId, orderId);
 }
 
-function toOrderDto(snapshot: { id: string; data: () => Record<string, unknown> | undefined }): OrderDto {
+export function toOrderDto(snapshot: { id: string; data: () => Record<string, unknown> | undefined }): OrderDto {
   const data = snapshot.data() ?? {};
   const amounts =
     data.amounts && typeof data.amounts === "object"
@@ -291,15 +291,6 @@ function toOrderDto(snapshot: { id: string; data: () => Record<string, unknown> 
     createdAt: timestampToIso(data.createdAt),
     updatedAt: timestampToIso(data.updatedAt),
   };
-}
-
-function sortNewest(orders: OrderDto[]) {
-  return [...orders].sort((left, right) => (right.createdAt ?? "").localeCompare(left.createdAt ?? ""));
-}
-
-export async function listShopOrders(user: ShopPrincipal) {
-  const snapshot = await ordersCollection(user.shopId).get();
-  return { orders: sortNewest(snapshot.docs.map((document) => toOrderDto(document))) };
 }
 
 export async function getShopOrder(user: ShopPrincipal, orderId: string) {
@@ -773,8 +764,8 @@ export async function recordCashPayment(
  * Payment-provider callback entry point, separate from the shop operator APIs. Idempotent by state:
  * an order already paid is returned with no write.
  *
- * It still auto-accepts paid orders when the shop allows it. That moves into the agent's `sync` in
- * P2-01; until then nothing else would accept them.
+ * It doesn't accept the order: a running shop PC's `sync` does, so a paid order waits as SUBMITTED
+ * while no PC is on, instead of being accepted into a queue nobody prints.
  */
 export async function confirmOnlinePayment(
   shopId: string,
@@ -784,41 +775,33 @@ export async function confirmOnlinePayment(
   const db = getFirebaseFirestore();
   const orderRef = ordersCollection(shopId).doc(orderId);
   const principal = systemPrincipal(shopId, "payment-provider");
-  const config = await getShopConfig(principal);
-  let autoAccepted = false;
   let applied = false;
 
   await db.runTransaction(async (transaction) => {
-    autoAccepted = false;
     applied = false;
     const orderSnap = await transaction.get(orderRef);
     if (!orderSnap.exists) throw new AuthServiceError(404, "ORDER_NOT_FOUND");
     if (orderSnap.get("payment.method") !== "ONLINE") throw new AuthServiceError(409, "ORDER_NOT_ONLINE");
     if (orderSnap.get("payment.status") === "PAID") return;
 
-    const current = orderSnap.data() ?? {};
-    const accept = current.status === "SUBMITTED" && config.orderAutomation.autoAcceptPaidOnline;
     const now = FieldValue.serverTimestamp();
-    applyOrderChange(transaction, orderRef, current, {
-      status: accept ? "SHOP_ACCEPTED" : undefined,
+    applyOrderChange(transaction, orderRef, orderSnap.data() ?? {}, {
       fields: {
         "payment.status": "PAID",
         "payment.reference": input.paymentReference,
         "payment.confirmedAt": now,
         "lifecycle.paidAt": now,
-        ...(accept ? { "lifecycle.acceptedByUserId": "payment-provider" } : {}),
       },
     });
-    autoAccepted = accept;
     applied = true;
   });
 
   const order = await getShopOrder(principal, orderId);
   if (applied) {
-    // `work` wakes the shop's agents: once P2-01 lands, their `sync` accepts the paid order.
+    // `work` wakes the shop's agents; their `sync` accepts the paid order.
     await ringShop(shopId, { work: true, event: "order_paid", orderId, orderNumber: order.orderNumber });
   }
-  return { order, autoAccepted };
+  return { order };
 }
 
 export async function cancelShopOrder(
@@ -883,62 +866,5 @@ export async function readSinglePagePrintFile(user: ShopPrincipal, orderId: stri
     bytes,
     contentType: order.print.contentType,
     filename: order.print.originalFilename,
-  };
-}
-
-export function subscribeShopOrders(
-  shopId: string,
-  handlers: {
-    onSnapshot: (orders: OrderDto[]) => void;
-    onCreated: (order: OrderDto) => void;
-    onChanged: (order: OrderDto) => void;
-    onJobChanged: (job: Record<string, unknown>) => void;
-    onError: (error: Error) => void;
-  },
-) {
-  let seeded = false;
-  let jobsSeeded = false;
-
-  const unsubscribeOrders = ordersCollection(shopId).onSnapshot(
-    (snapshot) => {
-      if (!seeded) {
-        seeded = true;
-        handlers.onSnapshot(sortNewest(snapshot.docs.map((document) => toOrderDto(document))));
-        return;
-      }
-
-      for (const change of snapshot.docChanges()) {
-        const order = toOrderDto(change.doc);
-        if (change.type === "added") {
-          handlers.onCreated(order);
-        } else if (change.type === "modified") {
-          handlers.onChanged(order);
-        }
-      }
-    },
-    (error) => handlers.onError(error),
-  );
-
-  const unsubscribeJobs = getFirebaseFirestore()
-    .collectionGroup("printJobs")
-    .where("shopId", "==", shopId)
-    .onSnapshot(
-      (snapshot) => {
-        if (!jobsSeeded) {
-          jobsSeeded = true;
-          return;
-        }
-        for (const change of snapshot.docChanges()) {
-          if (change.type !== "removed") {
-            handlers.onJobChanged({ id: change.doc.id, ...change.doc.data() });
-          }
-        }
-      },
-      (error) => handlers.onError(error),
-    );
-
-  return () => {
-    unsubscribeOrders();
-    unsubscribeJobs();
   };
 }

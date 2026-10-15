@@ -1,7 +1,5 @@
 export {
   assertOfferWithinHardware,
-  claimAgentPrintJobsRequestSchema,
-  claimPrintJobRequestSchema,
   defaultPrinterOffered,
   dispatchPrintJobRequestSchema,
   printerOfferedSchema,
@@ -12,19 +10,15 @@ export {
   routePrintJobRequestSchema,
   shopPrinterCapabilityList,
   syncPrintersRequestSchema,
-  updatePrintJobRequestSchema,
   updatePrinterConfigRequestSchema,
   updatePrinterPresetRequestSchema,
   type DispatchPrintJobRequestInput,
-  type ClaimAgentPrintJobsRequestInput,
-  type ClaimPrintJobRequestInput,
   type PrinterOffered,
   type PrinterTelemetryRequestInput,
   type RetryPrintJobRequestInput,
   type RoutePrintJobRequestInput,
   type SyncPrintersRequestInput,
   type UpdatePrinterConfigRequestInput,
-  type UpdatePrintJobRequestInput,
   type UpdatePrinterPresetRequestInput,
 } from "./print-jobs";
 export {
@@ -86,10 +80,8 @@ export {
   type BusinessHourRule,
 } from "./business-hours";
 export {
-  deviceHeartbeatRequestSchema,
   deviceOfflineRequestSchema,
   registerDeviceRequestSchema,
-  type DeviceHeartbeatRequestInput,
   type DeviceOfflineRequestInput,
   type RegisterDeviceRequestInput,
 } from "./devices";
@@ -108,3 +100,25 @@ export {
   type RefreshRequestInput,
   type RegisterRequestInput,
 } from "./auth";
+export {
+  acceptOrderRequestSchema,
+  agentFinalJobStatusSchema,
+  agentJobReportSchema,
+  reportAgentJobsRequestSchema,
+  type AcceptOrderRequestInput,
+  type AgentJobDownload,
+  type AgentJobReportInput,
+  type AgentJobReportResult,
+  type ReportAgentJobsRequestInput,
+  type ReportAgentJobsResponse,
+  type SyncAgentResponse,
+  type SyncClaimedJob,
+} from "./agent-sync";
+export {
+  boardQuerySchema,
+  orderHistoryQuerySchema,
+  orderSearchQuerySchema,
+  type BoardQueryInput,
+  type OrderHistoryQueryInput,
+  type OrderSearchQueryInput,
+} from "./board";

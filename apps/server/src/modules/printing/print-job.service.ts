@@ -2,8 +2,6 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { FieldValue, getFirebaseFirestore } from "@ctrlp/firebase/firestore";
 import type {
-  ClaimAgentPrintJobsRequestInput,
-  ClaimPrintJobRequestInput,
   DispatchPrintJobRequestInput,
   PrinterOffered,
   PrinterTelemetryRequestInput,
@@ -11,7 +9,6 @@ import type {
   RoutePrintJobRequestInput,
   SyncPrintersRequestInput,
   UpdatePrinterConfigRequestInput,
-  UpdatePrintJobRequestInput,
   UpdatePrinterPresetRequestInput,
 } from "@ctrlp/schemas";
 import {
@@ -22,9 +19,11 @@ import {
 import type { ShopPrincipal } from "@ctrlp/types";
 
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
-import { applyOrderChange, getShopOrder } from "@/src/modules/orders/order.service";
+import { getShopOrder } from "@/src/modules/orders/order.service";
+import { decideRetry } from "@/src/modules/printing/job-model";
 import { parsePageSelection } from "@/src/modules/printing/page-selection";
 import { ringShop } from "@/src/modules/realtime/doorbell";
+import { invalidateShopConfig } from "@/src/modules/shops/shop-config.service";
 
 type PrintJobStatus = "QUEUED" | "DISPATCHING" | "PRINTING" | "COMPLETED" | "FAILED" | "CANCELLED";
 
@@ -195,6 +194,7 @@ async function refreshShopOfferedCapabilities(shopId: string) {
     },
     { merge: true },
   );
+  invalidateShopConfig(shopId);
 }
 
 function readPreset(value: unknown, fallback: PrintSettings) {
@@ -235,7 +235,7 @@ function asRecord(value: unknown) {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }
 
-function toPrintJobDto(snapshot: { id: string; data: () => Record<string, unknown> | undefined }): PrintJobDto {
+export function toPrintJobDto(snapshot: { id: string; data: () => Record<string, unknown> | undefined }): PrintJobDto {
   const data = snapshot.data() ?? {};
   return {
     id: snapshot.id,
@@ -261,22 +261,6 @@ function toPrintJobDto(snapshot: { id: string; data: () => Record<string, unknow
     leaseId: typeof data.leaseId === "string" ? data.leaseId : null,
     claimedAt: timestampToIso(data.claimedAt),
   };
-}
-
-function assertJobTransition(current: PrintJobStatus, next: PrintJobStatus) {
-  const transitions: Record<PrintJobStatus, PrintJobStatus[]> = {
-    QUEUED: ["DISPATCHING", "CANCELLED"],
-    // Agent reports are not ordered; a fast job's COMPLETED can land before its PRINTING.
-    DISPATCHING: ["PRINTING", "COMPLETED", "FAILED", "CANCELLED"],
-    PRINTING: ["COMPLETED", "FAILED", "CANCELLED"],
-    COMPLETED: [],
-    FAILED: ["QUEUED", "CANCELLED"],
-    CANCELLED: [],
-  };
-
-  if (current !== next && !transitions[current].includes(next)) {
-    throw new AuthServiceError(409, "PRINT_JOB_STATUS_CONFLICT");
-  }
 }
 
 export async function syncShopPrinters(user: ShopPrincipal, input: SyncPrintersRequestInput) {
@@ -484,7 +468,12 @@ export async function updatePrinterPreset(
   return { id: printerId, isDefault: settings.isDefault, defaultPrintSettings: preset };
 }
 
-export async function dispatchPrintJob(user: ShopPrincipal, orderId: string, input: DispatchPrintJobRequestInput) {
+export async function dispatchPrintJob(
+  user: ShopPrincipal,
+  orderId: string,
+  input: DispatchPrintJobRequestInput,
+  options: { quietAgentId?: string } = {},
+) {
   if (input.overrides.duplex === true) {
     throw new AuthServiceError(400, "duplex printing is not available");
   }
@@ -515,6 +504,7 @@ export async function dispatchPrintJob(user: ShopPrincipal, orderId: string, inp
   let jobId: string = randomUUID();
   let colorWarning = false;
   let created = false;
+  let jobAgentId = "";
 
   await db.runTransaction(async (transaction) => {
     created = false;
@@ -627,11 +617,17 @@ export async function dispatchPrintJob(user: ShopPrincipal, orderId: string, inp
       createdAt: FieldValue.serverTimestamp(),
       expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
     });
+    jobAgentId = agentId;
     created = true;
   });
 
   if (created) {
-    await ringShop(user.shopId, { work: true, event: "jobs_queued", orderId, orderNumber: order.orderNumber });
+    await ringShop(user.shopId, {
+      work: jobAgentId !== options.quietAgentId,
+      event: "jobs_queued",
+      orderId,
+      orderNumber: order.orderNumber,
+    });
   }
 
   const saved = await db.doc(`shops/${user.shopId}/orders/${orderId}/printJobs/${jobId}`).get();
@@ -656,225 +652,18 @@ export async function listOrderPrintJobs(user: ShopPrincipal, orderId: string) {
   };
 }
 
-export async function listAgentPrintJobs(user: ShopPrincipal, input: ClaimAgentPrintJobsRequestInput) {
-  const jobs = await listQueuedJobsByCollectionGroup(user.shopId, input).catch(() =>
-    listQueuedJobsFromActiveOrders(user.shopId, input),
-  );
-  return {
-    jobs: jobs.sort((left, right) => (left.createdAt ?? "").localeCompare(right.createdAt ?? "")),
-  };
-}
-
-async function listQueuedJobsByCollectionGroup(shopId: string, input: ClaimAgentPrintJobsRequestInput) {
-  const snapshot = await getFirebaseFirestore()
-    .collectionGroup("printJobs")
-    .where("shopId", "==", shopId)
-    .where("agentId", "==", input.agentId)
-    .where("status", "==", "QUEUED")
-    .limit(input.limit)
-    .get();
-  return snapshot.docs.map((document) => toPrintJobDto(document));
-}
-
-async function listQueuedJobsFromActiveOrders(shopId: string, input: ClaimAgentPrintJobsRequestInput) {
-  const orders = await getFirebaseFirestore()
-    .collection(`shops/${shopId}/orders`)
-    .where("status", "in", ["SHOP_ACCEPTED", "PRINTING"])
-    .limit(40)
-    .get();
-  const jobs: PrintJobDto[] = [];
-  for (const order of orders.docs) {
-    const snapshot = await order.ref.collection("printJobs").get();
-    for (const document of snapshot.docs) {
-      if (document.get("agentId") === input.agentId && document.get("status") === "QUEUED") {
-        jobs.push(toPrintJobDto(document));
-      }
-      if (jobs.length >= input.limit) {
-        return jobs;
-      }
-    }
+function millis(value: unknown) {
+  if (value && typeof value === "object" && "toMillis" in value) {
+    return (value as { toMillis: () => number }).toMillis();
   }
-  return jobs;
+  return typeof value === "string" ? Date.parse(value) : 0;
 }
 
-export async function claimPrintJob(
-  user: ShopPrincipal,
-  orderId: string,
-  jobId: string,
-  input: ClaimPrintJobRequestInput,
-) {
-  const db = getFirebaseFirestore();
-  const orderRef = db.doc(`shops/${user.shopId}/orders/${orderId}`);
-  const jobRef = orderRef.collection("printJobs").doc(jobId);
-  const idempotencyRef = db.doc(`shops/${user.shopId}/idempotencyKeys/${input.idempotencyKey}`);
-  const leaseId = randomUUID();
-  let claimed = false;
-  let orderNumber = "";
-
-  await db.runTransaction(async (transaction) => {
-    claimed = false;
-    const [keySnap, orderSnap, jobSnap] = await Promise.all([
-      transaction.get(idempotencyRef),
-      transaction.get(orderRef),
-      transaction.get(jobRef),
-    ]);
-    if (keySnap.exists) {
-      if (keySnap.get("orderId") === orderId && keySnap.get("jobId") === jobId) {
-        return;
-      }
-      throw new AuthServiceError(409, "IDEMPOTENCY_KEY_REUSED");
-    }
-    if (!orderSnap.exists) {
-      throw new AuthServiceError(404, "ORDER_NOT_FOUND");
-    }
-    if (!jobSnap.exists) {
-      throw new AuthServiceError(404, "PRINT_JOB_NOT_FOUND");
-    }
-    if (jobSnap.get("agentId") !== input.agentId) {
-      throw new AuthServiceError(403, "PRINT_JOB_AGENT_MISMATCH");
-    }
-    if (jobSnap.get("status") !== "QUEUED") {
-      throw new AuthServiceError(
-        409,
-        jobSnap.get("leaseId") ? "another device claimed this job" : "PRINT_JOB_STATUS_CONFLICT",
-      );
-    }
-
-    const now = FieldValue.serverTimestamp();
-    transaction.update(jobRef, {
-      status: "DISPATCHING",
-      leaseId,
-      claimedAt: now,
-      updatedAt: now,
-    });
-    transaction.set(idempotencyRef, {
-      orderId,
-      jobId,
-      action: "claim-print-job",
-      requestPath: `orders/${orderId}/printJobs/${jobId}/claim`,
-      createdAt: now,
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-    });
-    if (orderSnap.get("status") === "SHOP_ACCEPTED") {
-      applyOrderChange(transaction, orderRef, orderSnap.data() ?? {}, { status: "PRINTING" });
-    }
-    orderNumber = String(orderSnap.get("orderNumber") ?? "");
-    claimed = true;
-  });
-
-  if (claimed) {
-    await ringShop(user.shopId, { work: false, event: "order_updated", orderId, orderNumber });
-  }
-  return toPrintJobDto(await jobRef.get());
-}
-
-export async function updatePrintJob(
-  user: ShopPrincipal,
-  orderId: string,
-  jobId: string,
-  input: UpdatePrintJobRequestInput,
-) {
-  const db = getFirebaseFirestore();
-  const orderRef = db.doc(`shops/${user.shopId}/orders/${orderId}`);
-  const jobRef = orderRef.collection("printJobs").doc(jobId);
-  const idempotencyRef = db.doc(`shops/${user.shopId}/idempotencyKeys/${input.idempotencyKey}`);
-  let updated = false;
-  let orderNumber = "";
-
-  await db.runTransaction(async (transaction) => {
-    updated = false;
-    const keySnap = await transaction.get(idempotencyRef);
-    if (keySnap.exists) {
-      if (keySnap.get("orderId") === orderId && keySnap.get("jobId") === jobId) {
-        return;
-      }
-      throw new AuthServiceError(409, "IDEMPOTENCY_KEY_REUSED");
-    }
-    const [orderSnap, jobSnap] = await Promise.all([
-      transaction.get(orderRef),
-      transaction.get(jobRef),
-    ]);
-    if (!orderSnap.exists) {
-      throw new AuthServiceError(404, "ORDER_NOT_FOUND");
-    }
-    if (!jobSnap.exists) {
-      throw new AuthServiceError(404, "PRINT_JOB_NOT_FOUND");
-    }
-
-    const current = String(jobSnap.get("status") ?? "QUEUED") as PrintJobStatus;
-    assertJobTransition(current, input.status);
-    const pagesTotal = Number(jobSnap.get("pagesTotal") ?? 1);
-    if (input.pagesPrinted !== undefined && input.pagesPrinted > pagesTotal) {
-      throw new AuthServiceError(400, "PRINT_JOB_PAGES_EXCEED_TOTAL");
-    }
-
-    const siblingJobs = input.status === "COMPLETED"
-      ? await transaction.get(orderRef.collection("printJobs"))
-      : null;
-
-    const now = FieldValue.serverTimestamp();
-    const update: Record<string, unknown> = {
-      status: input.status,
-      updatedAt: now,
-      ...(input.pagesPrinted !== undefined ? { pagesPrinted: input.pagesPrinted } : {}),
-      ...(input.spoolerJobId !== undefined ? { spoolerJobId: input.spoolerJobId } : {}),
-      ...(input.errorCode !== undefined ? { errorCode: input.errorCode } : {}),
-      ...(input.errorMessage !== undefined ? { errorMessage: input.errorMessage } : {}),
-      ...(input.status === "PRINTING" ? { startedAt: now } : {}),
-      ...(input.status === "COMPLETED" || input.status === "FAILED" || input.status === "CANCELLED"
-        ? { completedAt: now }
-        : {}),
-    };
-    transaction.update(jobRef, update);
-
-    const orderStatus = String(orderSnap.get("status") ?? "");
-    if ((input.status === "DISPATCHING" || input.status === "PRINTING") && orderStatus === "SHOP_ACCEPTED") {
-      applyOrderChange(transaction, orderRef, orderSnap.data() ?? {}, { status: "PRINTING" });
-    }
-
-    if (input.status === "COMPLETED" && siblingJobs) {
-      const expectedDocumentIds = new Set(
-        Array.isArray(orderSnap.get("documents"))
-          ? (orderSnap.get("documents") as Array<Record<string, unknown>>)
-              .map((document) => document.docId ?? document.id)
-              .filter((id): id is string => typeof id === "string" && id.length > 0)
-          : [],
-      );
-      const completedDocumentIds = new Set(
-        siblingJobs.docs
-          .filter((document) => document.id === jobId || document.get("status") === "COMPLETED")
-          .map((document) => document.get("documentId"))
-          .filter((id): id is string => typeof id === "string"),
-      );
-      const allCompleted = expectedDocumentIds.size > 0 &&
-        [...expectedDocumentIds].every((documentId) => completedDocumentIds.has(documentId));
-      const documentId = jobSnap.get("documentId");
-      applyOrderChange(transaction, orderRef, orderSnap.data() ?? {}, {
-        status: allCompleted && orderStatus === "PRINTING" ? "READY" : undefined,
-        fields: typeof documentId === "string" ? { completedDocumentIds: FieldValue.arrayUnion(documentId) } : {},
-      });
-    }
-
-    transaction.set(idempotencyRef, {
-      orderId,
-      jobId,
-      action: "update-print-job",
-      requestPath: `orders/${orderId}/printJobs/${jobId}`,
-      createdAt: now,
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-    });
-    orderNumber = String(orderSnap.get("orderNumber") ?? "");
-    updated = true;
-  });
-
-  if (updated) {
-    await ringShop(user.shopId, { work: false, event: "order_updated", orderId, orderNumber });
-  }
-
-  const saved = await jobRef.get();
-  return toPrintJobDto(saved);
-}
-
+/**
+ * Puts a job back in the queue. Also the operator's way to rescue a job: allowed from FAILED, from
+ * QUEUED (to re-route it), and from DISPATCHING once it has been stuck for 15 minutes. The lease is
+ * cleared, so a late report from the old PC gets `lease_mismatch`.
+ */
 export async function retryPrintJob(
   user: ShopPrincipal,
   orderId: string,
@@ -884,30 +673,63 @@ export async function retryPrintJob(
   const db = getFirebaseFirestore();
   const orderRef = db.doc(`shops/${user.shopId}/orders/${orderId}`);
   const jobRef = orderRef.collection("printJobs").doc(jobId);
-  const idempotencyRef = db.doc(`shops/${user.shopId}/idempotencyKeys/${input.idempotencyKey}`);
-
+  const printerRef = input.printerId ? db.doc(`shops/${user.shopId}/printers/${input.printerId}`) : null;
   let retried = false;
+  let orderNumber = "";
+  let jobAgentId = "";
 
   await db.runTransaction(async (transaction) => {
     retried = false;
-    const [keySnap, jobSnap] = await Promise.all([transaction.get(idempotencyRef), transaction.get(jobRef)]);
-    if (keySnap.exists) {
-      if (keySnap.get("orderId") === orderId && keySnap.get("jobId") === jobId) {
-        return;
-      }
-      throw new AuthServiceError(409, "IDEMPOTENCY_KEY_REUSED");
-    }
+    const [jobSnap, orderSnap, printerSnap] = await Promise.all([
+      transaction.get(jobRef),
+      transaction.get(orderRef),
+      printerRef ? transaction.get(printerRef) : Promise.resolve(null),
+    ]);
     if (!jobSnap.exists) {
       throw new AuthServiceError(404, "PRINT_JOB_NOT_FOUND");
     }
-    if (jobSnap.get("status") !== "FAILED") {
-      throw new AuthServiceError(409, "PRINT_JOB_STATUS_CONFLICT");
+
+    const samePrinter = !input.printerId || input.printerId === jobSnap.get("printerId");
+    const decision = decideRetry({
+      status: String(jobSnap.get("status") ?? ""),
+      claimedAtMs: millis(jobSnap.get("claimedAt")),
+      samePrinter,
+      nowMs: Date.now(),
+    });
+    if (decision.kind === "replay") {
+      return;
+    }
+    if (decision.kind === "reject") {
+      throw new AuthServiceError(409, decision.reason);
+    }
+
+    const reroute: Record<string, unknown> = {};
+    if (printerSnap && !samePrinter) {
+      if (!printerSnap.exists) {
+        throw new AuthServiceError(404, "printer is not registered");
+      }
+      if (printerSnap.get("enabled") === false) {
+        throw new AuthServiceError(409, "PRINTER_DISABLED");
+      }
+      const agentId = printerSnap.get("agentId");
+      if (typeof agentId !== "string" || !agentId) {
+        throw new AuthServiceError(409, "PRINTER_AGENT_UNAVAILABLE");
+      }
+      Object.assign(reroute, {
+        printerId: input.printerId,
+        agentId,
+        printerName: printerSnap.get("name") ?? "",
+        printerSystemName: String(printerSnap.get("systemName") ?? printerSnap.get("name") ?? ""),
+      });
     }
 
     const now = FieldValue.serverTimestamp();
     transaction.update(jobRef, {
       status: "QUEUED",
-      ...(input.printerId ? { printerId: input.printerId } : {}),
+      ...reroute,
+      leaseId: null,
+      claimedAt: null,
+      startedAt: null,
       pagesPrinted: 0,
       spoolerJobId: null,
       errorCode: null,
@@ -916,26 +738,28 @@ export async function retryPrintJob(
       retryCount: Number(jobSnap.get("retryCount") ?? 0) + 1,
       updatedAt: now,
     });
-    transaction.set(idempotencyRef, {
-      orderId,
-      jobId,
-      action: "retry-print-job",
-      requestPath: `orders/${orderId}/printJobs/${jobId}/retry`,
-      createdAt: now,
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-    });
+    orderNumber = String(orderSnap.get("orderNumber") ?? "");
+    jobAgentId = String(reroute.agentId ?? jobSnap.get("agentId") ?? "");
     retried = true;
   });
 
   if (retried) {
-    // The ring's `last` only drives notifications for new and paid orders, so skip reading the order number.
-    await ringShop(user.shopId, { work: true, event: "jobs_queued", orderId, orderNumber: "" });
+    await ringShop(user.shopId, { work: Boolean(jobAgentId), event: "jobs_queued", orderId, orderNumber });
   }
 
   return toPrintJobDto(await jobRef.get());
 }
 
-export async function queueIncomingOrder(user: ShopPrincipal, orderId: string) {
+/**
+ * Queues one job per document of an accepted order. Printers on `preferAgentId` (the PC that
+ * accepted) are chosen first. Jobs routed to `quietAgentId` don't ring `work`: that agent is
+ * already syncing and claims them in the same request.
+ */
+export async function queueIncomingOrder(
+  user: ShopPrincipal,
+  orderId: string,
+  options: { preferAgentId?: string; quietAgentId?: string } = {},
+) {
   const order = await getShopOrder(user, orderId);
   for (const document of order.documents) {
     const record = document as {
@@ -955,7 +779,7 @@ export async function queueIncomingOrder(user: ShopPrincipal, orderId: string) {
     const colorMode = record.config?.colorMode ?? record.colorMode ?? "BW";
     const paperSize = record.config?.paperSize ?? record.paperSize ?? "A4";
     try {
-      const route = await routePrintJob(user, { colorMode, paperSize });
+      const route = await routePrintJob(user, { colorMode, paperSize }, { preferAgentId: options.preferAgentId });
       await dispatchPrintJob(user, orderId, {
         printerId: route.printerId,
         documentId,
@@ -967,7 +791,7 @@ export async function queueIncomingOrder(user: ShopPrincipal, orderId: string) {
           paperSize,
           pageSelection: record.config?.pageSelection ?? "all",
         },
-      });
+      }, { quietAgentId: options.quietAgentId });
     } catch (error) {
       console.error("Could not queue print job for document", documentId, error);
     }
@@ -1009,9 +833,21 @@ export async function writePrinterTelemetry(
   return { printerId, status: input.newStatus, telemetryId: telemetryRef.id };
 }
 
-export async function routePrintJob(user: ShopPrincipal, input: RoutePrintJobRequestInput) {
+/**
+ * Picks a capable, enabled, online printer: the caller's PC first (`preferAgentId`), then the shop
+ * default, then the least busy.
+ */
+export async function routePrintJob(
+  user: ShopPrincipal,
+  input: RoutePrintJobRequestInput,
+  options: { preferAgentId?: string } = {},
+) {
   const snapshot = await getFirebaseFirestore().collection(`shops/${user.shopId}/printers`).get();
   const required = input.colorMode === "COLOR" ? [input.paperSize, "COLOR"] : [input.paperSize];
+  const rank = (printer: { data: Record<string, unknown> }) => [
+    Number(Boolean(options.preferAgentId) && printer.data.agentId === options.preferAgentId),
+    Number(printer.data.isDefault === true),
+  ];
   const candidates = snapshot.docs
     .map((document) => ({ id: document.id, data: document.data() }))
     .filter((printer) => printer.data.enabled !== false)
@@ -1021,9 +857,13 @@ export async function routePrintJob(user: ShopPrincipal, input: RoutePrintJobReq
       return required.every((capability) => capabilities.includes(capability));
     })
     .sort((left, right) => {
-      const defaultRank = Number(right.data.isDefault === true) - Number(left.data.isDefault === true);
-      if (defaultRank !== 0) {
-        return defaultRank;
+      const [leftAgent, leftDefault] = rank(left);
+      const [rightAgent, rightDefault] = rank(right);
+      if (leftAgent !== rightAgent) {
+        return rightAgent - leftAgent;
+      }
+      if (leftDefault !== rightDefault) {
+        return rightDefault - leftDefault;
       }
       return Number(left.data.activeSpoolJobs ?? 0) - Number(right.data.activeSpoolJobs ?? 0);
     });

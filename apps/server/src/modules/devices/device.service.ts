@@ -1,17 +1,14 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash } from "node:crypto";
 
-import { FieldValue, getFirebaseFirestore, type Timestamp } from "@ctrlp/firebase/firestore";
-import type {
-  DeviceHeartbeatRequestInput,
-  DeviceOfflineRequestInput,
-  RegisterDeviceRequestInput,
-} from "@ctrlp/schemas";
+import { FieldValue, getFirebaseFirestore } from "@ctrlp/firebase/firestore";
+import type { DeviceOfflineRequestInput, RegisterDeviceRequestInput } from "@ctrlp/schemas";
 import type { ShopPrincipal } from "@ctrlp/types";
 
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
 
-const HEARTBEAT_INTERVAL_SECONDS = 30;
-const STALE_AFTER_MS = 90_000;
+/** `lastActiveAt` is written at most this often per agent and server instance (6.7). */
+const ACTIVITY_INTERVAL_MS = 10 * 60 * 1000;
+const lastActivityWrite = new Map<string, number>();
 
 function agentIdFor(shopId: string, deviceIdentifier: string) {
   return createHash("sha256")
@@ -24,71 +21,30 @@ function agentRef(shopId: string, agentId: string) {
   return getFirebaseFirestore().doc(`shops/${shopId}/agents/${agentId}`);
 }
 
-function hashAgentCredential(value: string) {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-export async function requireAgentCredential(request: Request, shopId: string, agentId: string) {
-  const credential = request.headers.get("x-ctrlp-agent-key");
-  if (!credential) {
-    throw new AuthServiceError(401, "AGENT_CREDENTIAL_REQUIRED");
+/**
+ * Records that this PC was active, on requests it already makes (register, accept, sync, report).
+ * No read, at most once every 10 minutes per instance, and never fails the request.
+ */
+export async function touchAgentActivity(shopId: string, agentId: string) {
+  const key = `${shopId}/${agentId}`;
+  const now = Date.now();
+  if (now - (lastActivityWrite.get(key) ?? 0) < ACTIVITY_INTERVAL_MS) {
+    return;
   }
-  const snapshot = await agentRef(shopId, agentId).get();
-  const expected = snapshot.get("apiKeyHash");
-  const actual = hashAgentCredential(credential);
-  if (typeof expected !== "string" || expected.length !== actual.length ||
-    !timingSafeEqual(Buffer.from(expected), Buffer.from(actual))) {
-    throw new AuthServiceError(403, "AGENT_CREDENTIAL_INVALID");
+  lastActivityWrite.set(key, now);
+
+  try {
+    await agentRef(shopId, agentId).update({ lastActiveAt: FieldValue.serverTimestamp() });
+  } catch (error) {
+    console.error("Failed to record agent activity", shopId, agentId, error);
   }
-  return snapshot;
 }
 
-function timestampMillis(value: unknown) {
-  if (value && typeof value === "object" && "toMillis" in value) {
-    return (value as Timestamp).toMillis();
-  }
-
-  return 0;
-}
-
-async function markStaleAgentsOffline(shopId: string, currentAgentId: string) {
-  const snapshot = await getFirebaseFirestore()
-    .collection(`shops/${shopId}/agents`)
-    .where("status", "==", "ONLINE")
-    .get();
-
-  const cutoff = Date.now() - STALE_AFTER_MS;
-  const writes = snapshot.docs
-    .filter((doc) => doc.id !== currentAgentId)
-    .filter((doc) => {
-      const seen = timestampMillis(doc.get("lastSeenAt"));
-      return seen > 0 && seen < cutoff;
-    })
-    .map((doc) =>
-      doc.ref.set(
-        {
-          status: "OFFLINE",
-          updatedAt: FieldValue.serverTimestamp(),
-        },
-        { merge: true },
-      ),
-    );
-
-  await Promise.all(writes);
-}
-
-export async function registerShopDevice(
-  user: ShopPrincipal,
-  input: RegisterDeviceRequestInput,
-) {
+/** Registers this PC for the signed-in shop. The same PC and shop always get the same `deviceId`. */
+export async function registerShopDevice(user: ShopPrincipal, input: RegisterDeviceRequestInput) {
   const agentId = agentIdFor(user.shopId, input.deviceIdentifier);
   const reference = agentRef(user.shopId, agentId);
   const existing = await reference.get();
-  const existingHash = existing.get("apiKeyHash");
-  const issuedCredential =
-    typeof existingHash === "string" && existingHash.length > 0
-      ? null
-      : randomBytes(32).toString("base64url");
   const now = FieldValue.serverTimestamp();
 
   await reference.set(
@@ -102,93 +58,45 @@ export async function registerShopDevice(
       appVersion: input.appVersion,
       agentVersion: input.agentVersion,
       status: "ONLINE",
-      heartbeatIntervalSeconds: HEARTBEAT_INTERVAL_SECONDS,
       registeredByUserId: user.shopUserId,
-      ...(issuedCredential ? { apiKeyHash: hashAgentCredential(issuedCredential) } : {}),
-      lastSeenAt: now,
+      lastActiveAt: now,
       updatedAt: now,
-      ...(existing.exists
-        ? {}
-        : {
-            registeredAt: now,
-            createdAt: now,
-          }),
+      // The agent's device key is gone: it calls the API with the shop user's ID token.
+      apiKeyHash: FieldValue.delete(),
+      heartbeatIntervalSeconds: FieldValue.delete(),
+      lastSeenAt: FieldValue.delete(),
+      ...(existing.exists ? {} : { registeredAt: now, createdAt: now }),
     },
     { merge: true },
   );
+  lastActivityWrite.set(`${user.shopId}/${agentId}`, Date.now());
 
-  return {
-    deviceId: agentId,
-    ...(issuedCredential ? { agentCredential: issuedCredential } : {}),
-    heartbeatIntervalSeconds: HEARTBEAT_INTERVAL_SECONDS,
-    status: "ONLINE" as const,
-  };
+  return { deviceId: agentId, status: "ONLINE" as const };
 }
 
-export async function recordDeviceHeartbeat(
-  user: ShopPrincipal,
-  input: DeviceHeartbeatRequestInput,
-) {
+/**
+ * Marks this PC and its printers OFFLINE, so routing stops sending jobs to it. Called on sign-out
+ * and by the agent as it exits with the app.
+ */
+export async function markDeviceOffline(user: ShopPrincipal, input: DeviceOfflineRequestInput) {
+  const db = getFirebaseFirestore();
   const reference = agentRef(user.shopId, input.deviceId);
-  const existing = await reference.get();
+  const [existing, printers] = await Promise.all([
+    reference.get(),
+    db.collection(`shops/${user.shopId}/printers`).where("agentId", "==", input.deviceId).get(),
+  ]);
 
   if (!existing.exists || existing.get("shopId") !== user.shopId) {
     throw new AuthServiceError(404, "device is not registered");
   }
 
-  await reference.set(
-    {
-      status: "ONLINE",
-      lastSeenAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-      ...(input.memoryWorkingSetBytes === undefined
-        ? {}
-        : { memoryWorkingSetBytes: input.memoryWorkingSetBytes }),
-      ...(input.spoolerJobCount === undefined
-        ? {}
-        : { spoolerJobCount: input.spoolerJobCount }),
-      ...(input.onlinePrinterCount === undefined
-        ? {}
-        : { onlinePrinterCount: input.onlinePrinterCount }),
-    },
-    { merge: true },
-  );
-
-  try {
-    await markStaleAgentsOffline(user.shopId, input.deviceId);
-  } catch (error) {
-    console.error("Failed to mark stale print agents offline", error);
+  const now = FieldValue.serverTimestamp();
+  const batch = db.batch();
+  batch.set(reference, { status: "OFFLINE", updatedAt: now }, { merge: true });
+  for (const printer of printers.docs) {
+    batch.update(printer.ref, { status: "OFFLINE", statusReason: "PC offline", updatedAt: now });
   }
+  await batch.commit();
 
-  return {
-    deviceId: input.deviceId,
-    status: "ONLINE" as const,
-    heartbeatIntervalSeconds:
-      Number(existing.get("heartbeatIntervalSeconds")) || HEARTBEAT_INTERVAL_SECONDS,
-  };
-}
-
-export async function markDeviceOffline(
-  user: ShopPrincipal,
-  input: DeviceOfflineRequestInput,
-) {
-  const reference = agentRef(user.shopId, input.deviceId);
-  const existing = await reference.get();
-
-  if (!existing.exists || existing.get("shopId") !== user.shopId) {
-    throw new AuthServiceError(404, "device is not registered");
-  }
-
-  await reference.set(
-    {
-      status: "OFFLINE",
-      updatedAt: FieldValue.serverTimestamp(),
-    },
-    { merge: true },
-  );
-
-  return {
-    deviceId: input.deviceId,
-    status: "OFFLINE" as const,
-  };
+  return { deviceId: input.deviceId, status: "OFFLINE" as const, printersOffline: printers.size };
 }
