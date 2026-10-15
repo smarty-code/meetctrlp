@@ -249,7 +249,7 @@ Merging: `work` = any; `last` = the most important event (paid > submitted > que
 
 - Node 22, pnpm 11 (`pnpm install` at the repo root).
 - .NET 8 SDK for the agent; Rust and the Tauri toolchain for the desktop (`pnpm desktop:setup`).
-- **Java 11+** only for the Firebase emulators (the rules tests).
+- **JDK 21+** only for the Firebase emulators (the rules tests and `pnpm --filter server test:emulator`). The repo's firebase-tools 15 refuses older Java.
 
 ### 6.2 Environment
 
@@ -305,7 +305,7 @@ curl -s -X POST http://localhost:3000/api/v1/internal/maintenance/daily -H "x-ct
 - **Need the user's name or email?** Read the user document. The principal has only `uid`, `shopId`, `shopUserId` and `role`.
 - **A server actor** (payment provider, maintenance): `systemPrincipal(shopId, actorId)`.
 - **New Firestore query?** Add its composite index to `packages/firebase/firestore.indexes.json` and deploy the indexes before the code.
-- **Pure logic goes in `*-model.ts` / `principal.ts` / `print-user-cookie.ts`** with a `*.test.ts` next to it, added to the `test` script in `apps/server/package.json`. Tests run with `node --test`, so test files must not import `@ctrlp/*` packages.
+- **Pure logic goes in `*-model.ts` / `principal.ts` / `print-user-cookie.ts`** with a `*.test.ts` next to it, added to the `test` script in `apps/server/package.json`. Tests run with `node --test`, so test files must not import `@ctrlp/*` packages. Firestore transaction paths are tested in `apps/server/test/emulator/*.emulator.test.ts` instead: those import the real services and run against the emulators (testing guide 2.4).
 - **The agent and desktop have no Firebase SDK.** The doorbell is plain HTTPS. Only the customer tracking page loads the Firebase JS SDK, and only with a dynamic `import()`.
 - **Guest cart changes in the web app** go through `src/lib/cloud.ts`, so the cart store stays right. Don't call the API with `fetch` directly.
 
@@ -319,7 +319,7 @@ curl -s -X POST http://localhost:3000/api/v1/internal/maintenance/daily -H "x-ct
 | **Online payments in production** stop unless `ALLOW_MOCK_PAYMENTS=1` is set there, because there's no gateway yet | Product decision |
 | Rules tests not run (no Java on the dev PC) | Run them before deploying the rules |
 | Indexes and rules not deployed; no staging project; API keys not restricted; cost alerts not configured; Cloud Scheduler job not created | Ops tasks (implementation plan 7.5, 12.3; `apps/server/docs/deployment.md`) |
-| The Firestore paths of `sync`, `report`, board and maintenance have no automated test; only their pure rules do | Covered by the manual cases in the testing guide until the emulator tests run |
+| The Firestore paths of `sync`, `report`, retry, board and maintenance are tested only against the emulators, not against a real project | `pnpm --filter server test:emulator` (testing guide T11) passes; the staging runs below still cover indexes, real storage and rings |
 | Nothing has run end to end against staging: the 3-hour agent run, the staging print, the per-order cost check, the idle check | Implementation plan 12.2; testing guide sections 8 and 12 |
 | P0-03 field checks on shop networks | Must pass before the agent reaches shops |
 | Web app lint reports 17 findings (10 errors), all in files this work didn't change or older than it | Separate clean-up |

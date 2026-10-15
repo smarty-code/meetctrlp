@@ -9,7 +9,8 @@
     "lint": "eslint",
     "seed:print-order": "node ./scripts/seed-print-order.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test ./src/modules/print-user/print-user.helpers.test.ts ./src/modules/documents/pdf-page-count.test.ts ./src/modules/auth/principal.test.ts ./src/modules/orders/order-model.test.ts ./src/modules/realtime/ring-model.test.ts ./src/modules/printing/job-model.test.ts ./src/modules/orders/board-model.test.ts ./src/modules/print-user/print-user-cookie.test.ts"
+    "test": "node --experimental-strip-types --test ./src/modules/print-user/print-user.helpers.test.ts ./src/modules/documents/pdf-page-count.test.ts ./src/modules/auth/principal.test.ts ./src/modules/orders/order-model.test.ts ./src/modules/realtime/ring-model.test.ts ./src/modules/printing/job-model.test.ts ./src/modules/orders/board-model.test.ts ./src/modules/print-user/print-user-cookie.test.ts",
+    "test:emulator": "firebase emulators:exec --project demo-ctrlp-server-tests --only auth,firestore \"node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./test/emulator/preload.mjs --test --test-concurrency=1 ./test/emulator/*.emulator.test.ts\""
   },
   "dependencies": {
     "@ctrlp/firebase": "workspace:*",

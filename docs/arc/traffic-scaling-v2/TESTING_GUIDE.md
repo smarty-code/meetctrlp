@@ -20,7 +20,7 @@ The env files in `apps/server` point at the real `meetctrlp` project. Server tes
 - [ ] A doorbell visible in the console (Realtime Database → Data) after the first order.
 - [ ] For the agent cases: `VITE_FIREBASE_API_KEY` and `VITE_FIREBASE_DATABASE_URL` in `apps/print-shop/.env`.
 - [ ] For the web app's live tracking: the four `NEXT_PUBLIC_FIREBASE_*` values in `apps/printUserWebapp/.env.local`.
-- [ ] Java 11+ for the rules tests (section 2.3).
+- [ ] JDK 21+ for the rules and emulator tests (sections 2.3 and 2.4). The repo's firebase-tools 15 refuses to start the Firestore and Database emulators on older Java.
 
 ### 1.3 Handy commands
 
@@ -75,6 +75,22 @@ Watch the doorbell while you test: Firebase console → Realtime Database → Da
 | T9 | `pnpm firebase:rules:test` | All 11 tests pass: a guest reads only their own tracking document; listing is denied; shop orders and jobs are server-only; a shop A user reads `/doorbell/A` but not `/doorbell/B`; no client writes anywhere |
 
 **These haven't been run yet.** Run them before deploying any rules.
+
+### 2.4 Server emulator tests (needs Java)
+
+| ID | Command | Pass |
+| --- | --- | --- |
+| T11 | `pnpm --filter server test:emulator` | All 38 tests pass. Runs the real services against the Auth and Firestore emulators: `syncAgent` (auto-accept of paid online orders, claims with new leases, re-delivery after 15 minutes with the same lease, `more` paging, 60-minute links or `null` when shredded), `reportAgentJobs` (`ok`, `lease_mismatch`, `invalid_state`, `not_found`, `retry`, READY once every document is done, shredding unless another active job uses the file), `retryPrintJob` (from FAILED, re-route from QUEUED, `PRINT_JOB_STILL_ACTIVE` before 15 minutes, rescue after), `getBoard` (full, delta with 5 s overlap, 200 cap, stale cursor), history, search and `runDailyMaintenance` |
+
+How it runs: `firebase emulators:exec` starts Auth and Firestore on the ports in `firebase.json` under the project `demo-ctrlp-server-tests`, then runs `apps/server/test/emulator/*.emulator.test.ts` one file at a time. Each test clears the emulators first.
+
+- **Never touches a real project.** `test/emulator/preload.mjs` stops the run unless the emulator hosts are set and the project starts with `demo-`, and it removes the service account, S3 and database variables from the test process. The env files in `apps/server` are never loaded.
+- **Storage is a fake.** `harness.ts` starts a local HTTP server that stands in for the S3 bucket and records deletes. A test can make a key fail with 403 to check the `retry` paths.
+- **No doorbell rings.** `FIREBASE_DATABASE_URL` is unset, so rings are skipped (at most one `ring_skipped` warning per file).
+- **Expected noise.** The `retry` and maintenance tests make the fake bucket refuse a delete, so the output shows `Failed to delete printed document … AccessDenied` and `Failed to delete an abandoned guest file`. Those lines are expected; only `not ok` lines or a non-zero exit are failures.
+- **Java on PATH.** firebase-tools looks for `java` on PATH. If a new JDK isn't found yet, open a new terminal, or prepend it for the run: `$env:PATH = "C:\Program Files\Eclipse Adoptium\jdk-21…\bin;$env:PATH"` in PowerShell.
+- **Why a separate script.** T1 runs plain `node --test` on pure files that can't import `@ctrlp/*`. These tests import the real services, so `test/emulator/loader.mjs` maps the `@/` alias and adds the `.ts` extensions that Next's bundler normally fills in.
+- If the emulators' ports are busy (for example `pnpm firebase:emulators` is running), stop that first.
 
 ---
 
@@ -297,6 +313,7 @@ Copy this table into the PR or a test log, and fill in each row.
 | --- | --- | --- | --- | --- |
 | T1–T8, T10 | | | | |
 | T9 | | | | |
+| T11 | | | | |
 | A1–A9 | | | | |
 | B1–B5 | | | | |
 | C1–C14 | | | | |
