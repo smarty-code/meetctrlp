@@ -7,3 +7,4 @@ allowBuilds:
   protobufjs: true
   re2: false
   unrs-resolver: false
+  workerd: true

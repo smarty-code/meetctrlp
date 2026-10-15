@@ -34,3 +34,8 @@ pnpm-debug.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Cloudflare Workers (OpenNext) build output and local secrets
+/.open-next/
+/.wrangler/
+.dev.vars*
