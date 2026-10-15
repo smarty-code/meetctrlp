@@ -1,8 +1,8 @@
 # Desktop traffic and server load: serverless plan
 
-> **Status:** Proposed, version 2, 15 Oct 2026. Nothing in this document is implemented yet. Version 1, built around a server-side hub and SSE, is in git history (`ccadc8b`).
+> **Status:** Proposed, version 2.1, 15 Oct 2026. Revised after the minimized-window spike: a minimized WebView2 window doesn't deliver Firestore listener updates reliably, so nothing time-critical may run in the desktop's web view. Nothing in this document is implemented yet. Version 1 (server hub and SSE) is in git history (`ccadc8b`).
 > **Hosting:** Firebase App Hosting (serverless, on Cloud Run). See [`apps/server/docs/deployment.md`](../../apps/server/docs/deployment.md).
-> **Implementation plan:** [`TRAFFIC_SCALING_V2_IMPLEMENTATION.md`](./TRAFFIC_SCALING_V2_IMPLEMENTATION.md) lists the file-level changes, contracts, work breakdown and tests. Where the two differ, the implementation plan is newer.
+> **Implementation plan:** [`TRAFFIC_SCALING_V2_IMPLEMENTATION.md`](./TRAFFIC_SCALING_V2_IMPLEMENTATION.md) lists the file-level changes, contracts, work breakdown and tests.
 > **Scope:** `apps/server`, `apps/print-shop` (desktop UI), `apps/print-agent` (C# agent), and the customer web app `apps/printUserWebapp`.
 > **Problem:** every open shop desktop sends requests on timers, and each request does slow, billable work. Cost grows with every installed desktop, even when no orders arrive.
 
@@ -10,20 +10,27 @@
 
 ## 1. Summary
 
-**The idea:** nothing runs on a timer through our server. Firestore's own realtime listeners carry every "something changed" signal to the desktop and the customer. Our server only runs when someone actually does something: a customer uploads or pays, the shop accepts, an agent claims or finishes a job.
+**The idea:** each shop PC's print agent keeps one tiny, always-open connection to Firebase Realtime Database: a **doorbell**.
 
-- **Jobs arrive almost instantly.** The desktop listens to the shop's unfinished print jobs in Firestore. When one is queued, the desktop tells its agent over the existing named pipe, and the agent claims it with one request. Expected time from the job being queued to the agent starting the download is under about 2 seconds (to be measured, section 12).
-- **An idle desktop costs nothing.** No heartbeat, no job poll, and no order stream. A Firestore listener that sees no changes is not billed, and it doesn't keep any of our instances running.
-- **The server is stateless.** There's no hub, no SSE, no in-memory state to rebuild, and no 5-minute stream cuts to work around. It can scale to zero.
-- **Logins are checked without network calls or reads.** Login tokens are verified locally, and the shop and role come from claims stored in the token itself.
-- **Online status is relaxed, as agreed.** A paid order is accepted by a running desktop rather than by the server, so "accepted" proves a PC is on. Customers see a warning if no desktop picks up their order.
-- **Cost:** at 1,000 shops with the app open all day and 1,000 orders a day, usage lands at about the free tier. Idle desktops add nothing, and any overage is well under $1/month (section 10).
+- **The server rings it** when something happens for the shop. Ringing means writing a timestamp to `/doorbell/{shopId}`.
+- **The agent wakes on the ring.** In one request it takes everything it should do: it accepts paid orders and claims its print jobs.
+- **The desktop window only displays.** When the doorbell rings and the window is visible, it fetches what changed.
+- **No timers through our server.** Nothing runs on a timer through our server, and nothing time-critical runs in the web view.
+
+- **Jobs arrive almost instantly, minimized or not.** The agent is a normal Windows process, so it isn't throttled like a minimized web view. Expected time from a customer paying to the agent starting the download: about 1–1.5 seconds with a warm server (to be measured).
+- **The connection is officially supported and has no SDK.** The doorbell uses Realtime Database's documented REST streaming (Server-Sent Events). It signs in with the same Firebase ID token the client SDKs use, and security rules apply. The agent reads it with a plain `HttpClient`.
+- **An idle desktop costs nothing on Firestore or our server.** An idle doorbell costs only a few bytes of keep-alive traffic. Realtime Database bills by bandwidth, with 10 GB/month free.
+- **The desktop needs no Firebase SDK.** Its window gets its login token from the agent and its data from our API. Firestore stays server-only for shop data.
+- **The server is stateless:** no hub, no SSE, nothing to rebuild. It can scale to zero.
+- **Online status is relaxed, as agreed.** A paid order is accepted by a running agent, so "accepted" proves a PC is on.
+- **Cost:** at 1,000 shops open all day and 1,000 orders a day, usage stays about at the free tier. Any overage is well under $1/month (section 10).
 
 | 1,000 shops open 12 h/day, 1,000 orders/day | Today | Plan v1 after Phase 3 | **This plan** |
 | --- | --- | --- | --- |
-| Our server requests/day | ~2.9 M | ~260 k | **~37 k** |
+| Our server requests/day | ~2.9 M | ~260 k | **~45 k** |
 | Firestore reads/day | ~8.6 M | ~0.3 M | **~55–60 k** |
 | Firestore writes/day | ~1.4 M | ~0.3 M | **~30 k** |
+| Realtime Database download/month | — | — | **~3–5 GB (10 GB free)** |
 | Instances kept running by open streams | 1+ all day | 1–13 all day | **none** |
 | Cost while no orders arrive | ~$120–235/month | ~$85+/month | **~$0** |
 
@@ -35,14 +42,14 @@
 
 | Requirement | Target |
 | --- | --- |
-| A queued job reaches the shop's agent | Almost instantly: a few seconds at most |
+| A queued job reaches the shop's agent | Almost instantly: a few seconds at most, **including while the desktop is minimized** |
 | Shop/agent online status | Can lag by 5–10 minutes. Not a priority. |
 | Cost | As close to the free tier as possible at about 1,000 shops/customers |
-| Existing users | None. Contracts and data can change freely, with no backward compatibility. |
+| Existing users | None. Contracts and data can change freely. |
 
 ### 2.2 Free tier
 
-Usage is pooled per billing account. App Hosting requires the Blaze plan; these are its no-cost amounts.
+Usage is pooled per billing account. App Hosting requires the Blaze plan.
 
 | Resource | Free amount | Per day | Price above it |
 | --- | --- | --- | --- |
@@ -52,300 +59,289 @@ Usage is pooled per billing account. App Hosting requires the Blaze plan; these 
 | Cloud Run requests (both backends together) | 2 M/month | ~66,000 | $0.40 per million |
 | Cloud Run CPU while handling requests | 180,000 vCPU-s/month | ~6,000 vCPU-s | $0.000024 per vCPU-s |
 | Cloud Run memory while handling requests | 360,000 GiB-s/month | ~12,000 GiB-s | $0.0000025 per GiB-s |
+| Realtime Database downloads | 10 GB/month | ~330 MB | $1 per GB |
+| Realtime Database storage | 1 GB | — | $5 per GB-month |
+| Realtime Database simultaneous connections | 200,000 per database | — | — |
 
-Sources are listed in Appendix E. Check prices for your Firestore database's region.
+Sources are in Appendix E. Check prices for your databases' regions.
 
-### 2.3 How Firestore bills listeners
+### 2.3 How the realtime parts are billed
 
-This is the rule the whole plan is built on:
+**Realtime Database (the doorbell):**
 
-- **Changes are billed, not connections.** A listener costs one read when a document enters or changes in its results, and one read when a document leaves its results because it changed. An open listener with no changes costs nothing.
-- **Each query costs at least one read**, even when it returns nothing.
-- **Long gaps cost a full re-read.** A listener that reconnects after being offline for more than 30 minutes is billed as a new query (with the local cache enabled). Without the local cache, every reconnect is billed as a new query, so the cache must be on.
-- **Rules that read documents cost reads.** `get()` and `exists()` in security rules are billed, so the rules in Appendix B use only token claims.
-- **Our server runs nothing for listeners.** Google's servers deliver the updates.
+- **Billed by downloaded bytes and storage,** not by operation or connection.
+- **Each new connection costs about 3.5 KB** of TLS handshake, and each message costs a few tens of bytes of overhead.
+- **An idle stream** receives only small `keep-alive` events.
+- **The value stays tiny:** two timestamps and a short "last event" record.
+
+**Firestore listeners** (used only by the customer tracking page):
+
+- One read when a document enters or changes in the results; nothing while nothing changes.
+- At least one read per query.
+- A full re-read after more than 30 minutes offline.
+- Security rules that read documents cost reads, so the rules use only token fields.
 
 ---
 
 ## 3. What happens today
 
-Findings from reading the code. Paths are relative to the repo root.
+Findings from reading the code.
 
 ### 3.1 Requests on timers
 
 | Request | Sent by | How often | Cost per request |
 | --- | --- | --- | --- |
 | `POST /api/v1/devices/heartbeat` | Desktop UI ([`App.tsx`](../../apps/print-shop/src/App.tsx), `setInterval`) | Every 30 s, overlapping when slow | 1 call to Google to check the token, ≥4 reads, ≥1 write |
-| `GET /api/v1/shops/{shopId}/agents/{agentId}/jobs` | C# agent ([`AgentCloudSynchronizer.cs`](../../apps/print-agent/src/Ctrlp.PrintAgent.Core/Cloud/AgentCloudSynchronizer.cs)) | 3 s after work, backing off to 30 s when idle | 2 reads (credential, job query) |
-| `GET /api/v1/shops/{shopId}/orders/stream` (SSE) | Desktop UI ([`cloud.ts`](../../apps/print-shop/src/lib/cloud.ts)) | Always open. App Hosting cuts it every 5 minutes, then it reconnects. | Each connection re-reads **every** order and print job the shop has ever had (`subscribeShopOrders` in [`order.service.ts`](../../apps/server/src/modules/orders/order.service.ts)) |
+| `GET /api/v1/shops/{shopId}/agents/{agentId}/jobs` | C# agent ([`AgentCloudSynchronizer.cs`](../../apps/print-agent/src/Ctrlp.PrintAgent.Core/Cloud/AgentCloudSynchronizer.cs)) | 3 s after work, backing off to 30 s when idle | 2 reads |
+| `GET /api/v1/shops/{shopId}/orders/stream` (SSE) | Desktop UI ([`cloud.ts`](../../apps/print-shop/src/lib/cloud.ts)) | Always open; App Hosting cuts it every 5 minutes, then it reconnects | Each connection re-reads **every** order and print job the shop has ever had |
 | `GET /api/v1/shops/{shopId}/orders` | Desktop UI | Each time the stream starts | The full order history |
-| `GET /api/v1/public/session/orders/{orderId}` | Customer tracking page ([`tracking-constants.ts`](../../apps/printUserWebapp/src/data/tracking-constants.ts)) | Every 6 s until the order is completed, including the whole time it's READY | Session, order, and its whole `statusHistory` |
+| `GET /api/v1/public/session/orders/{orderId}` | Customer tracking page | Every 6 s until the order is completed | Session, order, and its whole `statusHistory` |
 
 ### 3.2 Other findings
 
-- **Auth is slow on every desktop request.** `requireShopUser` in [`auth.service.ts`](../../apps/server/src/modules/auth/auth.service.ts) calls Google (`accounts:lookup`) and then makes 2 reads. `verifyIdToken` isn't used anywhere.
-- **Expired tokens cause a request storm.** The desktop never refreshes its 1-hour ID token after startup. After an hour, every heartbeat fails and the stream retries every ≤10 s, each attempt another failed check with Google.
-- **Jobs aren't queued at submit.** `queueIncomingOrder` in [`print-job.service.ts`](../../apps/server/src/modules/printing/print-job.service.ts) runs once an order is `SHOP_ACCEPTED`:
-  - by a manual accept (always needed for CASH);
-  - by the server auto-accepting a paid ONLINE order (`confirmOnlinePayment`).
-
-  Jobs are written to `shops/{shopId}/orders/{orderId}/printJobs/{jobId}` with `shopId`, `agentId`, `printerId` and `status: QUEUED`.
+- **Auth is slow on every desktop request.** It calls Google (`accounts:lookup`) and then makes 2 reads. `verifyIdToken` isn't used anywhere.
+- **Expired tokens cause a request storm.** The desktop never refreshes its 1-hour ID token after startup. After an hour, every heartbeat fails and the stream retries every ≤10 s.
+- **Jobs are queued only after accept.** `queueIncomingOrder` runs once an order is `SHOP_ACCEPTED`: by a manual accept (always needed for CASH), or by the server auto-accepting a paid ONLINE order.
 - **Paid orders are auto-accepted into a dead queue.** The server auto-accepts a paid order even when no desktop is running, and the job then sits QUEUED.
-- **Printers are never marked offline.** Routing (`routePrintJob`) uses each printer's `status`, which is never set to OFFLINE when the app closes.
-- **Agent online status has no reader.** The agent's `status`/`lastSeenAt` are written on every heartbeat but read only by the sweep that marks agents stale.
-- **About 5–7 agent requests per job:** claim, document ticket, a status `PATCH` for every local job event, a shred confirmation, and re-reports.
-- **The agent dies with the app.** It's a sidecar spawned by Tauri and killed when the app exits. It talks to the UI over the named pipe `\\.\pipe\ctrlp-print-agent` (JSON-RPC). Nothing over that pipe tells it to check for jobs.
-- **No app uses the Firebase client SDK.** No `firebase.json` exists. Security rules and indexes exist only as drafts in [`packages/firebase/docs/`](../../packages/firebase/docs/).
+- **Printers are never marked offline** when the app closes.
+- **Agent online status has no reader.** Its `status`/`lastSeenAt` are written on every heartbeat and read only by the sweep that marks agents stale.
+- **About 5–7 agent requests per job:** claim, document ticket, a status `PATCH` per local event, a shred confirmation, and re-reports.
+- **The agent dies with the app.** It's a sidecar spawned by Tauri and killed when the app exits. It talks to the UI over the named pipe `\\.\pipe\ctrlp-print-agent`.
 
 ### 3.3 Cost of today's code
 
-Per desktop that's open, per hour: about **240 requests, 720 reads and 120 writes** (heartbeat + job poll), plus a full history re-read at least every 5 minutes from the stream. Three desktops left open around the clock use up the whole free read quota. At 1,000 desktops open 12 hours a day, that's about 2.9 M requests, 8.6 M reads and 1.4 M writes a day, about $120–235/month of Firestore before any orders.
+Per desktop that's open, per hour: about **240 requests, 720 reads and 120 writes**, plus a full history re-read at least every 5 minutes. Three desktops left open around the clock use up the whole free read quota.
 
 ---
 
-## 4. Why version 1 of the plan doesn't fit serverless
+## 4. Why the earlier designs don't fit
 
-Version 1 kept a live view of each shop in server memory (the "hub"), served desktops over SSE, and added an SSE stream for agents. On App Hosting:
+### 4.1 Version 1: server hub and SSE
 
-- **Open streams keep instances billed all day.** Cloud Run treats an instance with an open streaming request as active and bills it at the full rate. One instance kept busy all day costs about $63/month above the free tier. 1,000 desktop streams at the default 80 requests per instance need about 13 instances.
-- **Short-lived instances lose their memory.** Instances scale to zero, restart, and multiply. A hub or cache rebuilt on each new instance pays its startup reads again, and a reconnect may land on a different instance with a different hub.
-- **Streams are cut every 5 minutes.** At least 12 reconnects an hour per desktop, each needing replay logic to stay cheap.
-- **Timers still dominated.** Even after Phase 3, about 3 requests per second and 0.3 M reads and writes a day were left, mostly safety polls and presence writes. That's several times the free tier, before any orders.
+- **Open streams keep instances billed all day.** Cloud Run bills an instance with an open streaming request at the full rate. That's about $63/month per busy instance, and 1,000 desktop streams need several.
+- **Short-lived instances lose their memory,** so hubs and caches keep being rebuilt.
+- **Streams are cut every 5 minutes** by App Hosting.
+- **Timers still dominated:** about 0.3 M reads and writes a day while idle.
 
-What still holds from version 1 and is kept here:
+### 4.2 Version 2: Firestore listeners in the desktop window
 
-- verifying tokens locally (7.1);
-- stopping retries on permanent rejections (8.3);
-- bounding the desktop's live view to active orders (7.4);
-- paging history instead of loading it all (8.4);
-- request counters and budget alerts (7.5).
+The spike showed that a **minimized WebView2 window doesn't deliver Firestore listener updates reliably.** Tauri's background-throttling switch covers only WebKit on macOS/Linux. Shops run the app minimized, so anything in the web view can stall while minimized, including:
+
+- the jobs listener;
+- auto-accept;
+- token refresh.
+
+### 4.3 The written fallback, rejected: Firestore in the agent
+
+The fallback was the agent listening to Firestore with `Google.Cloud.Firestore`, using the user's ID token. It was rejected because:
+
+- **The login method is undocumented.** That library is built for service accounts; using an end-user Firebase token as its credential isn't documented, so it could break without notice.
+- **The dependency is large** (gRPC and the Firestore client), and the agent's rules forbid a Firebase SDK.
+- **The agent would still need its own token refresh** and stream restarts.
+
+Realtime Database REST streaming does the same job with documented behaviour, plain HTTPS, and no SDK.
 
 ---
 
 ## 5. Target design
 
 ```text
-                       writes (transactions, Admin SDK)
- Customer web app ──▶  API on Cloud Run  ──────────────────▶  Firestore
- Shop desktop UI ──▶   (stateless, scales to zero)                │
- Print agent ────▶                                                │ realtime listeners
-                                                                  │ (Google's servers; billed per changed document)
-                        ┌─────────────────────────────────────────┤
-                        ▼                                         ▼
-              Shop desktop UI (Tauri)                    Customer tracking page
-              • live board: active orders                • its own order document
-              • unfinished print jobs
-                        │
-                        │ named pipe: "jobs.available"
-                        ▼
-              Print agent ── claim / report ──▶ API
-                        │
-                        └── download ──▶ Railway storage (presigned URL)
+ Customer web app ─┐                         Firestore (shop data; server-only for shops)
+ Desktop UI ───────┼──▶ API on Cloud Run ──▶   └─ orderTracking/{orderId} ──▶ customer tracking listener
+ Print agent ──────┘    (stateless)
+                             │ after each write: "ring" (one HTTPS PATCH, server timestamp)
+                             ▼
+                  Realtime Database  /doorbell/{shopId} = { boardAt, workAt, last }
+                             │ REST stream (SSE, ID token), one per shop PC
+                             ▼
+                  Print agent (always on, not throttled)
+                   ├─ workAt changed  ──▶ POST .../agents/{agentId}/sync ──▶ claimed jobs + download URLs
+                   ├─ print, then POST .../jobs/report
+                   ├─ boardAt changed ──▶ pipe "board.changed" ──▶ Desktop UI fetches GET .../board?since=
+                   └─ new order       ──▶ native Windows notification (from the Rust side, not the web view)
 ```
 
 ### 5.1 Principles
 
-1. **Idle means zero.** No client sends anything on a timer through our server.
-2. **Firestore is the push channel.** Clients read through listeners scoped by security rules. All writes still go through the API, in transactions.
-3. **The server holds no state.** Everything it needs comes from the request or from Firestore. A cache is only a bonus for a warm instance.
-4. **Batch per event, not per step.** One claim per wake-up, one final report per job, no intermediate status calls.
-5. **Never trust a single signal.** The agent reacts to the *current set* of queued jobs, not to individual events, so a missed event can't strand a job.
+1. **Idle means zero:** no timers through our server, no Firestore reads.
+2. **Time-critical work runs only in the agent.** The web view may be frozen.
+3. **The doorbell carries no data,** just "something changed, and when". All data comes from our API, which checks permissions.
+4. **Level-triggered:** the agent's `sync` looks at the current state (paid orders waiting, queued jobs), never at individual events. A missed or merged ring can't lose work.
+5. **One owner per job:** the agent owns the PC's Firebase login and keeps the token fresh. The window asks the agent for a token.
 
 ### 5.2 How a job gets to the agent
 
-Example: an ONLINE order with 2 files, API instance warm. Times are estimates to measure in section 12.
+Example: an ONLINE order with 2 files, API instance warm. Times are estimates to measure in the spike.
 
 | Time | What happens | Who |
 | --- | --- | --- |
-| 0 | The customer pays. The server marks the order paid (still `SUBMITTED`). | API |
-| ~0.5 s | The desktop's live board sees a paid, unaccepted order. Auto-accept is on, so it calls `accept`. | Firestore listener → desktop |
-| ~0.8 s | The server accepts the order and queues its 2 jobs, routed to this PC's agent first, in one transaction. | API |
-| ~1.3 s | The desktop's jobs listener sees 2 QUEUED jobs for its agent and sends `jobs.available` over the pipe. | Firestore listener → desktop → agent |
-| ~1.6 s | The agent claims both jobs in one request. The response includes presigned download URLs. | Agent → API |
-| then | Download from Railway, print, delete the local file. | Agent |
-| at the end | One final report per job. When every job is done, the order becomes `READY`. | Agent → API |
+| 0 | The customer pays. The server marks the order paid, then rings the doorbell (`workAt`, `boardAt`). | API |
+| ~0.2–0.4 s | The agent's stream receives the change. `workAt` is newer than the last one handled. | Realtime Database → agent |
+| ~0.3–0.5 s | The agent calls `sync`. In one request the server auto-accepts the paid order, queues its jobs (preferring this PC's printers), claims them for this agent, and returns download URLs. | Agent → API |
+| ~1–1.5 s | Download from Railway starts; then print. | Agent |
+| at the end | One final report per job. When every document is done, the order becomes `READY`. | Agent → API |
 
-- **CASH orders:** the same path, with a person pressing Accept instead of auto-accept.
-- **Cold start:** if the instance is cold, add about 2–5 s. The customer's own requests just before usually warm it.
+- **CASH orders:** the server rings with a "new order" event. The agent shows a native Windows notification. The operator opens the app and presses Accept; the server queues the jobs and rings; the agent syncs and prints.
+- **Cold start:** add about 2–5 s if the API instance is cold. The customer's own requests usually warm it first.
 
-### 5.3 What each client reads
+### 5.3 Realtime channels
 
-| Listener | Query | Billed reads |
+| Channel | Who | Cost |
 | --- | --- | --- |
-| Desktop live board | `shops/{shopId}/orders` where `status in [SUBMITTED, SHOP_ACCEPTED, PRINTING, READY]` | Active orders when it starts (at least 1), then 1 per order change |
-| Desktop jobs | collection group `printJobs` where `shopId ==` and `status in [QUEUED, DISPATCHING, FAILED]` | Unfinished jobs when it starts (at least 1), then 1 per job change |
-| Customer tracking | the document `orderTracking/{orderId}`, a customer-safe copy of the order | 1 to start, then 1 per visible change |
-| Desktop history, search, today's completed | One-off client queries, paged by 50, run only when the shop opens that tab | 1 per order shown |
+| Doorbell `/doorbell/{shopId}` (Realtime Database REST stream) | Each shop PC's agent | Keep-alives, a 3.5 KB handshake per reconnect (about hourly, when the token is renewed), a few hundred bytes per ring. No Firestore reads. |
+| `board.changed` (named pipe) | Agent → desktop UI | Local only |
+| `GET .../board?since=` (our API) | Desktop UI, only when visible, after a ring or on focus | 1 request; reads = at least 2 plus the changed documents |
+| `orderTracking/{orderId}` (Firestore listener) | Customer tracking page (a foreground browser tab) | 1 read to start, then 1 per visible change |
 
 ### 5.4 Who signs in how
 
-| Client | Signs in with | Server checks | Firestore rules use |
+| Client | Signs in with | Server checks | Rules use |
 | --- | --- | --- | --- |
-| Shop desktop | Firebase client SDK, `signInWithCustomToken` with a token from `/api/auth/login`. The SDK refreshes the ID token by itself. | `verifyIdToken` locally. `shopId`, `shopUserId` and `role` come from custom claims. 0 reads. | `request.auth.token.shopId` |
-| Print agent | The signed-in desktop user's ID token, handed over the pipe whenever it changes | Same as the desktop. Job actions also check `job.shopId` and `job.agentId` inside the claim/report transaction. | — (no direct Firestore access) |
-| Customer | A custom token for `uid = printUserId`, returned when the guest session starts. Used only on the tracking page. | Signed guest cookie | `orderTracking`: `resource.data.printUserId == request.auth.uid` |
+| Print agent | Owns the PC's Firebase refresh token, in Windows Credential Manager as today. It gets fresh ID tokens directly from Google's Secure Token API (no request to our server), and uses them for our API (`Bearer`) and the doorbell (`auth=`). | `verifyIdToken` locally; `shopId`, `shopUserId` and `role` come from custom claims. 0 reads. | Realtime Database: `auth.token.shopId == $shopId` |
+| Desktop UI | Asks the agent for the current ID token over the pipe (`cloud.getIdToken`) for each API call. No token handling of its own. | Same | — |
+| Customer | A custom token for `uid = printUserId`, returned when the guest session starts. Used only on the tracking page. | Signed guest cookie | Firestore `orderTracking`: `resource.data.printUserId == request.auth.uid` |
 
-Customers read a separate tracking copy, not the order itself. Security rules allow or deny whole documents, so pointing a guest at the order would also expose staff IDs, payment references and storage keys.
-
-The agent's separate API key (`x-ctrlp-agent-key`) goes away. That saves a credential read on every agent request, and leaves one auth system to maintain.
+- **The agent's API key goes away.** That saves a credential read per agent request.
+- **One token owner per PC.** This also removes today's expired-token storm.
 
 ### 5.5 Online status, kept cheap
 
 | Need | How it's met | Cost |
 | --- | --- | --- |
-| Don't auto-accept a paid order no PC will print | The **desktop** auto-accepts paid orders when it sees them. The server no longer auto-accepts. If no desktop is running, the order waits as `SUBMITTED` and paid. | 1 request per order, which replaces the server's own accept |
-| Don't route jobs to a PC that's off | `accept` routes to the accepting PC's printers first. Printers are marked OFFLINE on sign-out and on app exit (best effort). | 1 request per exit |
-| Tell the customer the shop hasn't seen the order | The tracking page shows "The shop hasn't confirmed your order yet" when the order is still `SUBMITTED` 10 minutes after payment or submission. | 0 |
-| "Last active" in admin views | The device's `lastActiveAt` is written at sign-in, and added at most every 10 minutes to requests the desktop already makes. | ≤6 writes per active hour, 0 when idle |
+| Don't auto-accept a paid order no PC will print | The **agent's `sync`** auto-accepts paid orders. With no PC running, nobody syncs and the order waits as `SUBMITTED` and paid. | 0 extra |
+| Don't route jobs to a PC that's off | Accept, whether from `sync` or the Accept button, routes to the caller's printers first. Printers are marked OFFLINE on sign-out and window close (best effort). | 1 request per exit |
+| Tell the customer the shop hasn't seen the order | The tracking page shows "The shop hasn't confirmed your order yet" after 10 minutes in `SUBMITTED`. | 0 |
+| "Last active" in admin views | `lastActiveAt` on the device, written at most every 10 minutes on requests the PC already makes. | ≤6 writes per active hour, 0 when idle |
 
-A live "online now" indicator isn't needed (section 2.1). If it becomes one, see 9.1.
+A live "online now" indicator isn't needed. If it becomes one, see 9.1: it costs almost nothing with Realtime Database.
 
 ### 5.6 What's removed
 
 | Removed | Replaced by |
 | --- | --- |
-| `POST /api/v1/devices/heartbeat` and the desktop's 30 s loop | Nothing. Online status per 5.5. |
-| Agent poll loop and `GET .../agents/{agentId}/jobs` | `jobs.available` over the pipe, plus a batch claim |
-| `GET .../orders/stream` (SSE) and `subscribeShopOrders` | The desktop's live-board and jobs listeners |
-| Full `GET .../orders` at startup | The live-board listener, plus paged client queries for history |
-| `GET .../jobs/{jobId}/document` (ticket), per-event `PATCH .../jobs/{jobId}`, `POST .../documents/{docId}/shred` | Claim returns download URLs. One final report also confirms the shred. |
-| `markStaleAgentsOffline` and the agent `status` field | `lastActiveAt` (5.5) |
+| Heartbeat route and the desktop's 30 s loop | Nothing (5.5) |
+| Agent poll loop, the per-job claim/ticket/PATCH/shred routes, and the agent API key | Doorbell, `sync`, `report`, and the user's ID token |
+| SSE order stream, `subscribeShopOrders`, and the full `GET .../orders` at startup | `GET .../board` (initial and changes) after a ring or on focus |
+| Server-side auto-accept on payment | Agent `sync` |
+| Desktop token handling (the storm in 3.2) | The agent owns refresh |
+| Tracking poll every 6 s | Firestore listener on `orderTracking` |
 | Version 1's hub, agent stream and presence-from-stream | Not built |
-| Tracking poll every 6 s | Tracking listener |
-| Manual token refresh code (version 1, 8.1) | The Firebase SDK refreshes tokens |
 
 ---
 
 ## 6. Phase 1: foundation (server and Firebase config)
 
-Everything Phases 2 and 3 depend on. Clients don't change yet.
-
 ### 6.1 Verify tokens locally, trust claims
 
-**Where:** `requireShopUser` in [`auth.service.ts`](../../apps/server/src/modules/auth/auth.service.ts), registration and staff management.
+- Replace `lookupIdToken` with `getFirebaseAuth().verifyIdToken(token)`, which runs locally against cached Google keys.
+- Custom claims `{ shopId, shopUserId, role }` are already set at registration. Make that step required: today a failure is only logged.
+- Read principal fields from the token. No `authLookups` or user reads on the request path.
+- **Deactivating staff:** disable the Firebase user and revoke refresh tokens. The agent's next token refresh fails, and existing ID tokens expire within an hour. Sensitive routes check revocation immediately.
 
-- Replace `lookupIdToken` with `getFirebaseAuth().verifyIdToken(token)`. It checks the signature against Google's cached public keys, with no network call per request.
-- Set custom claims `{ shopId, shopUserId, role }` with `setCustomUserClaims` at registration and whenever staff are added or their role changes. Claims set this way persist across token refreshes.
-- Read `shopId`, `shopUserId` and `role` from the token. No `authLookups` or user read on the request path.
-- **Deactivating staff:** disable the Firebase user and call `revokeRefreshTokens`. Ordinary routes and Firestore reads stop working when the current ID token expires (within 1 hour). Sensitive routes (staff management, payout settings, sign-out) call `verifyIdToken(token, true)`, which checks revocation immediately with one call to Google.
+### 6.2 Doorbell
 
-**Effect:** desktop requests lose a call to Google (300–800 ms) and 2 reads each.
+- **Create the Realtime Database instance** in the region closest to shops: `asia-southeast1` for India. It holds only `/doorbell/{shopId}`.
+- **Ring helper** `ringShop(shopId, { work, event })`:
+  - One HTTPS `PATCH` to `/doorbell/{shopId}.json` with a service-account OAuth token (scopes `firebase.database` and `userinfo.email`, cached until expiry).
+  - The body is `{ boardAt: {".sv":"timestamp"}, workAt?: {".sv":"timestamp"}, last: { type, orderId, orderNumber } }`.
+  - It runs after the Firestore transaction commits and **is awaited before responding**, because Cloud Run takes CPU away once the response is sent.
+  - On failure it retries once, then logs. Failures never fail the request.
+- **When to ring:**
 
-### 6.2 Custom tokens for the client SDK
+| Event | `workAt` (agents sync) | `boardAt` (UI refresh) | `last.type` |
+| --- | --- | --- | --- |
+| Guest or shop order created | — | yes | `order_submitted` (agents show a notification) |
+| Online payment confirmed | yes | yes | `order_paid` (notification) |
+| Manual accept, dispatch or retry queues jobs | yes, unless every job went to the caller's own agent within `sync` | yes | `jobs_queued` |
+| Reject, cancel, ready, complete, cash collected, job report | — | yes | `order_updated` |
 
-- `/api/auth/login` and `/api/auth/refresh` also return `firebaseCustomToken` from `createCustomToken(uid)`. It's signed locally with the service-account key, so no network call.
-- `POST /api/v1/public/shops/{slug}/session` returns `firebaseToken` for `uid = printUserId`, with claim `guest: true`.
+### 6.3 Rules, indexes and project config
 
-### 6.3 Security rules, indexes and deploy config
+- `firebase.json` with Firestore rules and indexes, Realtime Database rules, and emulators.
+- **Firestore rules:** clients can read only `orderTracking/{id}` where `printUserId == auth.uid`. Everything else is server-only.
+- **Realtime Database rules:** read `/doorbell/$shopId` when `auth.token.shopId == $shopId`. No client writes anywhere.
+- Rules tests on both emulators.
 
-- Add `firebase.json` with Firestore rules and indexes. Move the drafts out of [`packages/firebase/docs/`](../../packages/firebase/docs/) into `packages/firebase/firestore.rules` and `packages/firebase/firestore.indexes.json`.
-- Rules: Appendix B. Clients can only read, never write, and only their own shop's orders and jobs, or the guest's own order.
-- Indexes: Appendix C.
-- Test the rules with the Firestore emulator: a shop can't read another shop's orders, a guest can read only their own order, and no client can write.
+### 6.4 Data changes
 
-### 6.4 Data changes that keep reads and writes down
-
-Each write to an active order costs one read for every desktop and customer listening to it. So:
-
-- **Status times on the order:** extend the order's existing `lifecycle` map (`printingAt`, `rejectedAt`, `cancelledAt`, `paidAt`) and drop the `statusHistory` subcollection. That saves one write per status change, and the reads of the whole subcollection.
-- **Completed documents:** keep `completedDocumentIds` on the order. Each final report adds its document with `arrayUnion`, so a report doesn't read every sibling job. The report that completes the last document sets `READY` in the same write.
-- **Fewer job states:** jobs go `QUEUED → DISPATCHING` (claimed) `→ COMPLETED | FAILED`. Drop the separate `PRINTING` write.
-- **Idempotency without extra documents:**
-  - Claims and reports are made idempotent by the job's `leaseId`.
-  - Order transitions are made idempotent by their status: a replay finds the target status already set and writes nothing.
-  - Keep idempotency keys for customer order submission and dispatch.
-- **Customer tracking copy:** `orderTracking/{orderId}` holds only customer-visible fields. It's written in the same transaction as the order, and only when one of those fields changes (about 6 writes per order).
-- **Search keys:** write `searchKeys` (order number, pickup code, phone, filename words, lowercased) when the order is created, for the desktop's search (7.7).
-- **No needless writes:** don't bump `updatedAt` or touch active orders unless something visible changed.
+- **Status times:** extend the order's existing `lifecycle` map (`printingAt`, `rejectedAt`, `cancelledAt`, `paidAt`) and drop `statusHistory`.
+- **`completedDocumentIds`:** decides READY without reading sibling jobs.
+- **`updatedAt` uses the server timestamp** on every order and job write, so `board?since=` can find changes.
+- **Fewer job states:** QUEUED → DISPATCHING → COMPLETED / FAILED / CANCELLED (no PRINTING).
+- **Idempotency:** leases make claim and report idempotent; status makes transitions idempotent. Keep keys for order submission and dispatch.
+- **`searchKeys`** on orders, for the desktop's search.
+- **`orderTracking/{orderId}`:** a customer-safe copy written in the same transaction as guest order changes (about 6 writes per order). Rules can't hide fields, so guests never read the order itself.
 
 ### 6.5 Visibility and guard rails
 
-- **Counters:** log reads and writes per request (a small counter around the Firestore helpers), with route and duration.
-- **Budget alerts:** Firestore and Cloud Run budget alerts at 50%, 90% and 100% of the free tier.
-- **Rate limits:** a per-instance limiter per user, agent and guest (for example 30 requests/minute) that answers 429 with `Retry-After`. On serverless this only guards against a client stuck in a loop. It's not abuse protection; App Check covers that later.
+- Per-request read/write counters in the logs.
+- Budget alerts on Firestore, Cloud Run and Realtime Database bandwidth.
+- A per-instance rate limit to stop a client stuck in a loop.
 
 ---
 
-## 7. Phase 2: push through Firestore (desktop, agent, server)
+## 7. Phase 2: agent-driven delivery
 
-### 7.1 First, test listener delivery on a minimized window (spike, 1 day)
+### 7.1 First, a doorbell spike (half a day to a day)
 
-The desktop must receive jobs while its window is minimized, which is how shops will run it. Tauri's option to turn off background throttling covers only macOS/Linux WebKit, not WebView2 on Windows.
+A C# console app streams `/doorbell/{testShop}.json` with an ID token, while a script rings it.
 
-**Test:**
+**Measure:**
 
-1. Minimize the app for an hour.
-2. Queue jobs from another machine.
-3. Measure the delay from the job being queued to the agent being woken. Try it also with the network dropped and restored while minimized.
+- ring-to-event latency (target p95 under 500 ms);
+- the keep-alive interval and bytes per hour per connection (Realtime Database usage page);
+- `auth_revoked` at token expiry, and reconnection;
+- 307 redirect handling;
+- behaviour across network drops, Windows sleep, and a shop-like network with a proxy or antivirus HTTPS scanning.
 
-**If delivery lags while minimized,** use fallback F2 in 9.3 (the listener runs in the agent instead). The rest of this phase is the same either way.
+**If a network buffers or blocks the stream,** use the fallback in 7.2: polling the tiny doorbell value.
 
-### 7.2 Firebase in the desktop
+### 7.2 Agent
 
-**Where:** new `apps/print-shop/src/lib/firebase.ts`; sign-in in [`App.tsx`](../../apps/print-shop/src/App.tsx).
+- **Token owner:** refreshes the ID token with Google's Secure Token API using the refresh token already in Credential Manager. It refreshes at 55 minutes, or on `auth_revoked` or a 401.
+- **Doorbell stream:**
+  - one `HttpClient` SSE stream with an automatic reconnect;
+  - a watchdog that reconnects if nothing arrives within 2× the keep-alive interval;
+  - remembers the last handled `workAt` and `boardAt`.
+- **On `workAt` change** (including the first value after any reconnect): call `sync`, and repeat while `more` is true.
+- **On `boardAt` change:** send `board.changed` to the UI.
+- **On `last.type` = `order_submitted` or `order_paid`:** send `orders.attention`. The Rust side shows a native notification and flashes the taskbar, independent of the web view.
+- **Print and report:** unchanged locally. One final report per job goes through a SQLite outbox, with retries only on network errors, 429 and 5xx. 404 and 409 are final.
+- **Fallback if the stream can't stay up** (from the spike): a plain `GET /doorbell/{shopId}.json` every 60 s. It costs Realtime Database bandwidth only, no Firestore reads or server requests.
 
-- Initialise Firestore with the local cache on (`persistentLocalCache`). Without it, every reconnect is billed as a new query.
-- After login, call `signInWithCustomToken(firebaseCustomToken)`. From then on, use `auth.currentUser.getIdToken()` for every API call. The SDK refreshes it before it expires, which removes the token storm in 3.2.
-- On `onIdTokenChanged`, send the new token to the agent over the pipe (`cloud.session`).
-- Keep the token out of React effect dependencies, so a refresh doesn't restart the listeners.
+### 7.3 Server endpoints
 
-### 7.3 Live board and jobs listeners
+- **`POST .../agents/{agentId}/sync`:**
+  1. Auto-accepts up to 10 paid `SUBMITTED` orders (if the shop's `autoAcceptPaidOnline` is on), routing to this agent's printers first.
+  2. Claims up to 10 QUEUED jobs for this agent.
+  3. Returns `{ accepted, claimed (with download URLs), more }`.
+- **`POST .../agents/{agentId}/jobs/report`:** batch final reports. Checks the lease, updates `completedDocumentIds`, sets READY after the last document, deletes the storage object on COMPLETED (the report succeeds only once the object is deleted), and rings `boardAt`.
+- **`GET .../board?since=`:**
+  - without `since`: active orders and unfinished jobs;
+  - with `since`: orders and jobs whose `updatedAt` is later than `since − 5 s`;
+  - returns a new cursor.
+- **`GET .../orders?status=&from=&to=&cursor=`** and **`GET .../orders/search?q=`:** paged history and search, replacing in-memory filtering of the full history.
+- **Remove:**
+  - heartbeat;
+  - the agent jobs list and the per-job claim, PATCH, document and shred routes;
+  - SSE stream and full order list;
+  - server-side auto-accept on payment;
+  - agent credential checks.
 
-- **Live board:** replaces the SSE stream and the full `listShopOrders` call. Map documents to the existing order types.
-- **Jobs:** shows progress in the UI and drives the agent (7.4).
-- **Detach on sign-out.** Attach once per sign-in, not per screen.
+### 7.4 Desktop UI
 
-### 7.4 Waking the agent
+- **API calls get their bearer token from the agent** (`cloud.getIdToken` over the pipe). Remove the heartbeat effect, the SSE client and the full order list.
+- **Board:**
+  - fetch `GET .../board` at start;
+  - then `?since=` on `board.changed` (debounced 300 ms) **only while the window is visible**, and once on focus or restore.
+- **History and search** use the new paged endpoints.
+- **No Firebase SDK in the desktop.**
+- **Sign-out:** `cloud.clear` to the agent (stops the stream, forgets the token), mark this PC's printers OFFLINE, and clear the stored refresh token.
 
-**Where:** the pipe protocol ([`Protocol.cs`](../../apps/print-agent/src/Ctrlp.PrintAgent.Contracts/Protocol/Protocol.cs), `commands.rs`, [`agent.ts`](../../apps/print-shop/src/lib/agent.ts)).
+### 7.5 Rust bridge
 
-- **New notification from UI to agent:** `jobs.available { jobs: [{ orderId, jobId }] }`, every QUEUED job whose `agentId` is this PC's agent.
-- **When it's sent:** on every jobs snapshot that contains such jobs, and again whenever the agent reconnects to the pipe. It reflects the current state, so a missed event or an agent restart can't lose a job.
-- **The agent de-duplicates.** It ignores job IDs it's already claiming or printing.
-
-### 7.5 Agent: no polling
-
-**Where:** [`AgentCloudSynchronizer.cs`](../../apps/print-agent/src/Ctrlp.PrintAgent.Core/Cloud/AgentCloudSynchronizer.cs).
-
-- **Remove the poll loop.** The agent is idle until `jobs.available` arrives.
-- **Claim:** one call for the batch → stage → print (unchanged locally) → delete the local file → one final report.
-- **Retries:** reports are retried with backoff (1 s doubling to 5 minutes) only on network errors, 429 and 5xx, honouring `Retry-After`.
-- **Permanent rejections:** a 404 or 409 is permanent. Log it, mark it acknowledged, stop. This closes the "re-sent every 3 seconds forever" bug.
-- **On start,** re-send any unacknowledged final reports once, then only on the backoff schedule.
-- **Auth:** the latest token from `cloud.session` replaces the agent API key.
-- **Tests:** a fake HTTP handler for claim, report, backoff and permanent rejections (none exist today).
-
-### 7.6 Server: claim and report endpoints
-
-**Where:** [`print-job.service.ts`](../../apps/server/src/modules/printing/print-job.service.ts), new routes under `app/api/v1/shops/[shopId]/agents/[agentId]/jobs/`.
-
-- **`POST .../jobs/claim`** with `{ jobs?: [{ orderId, jobId }] }`. In one transaction it claims up to 10 of those jobs that are still QUEUED for this agent: sets `DISPATCHING` with a new `leaseId`, and moves the order to `PRINTING` on its first claim.
-  - It returns each job with `resolvedSettings` and a presigned download URL, replacing the ticket route.
-  - Without `jobs` it claims the oldest QUEUED jobs for this agent (used by fallback F2 and recovery).
-- **`POST .../jobs/report`** with `{ reports: [{ orderId, jobId, leaseId, status: COMPLETED | FAILED | CANCELLED, error?, pagesPrinted? }] }`. For each report:
-  - it checks the lease;
-  - it sets the final status;
-  - on COMPLETED, it adds the document to `completedDocumentIds`, setting the order to `READY` once all documents are done;
-  - on COMPLETED, it then deletes the storage object and records `shreddedAt`. The report counts as done only once the object is deleted.
-- **Remove** the routes listed in 5.6.
-
-### 7.7 Accepting orders from the desktop
-
-- **Auto-accept moves to the desktop.** When the live board shows a paid ONLINE order still in `SUBMITTED`, and `autoAcceptPaidOnline` is on, the desktop calls `accept`. CASH orders still need a person to press Accept.
-  - The server keeps the transaction idempotent, so two PCs racing get one accept and one no-op.
-  - Remove auto-accept from `confirmOnlinePayment`.
-- **Routing:** `accept` queues jobs for the accepting PC's printers first, if they have the needed capabilities, and falls back to other printers in the shop.
-- **Printers on exit:** mark this PC's printers OFFLINE on sign-out and on app exit (best effort).
-- **Optional later:** `accept` could return the claimed jobs for the local agent directly, saving the listener round trip (about 0.5 s).
-
-### 7.8 History and search in the desktop
-
-The Orders screen's All, Completed, date and search views run Firestore queries from the desktop, paged by 50 and only when that view opens:
-
-- `orders` by `createdAt` desc, optionally filtered by status or date;
-- search through `searchKeys array-contains`.
-
-No server endpoint is needed.
+- **One-way notifications:** add a `notify` for UI → agent (`cloud.configure`, `cloud.session`, `cloud.clear`, `sync.request`).
+- **Native notifications:** handle `orders.attention` in Rust with a Windows notification and a taskbar flash, then forward it to the UI.
 
 ---
 
@@ -353,66 +349,49 @@ No server endpoint is needed.
 
 ### 8.1 Tracking with a listener
 
-**Where:** [`use-order-tracking.ts`](../../apps/printUserWebapp/src/hooks/use-order-tracking.ts), [`tracking-repository.ts`](../../apps/printUserWebapp/src/data/tracking-repository.ts).
-
-- On the tracking page only, load the Firebase SDK (dynamic import), sign in with the session's `firebaseToken`, and listen to `orderTracking/{orderId}`.
-- Detach when the order is `COMPLETED`, `REJECTED` or `CANCELLED`, or when the page closes.
-- Show "The shop hasn't confirmed your order yet" after 10 minutes in `SUBMITTED` (5.5).
-- Remove the 6 s poll and the server's `statusHistory` read for guests.
-
-**Effect:** from about 10 requests and 30–70 reads a minute per waiting customer, to about 7 reads and 0 requests per order.
+- **The tracking page only:** lazy-load the Firebase SDK, sign in with the session's `firebaseToken`, and listen to `orderTracking/{orderId}`. Customers are in a foreground browser tab, so web-view throttling doesn't apply.
+- **When to detach:** on a terminal status.
+- **Fallback:** if the listener fails, make one `GET` and show a Refresh button.
+- **"Shop hasn't confirmed":** shown after 10 minutes in `SUBMITTED`.
 
 ### 8.2 Guest API trims
 
-- **Signed session cookie:** sign the guest cookie (`printUserId`, shop, IP hash, expiry, HMAC) so `requirePrintUserSession` doesn't read `printUsers/{id}` just to authenticate. Cart changes still read it inside their transaction.
-- **Read the session once per request.** `complete` reads it three times today.
-- **Cache shop config** for 60 s per instance. Most of one customer's requests land on the same warm instance.
-- **One quote:** quote once on the review page and pass `expectedTotalPaise` to submit. Don't quote again on the payment page.
-- **Keep the cart in memory** between the upload, customize and review pages, and re-read the session only on reload.
+- Signed session cookie (no session read just to authenticate).
+- Read the session once per request.
+- Shop config cached 60 s per instance.
+- One quote.
+- Keep the cart in memory between pages.
 
 ### 8.3 Hosting settings
 
-- **Scale to zero:** set `minInstances: 0` in [`apps/server/apphosting.yaml`](../../apps/server/apphosting.yaml) once the SSE stream is gone. This saves the idle instance (about $13/month). A cold start (2–5 s) then hits only the first request after a quiet period, and a customer's own requests usually warm the server before the shop accepts.
-- **Update [`deployment.md`](../../apps/server/docs/deployment.md):** remove "Desktop order stream on serverless", and note that listeners need no server capacity.
+- `minInstances: 0` once the SSE stream is gone. That saves about $13/month idle.
+- Update [`deployment.md`](../../apps/server/docs/deployment.md).
 
 ### 8.4 Web app proxy: keep for now
 
-Every customer API call goes through the web app's `/api` proxy, so it counts as 2 Cloud Run requests. At 1,000 orders/day the total stays within the free tier (section 10), so keep the proxy: it gives first-party cookies and no CORS.
-
-Above about 2,000 orders/day:
-
-- serve the API at `api.<domain>`;
-- call it directly with `credentials: "include"` and a same-site cookie;
-- send JSON as `text/plain` so browsers skip the CORS preflight request.
-
-This roughly halves customer-side requests.
+At 1,000 orders/day requests stay within the free tier. Above about 2,000 orders/day, consider serving the API at `api.<domain>` to halve customer-side requests.
 
 ---
 
 ## 9. Optional, only if needed
 
-### 9.1 Live online status with Realtime Database
+### 9.1 Live online status
 
-If a live "online now" indicator, or routing around a PC that crashed, becomes a requirement:
+The agent writes `/presence/{shopId}/{agentId} = { at: server timestamp }` every 5 minutes over the same REST API. That costs Realtime Database bandwidth only, about 1 KB per write including TLS. The server reads it when it needs to know which PCs are on.
 
-- The desktop connects to Firebase Realtime Database and writes `/presence/{shopId}/{deviceId}`, with `onDisconnect()` removing it.
-- Realtime Database bills storage and downloaded bandwidth, not operations: 10 GB/month free, 200 k connections per database.
-
-That gives online status within about a minute at near-zero cost, with no Firestore reads or writes.
+This gives status within 5 minutes for 1,000 PCs at roughly 4 GB/month of bandwidth, with no Firestore operations.
 
 ### 9.2 Agent as a Windows service
 
-If the agent must print while the desktop app is closed, it needs its own credential again. Use a long-lived signed agent token, verified without a read, plus fallback F2 for jobs.
+The agent already owns its login and doorbell. As a service it could print while the window is closed. It would need its own credential lifecycle, because the refresh token is per user today.
 
-### 9.3 Fallback F2: listener in the agent
+### 9.3 Firestore listener in the UI while visible
 
-If 7.1 shows WebView2 delays delivery while minimized, the C# agent opens the jobs listener itself. It uses the Firestore .NET client (`Google.Cloud.Firestore`) with the user's Firebase ID token as the bearer credential, so the same security rules apply. The UI keeps only the live board.
-
-This uses the same protocol as Firebase's own mobile SDKs, but it isn't an officially documented setup, so prototype it in the 7.1 spike.
+To save the board's reads on very busy shops, the UI could use a Firestore listener while the window is visible and fall back to `board?since=` otherwise. Not needed at the expected volume.
 
 ### 9.4 Moving print jobs
 
-Storing jobs at `shops/{shopId}/printJobs/{jobId}` (with `orderId`) instead of under each order would remove the collection-group index and simplify the rules. With no existing data it's cheap to do now, but it's not required.
+Storing jobs at `shops/{shopId}/printJobs/{jobId}` would remove a collection-group index. Not required.
 
 ---
 
@@ -420,50 +399,40 @@ Storing jobs at `shops/{shopId}/printJobs/{jobId}` (with `orderId`) instead of u
 
 ### 10.1 Per order
 
-Scenario: 2 files, ONLINE payment, one desktop listening, the customer watching tracking, after Phases 1–3. These are estimates. The counters in 6.5 will give real numbers.
+2 files, ONLINE payment, one PC with the window visible half the time, the customer watching tracking, after Phases 1–3. These are estimates; the counters in 6.5 will give real numbers.
 
 | Step | Our server requests (with proxy) | Reads | Writes |
 | --- | --- | --- | --- |
-| Customer opens the shop page and starts a session | 3–4 | ~3 | 1 |
-| Upload 2 files (intent + check each) | 8 | ~6 | 4 |
+| Customer: shop page and session | 3–4 | ~3 | 1 |
+| Upload 2 files | 8 | ~6 | 4 |
 | Customize, review, quote | 5–6 | ~5 | 1 |
 | Place the order and pay | 4 | ~6 | ~6 |
-| Desktop accepts; 2 jobs queued | 1 | ~5 | ~4 |
-| Agent claims 2 jobs and sends 2 final reports | 2–3 | ~7 | ~7 |
+| Agent `sync`: auto-accept, queue and claim 2 jobs | 1 | ~10 | ~7 |
+| Agent: 2 final reports | 1–2 | ~4 | ~5 |
 | Shop hands over the prints | 1 | ~1 | ~1 |
-| Customer tracking copy (written alongside the order) | 0 | 0 | ~6 |
-| Desktop listeners (live board + jobs) | 0 | ~13 | 0 |
+| Customer tracking copy | 0 | 0 | ~6 |
+| Desktop board refreshes (about 4 while visible) | ~4 | ~10 | 0 |
 | Customer tracking listener | 0 | ~7 | 0 |
 | Web app page loads | ~5 | 0 | 0 |
-| **Total** | **~30–35** | **~50–55** | **~28–30** |
+| **Total** | **~33–38** | **~52–55** | **~30** |
 
-Without the proxy (8.4), requests drop to about 20.
+Doorbell rings: about 8 per order, a few hundred bytes each to each of the shop's PCs. There's no Firestore or server cost on the receiving side.
 
 ### 10.2 Per day
 
-App start = one sign-in, one device sync, and the two listeners' first results, about 2 requests and 5 reads per desktop.
+App start ≈ 3 requests (me, register, board) and the board's first reads (about 5–10).
 
-| Usage | Requests/day | Reads/day | Writes/day | Above the free tier, per month |
-| --- | --- | --- | --- | --- |
-| 1,000 desktops open, no orders | ~2 k (app starts) | ~5 k | ~1 k | $0 |
-| 1,000 desktops + 1,000 orders/day | ~37 k (free: 66 k) | ~55–60 k (free: 50 k) | ~30 k (free: 20 k) | well under $1 |
-| 1,000 desktops + 10,000 orders/day | ~350 k | ~550 k | ~300 k | about $45–60 (CPU time ~$20, writes ~$15, reads ~$5–9, requests ~$3) |
+| Usage | Requests/day | Reads/day | Writes/day | Realtime Database | Above the free tier, per month |
+| --- | --- | --- | --- | --- | --- |
+| 1,000 PCs open 12 h, no orders | ~3 k (app starts) | ~8 k | ~1 k | ~3–5 GB/month: keep-alives and hourly reconnects; the spike measures it | $0 |
+| + 1,000 orders/day | ~40–45 k (free: 66 k) | ~55–60 k (free: 50 k) | ~30 k (free: 20 k) | about the same | well under $1 |
+| + 10,000 orders/day | ~360 k | ~550 k | ~300 k | about the same | about $45–60 |
 
 **What drives the cost:**
 
-- **Orders, not installed desktops.** Each extra listening desktop adds only about 13 reads per order. Each extra waiting customer adds about 7.
-- **Writes to active orders.** Every one is billed again for each listener (6.4).
-- **App starts after a long gap.** A listener that comes back after more than 30 minutes re-reads its whole active set, so keep the live board small. This is why it's bounded to active orders.
-
-### 10.3 Against version 1
-
-| 1,000 shops, no orders | Version 1 after Phase 3 | This plan |
-| --- | --- | --- |
-| Requests/day | ~260 k (safety polls, reconnects) | ~2 k |
-| Reads/day | ~0.3 M | ~5 k |
-| Writes/day | ~0.3 M (presence) | ~1 k |
-| Instances held by streams | 1–13, all day (~$63+ each/month) | 0 |
-| Server code | Hub, replay buffer, two SSE endpoints | None of it |
+- **Orders, not installed PCs.** An idle PC costs only doorbell keep-alives.
+- **Writes to active orders.** Every one rings the board, and each visible desktop then fetches the change.
+- **Board fetches while visible.** Debouncing and "only when visible" keep them low.
 
 ---
 
@@ -471,68 +440,76 @@ App start = one sign-in, one device sync, and the two listeners' first results, 
 
 | Risk | Handling |
 | --- | --- |
-| WebView2 throttles listeners while minimized | 7.1 spike first; fallback F2 (9.3) |
-| A rules mistake exposes another shop's data | Read-only rules using claims only (Appendix B), emulator tests in CI (6.3), no client writes |
-| Frequent writes to active orders multiply listener reads | 6.4 rules; the per-request counters (6.5) catch regressions |
-| A long-closed app re-reads its live set | Bounded live board; local cache on; decision 4 |
-| Staff keep read access up to 1 h after deactivation | Sensitive routes check revocation (6.1); decision 2 |
-| A paid order waits when no desktop is running | Customer warning after 10 minutes (5.5); decision 1 |
-| A job is missed between events | The agent is woken by the current set of queued jobs, re-sent on every snapshot and every pipe reconnect (7.4) |
-| Free tier exceeded | Budget alerts (6.5). Overage at 1,000 orders/day is well under $1/month. |
+| A shop's network buffers or blocks the SSE stream | Spike first (7.1); keep-alive watchdog; fallback 60 s poll of the doorbell value (bandwidth only) |
+| A ring fails after a write | One retry. The next ring, the next reconnect (initial value) or the operator's "Sync now" catches up, because `sync` looks at state, not events. |
+| Realtime Database outage | Jobs wait. The operator's Accept or "Sync now" still works through the API. |
+| Merged rings drop a notification | Notifications are a convenience. The board, fetched on focus, shows every order. |
+| The agent's refresh token is revoked | The refresh fails; the agent reports `tokenValid: false`; the UI shows the login screen |
+| A rules mistake exposes data | Clients can read only `orderTracking` (own documents) and the shop's doorbell (no data). Rules tests for both. |
+| Writes to active orders multiply board fetches | 6.4 rules; debounce; fetch only while visible |
+| Staff keep access up to 1 h after deactivation | Sensitive routes check revocation (6.1) |
+| A paid order waits while no PC runs | The customer warning after 10 minutes (5.5) |
+| The free tier is exceeded | Budget alerts. Overage at 1,000 orders/day is well under $1/month. |
 
 ---
 
 ## 12. Testing
 
 - **Unit tests:**
-  - **Server:** claim and report (leases, idempotency, `completedDocumentIds`, `READY` after the last document, shred on COMPLETED); claims-based auth.
-  - **Agent:** C# tests with a fake HTTP handler.
-  - **Desktop:** the `jobs.available` derivation from snapshots (Vitest).
-- **Rules:** emulator tests for every allow and deny in Appendix B.
-- **End to end on a staging project:**
-  - Place 20 orders. Measure p50/p95 from payment to the agent's claim, and from claim to the first page. Target: claim p95 under 2 s with a warm instance.
-  - Compare reads and writes per order with section 10.1, using the counters from 6.5.
-  - Minimize the desktop for an hour, then queue a job (7.1).
-  - Drop the network for 2 minutes and for 40 minutes, and check that no job is missed and how many reads the reconnect costs.
-  - Close the app with jobs queued, reopen it, and check the jobs print.
-  - Two PCs open: check only one accept happens and jobs route to the accepting PC.
+  - **Server:** `sync`, `report` (leases, replays, READY, shred retry), `board?since=`, the ring helper, claims-based auth.
+  - **Agent** (xUnit with a fake HTTP handler): SSE parsing, token refresh, the watchdog, sync-on-change, the outbox.
+  - **Desktop** (Vitest): board merging, visible-only fetching.
+- **Rules:** both emulators.
+- **End to end on a staging project and real Windows PCs:**
+  - Payment to claim, with the window **minimized for an hour**: p95 under 2 s (warm).
+  - CASH order: native notification while minimized, then accept, then print.
+  - App closed when a paid order arrives: it waits, then prints when the app opens.
+  - Network drops of 2 and 40 minutes, sleep and resume: no missed jobs.
+  - Token renewal over a 3-hour session: no 401s.
+  - Two PCs: one accept; jobs go to the accepting PC.
+  - An idle PC for 1 hour: 0 API requests, 0 Firestore reads, and doorbell bytes as in 10.2.
+  - Reads, writes and requests per order within ±20% of 10.1.
 
 ---
 
 ## 13. Rollout and effort
 
-There are no existing users, so each phase replaces the old path outright. No compatibility endpoints.
+There are no existing users, so each phase replaces the old path outright.
 
 | Phase | Contents | Rough effort |
 | --- | --- | --- |
-| 0 | Firebase project setup and the minimized-window spike (7.1), run before anything else | 1.5 days |
-| 1 | 6.1–6.5: local token checks and claims, custom tokens, rules/indexes/`firebase.json`, data changes, counters and alerts | about 5 days |
-| 2 | 7.2–7.8: desktop SDK and listeners, agent wake and rewrite, claim/report endpoints, desktop auto-accept, history queries; remove old routes | about 9.5 days |
-| 3 | 8.1–8.3: tracking listener, guest trims, `minInstances: 0`, deployment doc | about 3.5 days |
+| 0 | Firebase project setup (including Realtime Database) and the doorbell spike (7.1) | 1.5 days |
+| 1 | 6.1–6.5: local token checks, rules and indexes for both databases, data changes, ring helper, counters and alerts | about 5.5 days |
+| 2 | 7.2–7.5: agent token, doorbell, sync and outbox; server sync/report/board/history endpoints; desktop board and native notifications; removals | about 10 days |
+| 3 | 8.1–8.3: tracking listener, guest trims, `minInstances: 0` | about 3.5 days |
 
-Effort is a rough estimate for one engineer who knows this code. The task-level breakdown, dependencies and acceptance criteria are in the [implementation plan](./TRAFFIC_SCALING_V2_IMPLEMENTATION.md#13-work-breakdown). Phase 3's web app parts can start once Phase 1 is done.
+The task-level breakdown is in the [implementation plan](./TRAFFIC_SCALING_V2_IMPLEMENTATION.md#13-work-breakdown).
 
 ---
 
 ## 14. Decisions (proposed defaults)
 
-1. **Desktop auto-accepts paid orders** instead of the server, so paid orders wait while no PC is on. *Default: yes.*
-2. **Up to 1 hour of read access after a staff member is deactivated.** Sensitive routes are immediate. *Default: accept.*
-3. **The agent uses the signed-in user's token,** so it doesn't fetch jobs while the app is signed out. *Default: yes; revisit with 9.2.*
-4. **Old READY orders:** READY orders stay on the live board until handed over. Flag ones older than 3 days in the UI, but don't change their status automatically. *Default: flag only.*
-5. **Guest tracking:** guests sign in and read a tracking copy (`orderTracking/{orderId}`), about 6 extra writes per order. Reading the real order would expose staff IDs, payment references and storage keys, because rules can't hide fields. A copy readable by anyone holding the order ID would skip guest sign-in, but anyone with the link could see the order. *Default: tracking copy with guest sign-in.*
-6. **Web app proxy:** keep it until about 2,000 orders/day (8.4). *Default: keep.*
-7. **`minInstances: 0`** after Phase 2. *Default: yes.*
+1. **The agent auto-accepts paid orders** during `sync`, so paid orders wait while no PC is on. *Default: yes.*
+2. **Up to 1 hour of access after a staff member is deactivated.** Sensitive routes are immediate. *Default: accept.*
+3. **Realtime Database for the doorbell,** in `asia-southeast1`. *Default: yes.*
+4. **The desktop has no Firebase SDK;** the board comes from the API. *Default: yes; revisit with 9.3 if board reads grow.*
+5. **Guest tracking:** a tracking copy with guest sign-in (about 6 writes per order). *Default: yes.*
+6. **Old READY orders:** flag ones older than 3 days in the UI; no automatic status change. *Default: flag only.*
+7. **Web app proxy:** keep it until about 2,000 orders/day. *Default: keep.*
+8. **`minInstances: 0`** after Phase 2. *Default: yes.*
 
 ---
 
 ## 15. Not verified yet
 
-- **Listener latency:** write-to-listener time and listener delivery in a minimized WebView2 window (7.1).
-- **Fallback F2:** whether `Google.Cloud.Firestore` accepts a Firebase ID token as its credential (9.3).
-- **Firestore region and prices:** the database's location and its read/write prices.
-- **Identity Platform:** if the project uses it, every guest who signs in counts as a monthly active user (50 k free).
-- **Per-order counts** in section 10.1 are estimates from reading the code. Confirm them with the counters in 6.5.
+- **Doorbell:**
+  - the keep-alive interval and bytes per connection-hour;
+  - ring-to-event latency from `asia-southeast1` to Indian shop networks;
+  - behaviour behind shop proxies and antivirus HTTPS scanning (7.1).
+- **Simultaneous connections:** whether REST streams count toward the 200 k limit (irrelevant at 1,000 PCs).
+- **Firestore region and prices.**
+- **Identity Platform:** if enabled, each guest who signs in counts as a monthly active user (50 k free).
+- **Per-order counts** in 10.1 are estimates from reading the code.
 - **Cold-start time** of the API on App Hosting.
 
 ---
@@ -541,93 +518,102 @@ Effort is a rough estimate for one engineer who knows this code. The task-level 
 
 | Kind | Change | Phase |
 | --- | --- | --- |
-| Auth | Custom claims `shopId`, `shopUserId`, `role` on shop users; local `verifyIdToken` | 1 |
-| Response | `/api/auth/login` and `/api/auth/refresh` add `firebaseCustomToken` | 1 |
+| Auth | Custom claims required; local `verifyIdToken` | 1 |
 | Response | `POST /api/v1/public/shops/{slug}/session` adds `firebaseToken` (uid = `printUserId`) | 1 |
-| Fields | Order: `lifecycle` gains `printingAt`, `rejectedAt`, `cancelledAt`, `paidAt`; new `completedDocumentIds`, `searchKeys`; device: `lastActiveAt` | 1 |
-| Collection | New `orderTracking/{orderId}`: the customer-safe tracking copy | 1 |
-| Removed | Order `statusHistory` subcollection; job `PRINTING` state; claim, report and transition idempotency documents | 1 |
-| Endpoint | `POST /api/v1/shops/{shopId}/agents/{agentId}/jobs/claim` | 2 |
-| Endpoint | `POST /api/v1/shops/{shopId}/agents/{agentId}/jobs/report` | 2 |
-| Pipe | UI → agent: `cloud.session`, `cloud.clear`, `jobs.available { jobs }`. Agent → UI: `cloud.tokenRequired`, `cloud.state` | 2 |
-| Behaviour | `confirmOnlinePayment` no longer auto-accepts; the desktop does. `accept` routes to the accepting PC first. | 2 |
-| Removed | `POST /devices/heartbeat`, `GET .../agents/{agentId}/jobs`, `GET .../orders/stream`, `GET .../jobs/{jobId}/document`, `PATCH .../jobs/{jobId}`, `POST .../documents/{docId}/shred`, agent API key | 2 |
+| Fields | Order: `lifecycle` gains `printingAt`, `rejectedAt`, `cancelledAt`, `paidAt`; new `completedDocumentIds`, `searchKeys`; `updatedAt` is the server timestamp on orders and jobs; device: `lastActiveAt` | 1 |
+| Collections | New Firestore `orderTracking/{orderId}`; new Realtime Database `/doorbell/{shopId}` | 1 |
+| Removed | `statusHistory`; job `PRINTING`; claim, report and transition idempotency documents | 1 |
+| Endpoint | `POST .../agents/{agentId}/sync`, `POST .../agents/{agentId}/jobs/report` | 2 |
+| Endpoint | `GET .../board?since=`, `GET .../orders?status=&from=&to=&cursor=`, `GET .../orders/search?q=` | 2 |
+| Pipe | UI → agent: `cloud.configure`, `cloud.session`, `cloud.clear`, `sync.request` (notifications); `cloud.getIdToken` (request). Agent → UI: `board.changed`, `orders.attention`, `cloud.state`. | 2 |
+| Behaviour | Payment confirmation no longer auto-accepts; the agent's `sync` does. Accept routes to the caller's printers first. | 2 |
+| Removed | Heartbeat; agent jobs list; per-job claim, PATCH, document and shred routes; SSE stream; full order list; agent API key | 2 |
 | Removed | Guest tracking poll | 3 |
 
-## Appendix B. Firestore security rules (draft)
+## Appendix B. Rules (drafts)
+
+**Firestore:**
 
 ```text
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function shopMember(shopId) {
-      return request.auth != null && request.auth.token.shopId == shopId;
-    }
-
-    match /shops/{shopId}/orders/{orderId} {
-      allow get, list: if shopMember(shopId);
-    }
-
     // Customer-safe copy of a guest order. Guests sign in with uid = printUserId.
     match /orderTracking/{orderId} {
       allow get: if request.auth != null
         && resource.data.printUserId == request.auth.uid;
     }
-
-    // Collection-group queries must filter on shopId, or Firestore rejects them.
-    match /{path=**}/printJobs/{jobId} {
-      allow read: if request.auth != null
-        && resource.data.shopId == request.auth.token.shopId;
-    }
-
-    // Everything else, and every write, is server-only (the Admin SDK bypasses rules).
+    // Everything else is server-only (the Admin SDK bypasses rules).
   }
 }
 ```
 
-No `get()` or `exists()` calls, so rules cost no reads.
+**Realtime Database:**
+
+```text
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "doorbell": {
+      "$shopId": {
+        ".read": "auth != null && auth.token.shopId === $shopId"
+      }
+    }
+  }
+}
+```
+
+Neither set reads other documents, so rule checks cost nothing extra.
 
 ## Appendix C. Firestore indexes
 
 | Collection | Scope | Fields | Used by |
 | --- | --- | --- | --- |
-| `printJobs` | Collection group | `shopId` ASC, `status` ASC | Desktop jobs listener |
-| `printJobs` | Collection group | `shopId` ASC, `agentId` ASC, `status` ASC, `createdAt` ASC | Claim without a job list |
+| `printJobs` | Collection group | `shopId` ASC, `agentId` ASC, `status` ASC, `createdAt` ASC | `sync` claim |
+| `printJobs` | Collection group | `shopId` ASC, `status` ASC | Board: unfinished jobs |
+| `printJobs` | Collection group | `shopId` ASC, `updatedAt` ASC | Board: job changes |
+| `orders` | Collection | `status` ASC, `payment.status` ASC | `sync` auto-accept |
 | `orders` | Collection | `status` ASC, `createdAt` DESC | History filtered by status |
 | `orders` | Collection | `searchKeys` ARRAY_CONTAINS, `createdAt` DESC | Search |
 
-The live board's `status in [...]` query on one collection uses the automatic single-field index.
+Single-field automatic indexes cover the board's active orders (`status in [...]`) and order changes (`updatedAt >`).
 
 ## Appendix D. Settings
 
 | Setting | Value | Owner |
 | --- | --- | --- |
-| Firestore local cache | On (`persistentLocalCache`) | Desktop, web app |
-| Live board statuses | SUBMITTED, SHOP_ACCEPTED, PRINTING, READY | Desktop |
-| Jobs listener statuses | QUEUED, DISPATCHING, FAILED | Desktop |
-| Claim batch size | Up to 10 jobs | Agent → API |
-| Report retry | 1 s doubling to 5 min; network, 429 and 5xx only; 404/409 are final | Agent |
+| Doorbell region | `asia-southeast1` | Firebase |
+| Agent token refresh | At 55 minutes, or on `auth_revoked` or 401 | Agent |
+| Stream watchdog | Reconnect after 2× the measured keep-alive interval with no event | Agent |
+| Stream reconnect backoff | 1 s doubling to 60 s with jitter, after failed connects only | Agent |
+| Doorbell poll fallback | 60 s, only when the stream can't stay up | Agent |
+| `sync` batch | Up to 10 accepts and 10 claims; repeat while `more` | Agent → API |
+| Report retry | 1 s doubling to 5 min; network, 429 and 5xx only | Agent |
+| Board refresh | On `board.changed`, debounced 300 ms, only while visible; once on focus | Desktop UI |
+| Board overlap | `updatedAt > since − 5 s`, de-duplicated | API, UI |
+| Ring retry | Once, then log | API |
 | `lastActiveAt` write | At most every 10 minutes, only on existing requests | API |
 | "Shop hasn't confirmed" warning | 10 minutes in `SUBMITTED` | Web app |
 | Shop config cache | 60 s per instance | API |
-| Deactivation delay | ≤1 h (ID token lifetime); immediate on sensitive routes | Firebase |
-| Rate limit | 30 requests/min per user, agent or guest, per instance | API |
 | `minInstances` | 0 after Phase 2 | App Hosting |
 
 ## Appendix E. Sources
 
 - [Firestore pricing and listener billing](https://firebase.google.com/docs/firestore/pricing)
-- [App Hosting costs and no-cost limits](https://firebase.google.com/docs/app-hosting/costs)
+- [Realtime Database REST streaming](https://firebase.google.com/docs/database/rest/retrieve-data)
+- [Realtime Database REST authentication](https://firebase.google.com/docs/database/rest/auth)
+- [Realtime Database billing](https://firebase.google.com/docs/database/usage/billing)
+- [Firebase pricing (Realtime Database limits)](https://firebase.google.com/pricing)
+- [App Hosting costs](https://firebase.google.com/docs/app-hosting/costs)
 - [App Hosting request timeout (product comparison)](https://firebase.google.com/docs/app-hosting/product-comparison)
 - [Cloud Run pricing](https://cloud.google.com/run/pricing)
 - [Cloud Run: streaming connections keep an instance active](https://docs.cloud.google.com/run/docs/triggering/websockets)
-- [Firebase pricing (Realtime Database limits)](https://firebase.google.com/pricing)
 - [Tauri 2.3 background throttling option (WebKit only)](https://v2.tauri.app/release/tauri-runtime/v2.4.0/)
 
 ## Related docs
 
 - [`PRINT_SHOP_DESKTOP.md`](./PRINT_SHOP_DESKTOP.md): desktop architecture.
-- [`CtrlP_Print_Shop_Desktop_MVP_Progress.md`](../developer-requirement/desktop-app/CtrlP_Print_Shop_Desktop_MVP_Progress.md): PRD progress.
 - [`Order_to_Print_Execution_Runbook.md`](../developer-requirement/desktop-app/Order_to_Print_Execution_Runbook.md): order-to-print flow.
 - [`apps/server/docs/deployment.md`](../../apps/server/docs/deployment.md): App Hosting limits and run settings.
 - [`apps/server/docs/print-user.md`](../../apps/server/docs/print-user.md): guest upload and checkout API.
