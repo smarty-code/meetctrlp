@@ -253,6 +253,8 @@ Merging: `work` = any; `last` = the most important event (paid > submitted > que
 
 ### 6.2 Environment
 
+Copy-paste blocks for every app (local files and `apphosting.yaml`) are in [`docs/deploy/ENVIRONMENT.md`](../../deploy/ENVIRONMENT.md). The variables this design adds:
+
 Server, `apps/server`. Set real values outside git; see section 8.
 
 | Variable | Needed for | Notes |
@@ -318,7 +320,7 @@ curl -s -X POST http://localhost:3000/api/v1/internal/maintenance/daily -H "x-ct
 | **Secrets in git:** `apps/server/.env` and `.env.local` are tracked and hold the service-account private key and S3 secret key. Next.js loads both in production builds. | **Urgent.** Rotate both credentials, untrack the files, set the values as App Hosting secrets. |
 | **Online payments in production** stop unless `ALLOW_MOCK_PAYMENTS=1` is set there, because there's no gateway yet | Product decision |
 | The security rules are tested only against the emulators, not against a real project | `pnpm firebase:rules:test` (testing guide T9) passes, 11 of 11, as of 15 Oct 2026. Rerun it before deploying any rules change |
-| Indexes and rules not deployed; no staging project; API keys not restricted; cost alerts not configured; Cloud Scheduler job not created | Ops tasks (implementation plan 7.5, 12.3; `apps/server/docs/deployment.md`) |
+| Indexes and rules not deployed; API keys not restricted; cost alerts not configured; Cloud Scheduler job not created | Steps 4, 9, 10 and 11 of the deploy guide, [`apps/server/docs/deployment.md`](../../../apps/server/docs/deployment.md). The first deploy goes straight to `meetctrlp` (no staging project). |
 | The Firestore paths of `sync`, `report`, retry, board and maintenance are tested only against the emulators, not against a real project | `pnpm --filter server test:emulator` (testing guide T11) passes; the staging runs below still cover indexes, real storage and rings |
 | Nothing has run end to end against staging: the 3-hour agent run, the staging print, the per-order cost check, the idle check | Implementation plan 12.2; testing guide sections 8 and 12 |
 | P0-03 field checks on shop networks | Must pass before the agent reaches shops |

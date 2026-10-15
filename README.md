@@ -21,7 +21,7 @@ Server API                  apps/server            Next.js API on :3000
         ├──────────────────────────────────────┐
         ▼                                      ▼
 Print Shop Desktop          apps/print-shop      Tauri 2 + React (shop PC)
-        │  HTTP (auth, orders SSE, printers)          │
+        │  HTTP (auth, board, orders, printers)       │
         │  invoke → Rust IPC                          │
         ▼                                               │
 Print Agent (sidecar)       apps/print-agent     C# named-pipe JSON-RPC
@@ -77,7 +77,7 @@ pnpm install
 ### Server (required for almost all flows)
 
 1. Copy [`apps/server/.env.example`](apps/server/.env.example) to `apps/server/.env.local`.
-2. Fill Firebase Admin (`FIREBASE_SERVICE_ACCOUNT_BASE64`), Web API key (`FIREBASE_WEB_API_KEY`), storage (`S3_*`), and related values. See [`apps/server/docs/auth.md`](apps/server/docs/auth.md) and [`apps/server/.env.example`](apps/server/.env.example).
+2. Fill Firebase Admin (`FIREBASE_SERVICE_ACCOUNT_BASE64`), Web API key (`FIREBASE_WEB_API_KEY`), the doorbell (`FIREBASE_DATABASE_URL`), storage (`S3_*`), and related values. Every variable, with a copy-paste block per app, is in [`docs/deploy/ENVIRONMENT.md`](docs/deploy/ENVIRONMENT.md).
 3. Start the API:
 
 ```powershell
@@ -164,7 +164,9 @@ Default `pnpm dev` at the root runs **only** the print-user web app. There is no
 | Path | Contents |
 | --- | --- |
 | [`apps/server/README.md`](apps/server/README.md) | Server layout, health endpoint |
-| [`apps/server/docs/deployment.md`](apps/server/docs/deployment.md) | Production hosting on Firebase App Hosting (serverless): run settings, env vars, what changes on serverless |
+| [`apps/server/docs/deployment.md`](apps/server/docs/deployment.md) | Step-by-step deploy of the API and web app to Firebase App Hosting, rules and indexes, Cloud Scheduler, the desktop installer, and the test pass after a deploy |
+| [`docs/deploy/ENVIRONMENT.md`](docs/deploy/ENVIRONMENT.md) | Every env var for the API, web app and desktop, as copy-paste blocks (local files and `apphosting.yaml`), plus the secrets list |
+| [`docs/arc/traffic-scaling-v2/README.md`](docs/arc/traffic-scaling-v2/README.md) | The doorbell design: developer and testing guides |
 | [`apps/printUserWebapp/README.md`](apps/printUserWebapp/README.md) | Customer app + `@ctrlp/ui` usage |
 | [`apps/print-shop/README.md`](apps/print-shop/README.md) | Desktop dev entry |
 | [`apps/print-agent/README.md`](apps/print-agent/README.md) | Agent dev entry |
@@ -185,7 +187,7 @@ Default `pnpm dev` at the root runs **only** the print-user web app. There is no
 
 1. Keep server running.
 2. `pnpm desktop:dev`, sign in as shop owner.
-3. Orders stream via server SSE; agent claims cloud jobs, stages files, submits to the spooler.
+3. The server rings the shop's Realtime Database doorbell on each change. The desktop fetches the board (`/board?since=`); the agent syncs, claims cloud jobs, stages files, submits them to the spooler, and reports results.
 
 **Agent / IPC only**
 
@@ -208,7 +210,7 @@ Default `pnpm dev` at the root runs **only** the print-user web app. There is no
 
 - **UI look and feel:** `docs/design-system/DESIGN copy.md`
 - **Shop-owner auth and device APIs:** `apps/server/docs/auth.md`
-- **Deploying (Firebase App Hosting):** `apps/server/docs/deployment.md`
+- **Deploying (Firebase App Hosting):** `apps/server/docs/deployment.md`; env vars in `docs/deploy/ENVIRONMENT.md`
 - **Firebase package:** `packages/firebase/docs/`
 - **Agent coding rules:** `apps/print-agent/AGENTS.md`
 - **Print shop coding rules:** `apps/print-shop/AGENTS.md`

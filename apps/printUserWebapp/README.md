@@ -20,7 +20,7 @@ pnpm webapp:dev
 
 Ensure server `PRINT_USER_ORIGIN` matches your web app origin (e.g. `http://localhost:3002`).
 
-Production runs on Firebase App Hosting. `NEXT_PUBLIC_API_BASE_URL` is built into the app, so a change needs a new rollout. See [`apps/server/docs/deployment.md`](../server/docs/deployment.md).
+Production runs on Firebase App Hosting (backend `ctrlp-web`, config in [`apphosting.yaml`](./apphosting.yaml)). The `NEXT_PUBLIC_*` values are built into the app, so a change needs a new rollout. Deploy steps: [`apps/server/docs/deployment.md`](../server/docs/deployment.md). Env blocks: [`docs/deploy/ENVIRONMENT.md`](../../docs/deploy/ENVIRONMENT.md), section 2.
 
 ## Layout
 

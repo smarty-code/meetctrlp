@@ -1,5 +1,6 @@
 # Firebase App Hosting backend for apps/server. Set the backend's root directory to `apps/server`.
-# Environment variables and secrets are set up separately: see docs/deployment.md.
+# Before the first real rollout, replace this file with the API block in docs/deploy/ENVIRONMENT.md
+# (section 1.2), which adds the env and secret references. Steps: apps/server/docs/deployment.md.
 
 runConfig:
   cpu: 1

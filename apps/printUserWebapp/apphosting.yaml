@@ -1,0 +1,10 @@
+# Firebase App Hosting backend for apps/printUserWebapp (backend ctrlp-web, root directory
+# apps/printUserWebapp). Before the first real rollout, replace this file with the web app block
+# in docs/deploy/ENVIRONMENT.md (section 2.2), which adds the API URL and Firebase config.
+
+runConfig:
+  cpu: 1
+  memoryMiB: 512
+  concurrency: 80
+  # Scale to zero when nobody is ordering.
+  minInstances: 0

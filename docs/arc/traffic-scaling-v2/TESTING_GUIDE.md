@@ -15,7 +15,7 @@ The env files in `apps/server` point at the real `meetctrlp` project. Server tes
 ### 1.2 Setup checklist
 
 - [ ] `pnpm install` at the repo root.
-- [ ] Server env (section 6.2 of the developer guide): `FIREBASE_SERVICE_ACCOUNT_BASE64`, `FIREBASE_WEB_API_KEY`, `FIREBASE_DATABASE_URL`, `ALLOW_MOCK_PAYMENTS=1` in `apps/server/.env.development.local`, and optionally `FIRESTORE_OP_COUNTERS=1`, `PRINT_USER_COOKIE_SECRET` and `CTRLP_MAINTENANCE_SECRET`.
+- [ ] Server env ([`docs/deploy/ENVIRONMENT.md`](../../deploy/ENVIRONMENT.md), section 1.1): `FIREBASE_SERVICE_ACCOUNT_BASE64`, `FIREBASE_WEB_API_KEY`, `FIREBASE_DATABASE_URL`, `ALLOW_MOCK_PAYMENTS=1` in `apps/server/.env.development.local`, and optionally `FIRESTORE_OP_COUNTERS=1`, `PRINT_USER_COOKIE_SECRET` and `CTRLP_MAINTENANCE_SECRET`.
 - [ ] Indexes and both rules files deployed to the test project (`firebase deploy --only firestore:indexes,firestore:rules,database`), and the indexes shown as built in the console. A board, history, search or sync call fails without its index.
 - [ ] A doorbell visible in the console (Realtime Database → Data) after the first order.
 - [ ] For the agent cases: `VITE_FIREBASE_API_KEY` and `VITE_FIREBASE_DATABASE_URL` in `apps/print-shop/.env`.
@@ -271,7 +271,7 @@ Use the browser's network tab, filtered to `/api/`.
 
 ## 12. Deployment, cost and clean-up (P3-03)
 
-Needs a staging deployment (`apps/server/docs/deployment.md`).
+Needs a deployed backend ([`apps/server/docs/deployment.md`](../../../apps/server/docs/deployment.md); its Part 3 lists a 5-minute smoke check to run first).
 
 | ID | Steps | Pass |
 | --- | --- | --- |
