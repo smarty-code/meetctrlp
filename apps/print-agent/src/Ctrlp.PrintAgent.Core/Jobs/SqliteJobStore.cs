@@ -60,15 +60,33 @@ public sealed class SqliteJobStore : IJobRepository
         EnsureColumn(connection, "cloud_document_id", "TEXT NULL");
         EnsureColumn(connection, "lease_id", "TEXT NULL");
         EnsureColumn(connection, "cloud_acked", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(connection, "cloud_shop_id", "TEXT NULL");
+        EnsureColumn(connection, "cloud_agent_id", "TEXT NULL");
+        EnsureColumn(connection, "error_code", "TEXT NULL");
+        EnsureColumn(connection, "report_state", "TEXT NOT NULL DEFAULT 'none'");
+        EnsureColumn(connection, "report_attempts", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(connection, "report_next_at", "INTEGER NULL");
+        EnsureColumn(connection, "report_last_error", "TEXT NULL");
+        Execute(connection, "CREATE INDEX IF NOT EXISTS idx_jobs_report ON jobs (report_state, cloud_shop_id, cloud_agent_id, report_next_at);");
+        // cloud_acked is replaced by report_state (implementation plan 10.5).
+        Execute(connection, "UPDATE jobs SET report_state = 'acked' WHERE cloud_acked = 1 AND report_state = 'none';");
         // A prior agent process cannot still be printing after a crash. Surface those
-        // records for deliberate operator retry instead of silently duplicating output.
+        // records for deliberate operator retry instead of silently duplicating output,
+        // and report the failure to the cloud.
         Execute(connection, """
             UPDATE jobs
             SET state = 'failed',
                 error = COALESCE(error, 'Agent restarted while print execution was in progress'),
+                error_code = COALESCE(error_code, 'AGENT_EXECUTION_FAILED'),
                 updated_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000,
-                completed_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000
+                completed_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000,
+                report_state = CASE WHEN cloud_job_id IS NOT NULL AND report_state = 'none' THEN 'pending' ELSE report_state END
             WHERE state = 'printing';
+            """);
+        // Finished cloud jobs from the old poll loop that were never acknowledged still need a report.
+        Execute(connection, """
+            UPDATE jobs SET report_state = 'pending'
+            WHERE cloud_job_id IS NOT NULL AND report_state = 'none' AND state IN ('completed', 'failed', 'cancelled');
             """);
     }
 
@@ -104,10 +122,10 @@ public sealed class SqliteJobStore : IJobRepository
             """
             INSERT INTO jobs (
               id, cloud_job_id, cloud_order_id, cloud_document_id, lease_id, idempotency_key, printer_id, document_name, document_path,
-              document_sha256, resolved_settings, copies, pages_total, state, created_at, updated_at
+              document_sha256, resolved_settings, copies, pages_total, state, created_at, updated_at, cloud_shop_id, cloud_agent_id
             ) VALUES (
               $id, $cloudJobId, $cloudOrderId, $cloudDocumentId, $leaseId, $idempotencyKey, $printerId, $documentName, $documentPath,
-              $documentSha256, $resolvedSettings, $copies, $pagesTotal, 'queued', $now, $now
+              $documentSha256, $resolvedSettings, $copies, $pagesTotal, 'queued', $now, $now, $cloudShopId, $cloudAgentId
             )
             """,
             ("$id", id),
@@ -123,9 +141,115 @@ public sealed class SqliteJobStore : IJobRepository
             ("$resolvedSettings", request.ResolvedSettings),
             ("$copies", Math.Max(1, request.Copies)),
             ("$pagesTotal", Math.Max(0, request.PagesTotal)),
-            ("$now", now));
+            ("$now", now),
+            ("$cloudShopId", request.CloudShopId),
+            ("$cloudAgentId", request.CloudAgentId));
         transaction.Commit();
         return Get(id)!;
+    }
+
+    public JobDto RecordStagingFailure(EnqueueJobRequest request, string reason)
+    {
+        // No document_path: the worker never claims it. It exists only so the outbox reports FAILED.
+        var job = Enqueue(request with { DocumentPath = null });
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE jobs
+            SET state = 'failed', error = $error, error_code = 'AGENT_STAGING_FAILED', completed_at = $now, updated_at = $now,
+                report_state = CASE WHEN cloud_job_id IS NOT NULL THEN 'pending' ELSE report_state END,
+                report_attempts = 0, report_next_at = NULL
+            WHERE id = $id
+            """;
+        command.Parameters.AddWithValue("$id", job.Id);
+        command.Parameters.AddWithValue("$error", reason);
+        command.Parameters.AddWithValue("$now", Now());
+        command.ExecuteNonQuery();
+        return Get(job.Id)!;
+    }
+
+    public JobDto? FindCloudJob(string cloudJobId, string leaseId)
+    {
+        using var connection = Open();
+        return QuerySingle(
+            connection,
+            null,
+            "SELECT * FROM jobs WHERE cloud_job_id = $cloudJobId AND lease_id = $leaseId ORDER BY created_at DESC LIMIT 1",
+            ("$cloudJobId", cloudJobId),
+            ("$leaseId", leaseId));
+    }
+
+    public IReadOnlyList<JobDto> DueReports(string shopId, string agentId, long nowMs, int limit)
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT * FROM jobs
+            WHERE report_state = 'pending' AND cloud_shop_id = $shopId AND cloud_agent_id = $agentId
+              AND (report_next_at IS NULL OR report_next_at <= $now)
+            ORDER BY completed_at, created_at
+            LIMIT $limit
+            """;
+        command.Parameters.AddWithValue("$shopId", shopId);
+        command.Parameters.AddWithValue("$agentId", agentId);
+        command.Parameters.AddWithValue("$now", nowMs);
+        command.Parameters.AddWithValue("$limit", limit);
+        using var reader = command.ExecuteReader();
+        var jobs = new List<JobDto>();
+        while (reader.Read())
+        {
+            jobs.Add(Read(reader));
+        }
+
+        return jobs;
+    }
+
+    public int CountPendingReports(string shopId, string agentId)
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM jobs WHERE report_state = 'pending' AND cloud_shop_id = $shopId AND cloud_agent_id = $agentId";
+        command.Parameters.AddWithValue("$shopId", shopId);
+        command.Parameters.AddWithValue("$agentId", agentId);
+        return Convert.ToInt32(command.ExecuteScalar());
+    }
+
+    public long? NextReportAt(string shopId, string agentId)
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT MIN(COALESCE(report_next_at, 0)) FROM jobs
+            WHERE report_state = 'pending' AND cloud_shop_id = $shopId AND cloud_agent_id = $agentId
+            """;
+        command.Parameters.AddWithValue("$shopId", shopId);
+        command.Parameters.AddWithValue("$agentId", agentId);
+        var value = command.ExecuteScalar();
+        return value is null or DBNull ? null : Convert.ToInt64(value);
+    }
+
+    public void SetReportState(string id, string state)
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE jobs SET report_state = $state, report_next_at = NULL, report_last_error = NULL WHERE id = $id";
+        command.Parameters.AddWithValue("$id", id);
+        command.Parameters.AddWithValue("$state", state);
+        command.ExecuteNonQuery();
+    }
+
+    public void DeferReport(string id, long nextAtMs, string error)
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE jobs SET report_attempts = report_attempts + 1, report_next_at = $nextAt, report_last_error = $error
+            WHERE id = $id AND report_state = 'pending'
+            """;
+        command.Parameters.AddWithValue("$id", id);
+        command.Parameters.AddWithValue("$nextAt", nextAtMs);
+        command.Parameters.AddWithValue("$error", error.Length > 500 ? error[..500] : error);
+        command.ExecuteNonQuery();
     }
 
     public IReadOnlyList<JobDto> List()
@@ -150,7 +274,7 @@ public sealed class SqliteJobStore : IJobRepository
     }
 
     public JobDto? Cancel(string id) =>
-        Update(id, "state = 'cancelled', completed_at = $now", "state IN ('created', 'queued', 'failed')");
+        Update(id, $"state = 'cancelled', completed_at = $now, {PendingReport}", "state IN ('created', 'queued', 'failed')");
 
     public JobDto? ClaimNext()
     {
@@ -183,23 +307,17 @@ public sealed class SqliteJobStore : IJobRepository
     }
 
     public JobDto? Complete(string id, int? spoolerJobId = null) =>
-        Update(id, "state = 'completed', spooler_job_id = $spoolerJobId, completed_at = $now, error = NULL", "state = 'printing'", ("$spoolerJobId", spoolerJobId));
+        Update(id, $"state = 'completed', spooler_job_id = $spoolerJobId, completed_at = $now, error = NULL, error_code = NULL, {PendingReport}", "state = 'printing'", ("$spoolerJobId", spoolerJobId));
 
     public JobDto? Fail(string id, string reason) =>
-        Update(id, "state = 'failed', error = $error, completed_at = $now", "state = 'printing'", ("$error", reason));
+        Update(id, $"state = 'failed', error = $error, error_code = 'AGENT_EXECUTION_FAILED', completed_at = $now, {PendingReport}", "state = 'printing'", ("$error", reason));
 
     public JobDto? Retry(string id) =>
-        Update(id, "state = 'queued', retry_count = retry_count + 1, error = NULL, started_at = NULL, completed_at = NULL, cloud_acked = 0", "state = 'failed'");
+        Update(id, "state = 'queued', retry_count = retry_count + 1, error = NULL, error_code = NULL, started_at = NULL, completed_at = NULL, report_state = 'none', report_attempts = 0, report_next_at = NULL, report_last_error = NULL", "state = 'failed' AND document_path IS NOT NULL");
 
-    public JobDto? MarkCloudAcked(string id)
-    {
-        using var connection = Open();
-        using var command = connection.CreateCommand();
-        command.CommandText = "UPDATE jobs SET cloud_acked = 1 WHERE id = $id AND cloud_job_id IS NOT NULL";
-        command.Parameters.AddWithValue("$id", id);
-        command.ExecuteNonQuery();
-        return Get(id);
-    }
+    /// <summary>SET fragment that queues a cloud job's final report.</summary>
+    private const string PendingReport =
+        "report_state = CASE WHEN cloud_job_id IS NOT NULL THEN 'pending' ELSE report_state END, report_attempts = 0, report_next_at = NULL";
 
     private JobDto? Update(string id, string set, string predicate, params (string Name, object? Value)[] values)
     {
@@ -306,7 +424,11 @@ public sealed class SqliteJobStore : IJobRepository
         Text(reader, "cloud_document_id"),
         Text(reader, "lease_id"),
         Text(reader, "resolved_settings"),
-        IntOrDefault(reader, "cloud_acked") != 0);
+        Text(reader, "report_state") ?? ReportStates.None,
+        Text(reader, "cloud_shop_id"),
+        Text(reader, "cloud_agent_id"),
+        Text(reader, "error_code"),
+        IntOrDefault(reader, "report_attempts"));
 
     private static string? Text(SqliteDataReader reader, string column)
     {

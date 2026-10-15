@@ -134,7 +134,9 @@ public sealed record EnqueueJobRequest(
     [property: JsonPropertyName("pagesTotal")] int PagesTotal = 0,
     [property: JsonPropertyName("cloudOrderId")] string? CloudOrderId = null,
     [property: JsonPropertyName("cloudDocumentId")] string? CloudDocumentId = null,
-    [property: JsonPropertyName("leaseId")] string? LeaseId = null);
+    [property: JsonPropertyName("leaseId")] string? LeaseId = null,
+    [property: JsonPropertyName("cloudShopId")] string? CloudShopId = null,
+    [property: JsonPropertyName("cloudAgentId")] string? CloudAgentId = null);
 
 public sealed record JobDto(
     [property: JsonPropertyName("id")] string Id,
@@ -157,7 +159,20 @@ public sealed record JobDto(
     [property: JsonPropertyName("cloudDocumentId")] string? CloudDocumentId = null,
     [property: JsonPropertyName("leaseId")] string? LeaseId = null,
     [property: JsonIgnore] string? ResolvedSettings = null,
-    [property: JsonIgnore] bool CloudAcked = false);
+    [property: JsonPropertyName("reportState")] string ReportState = ReportStates.None,
+    [property: JsonIgnore] string? CloudShopId = null,
+    [property: JsonIgnore] string? CloudAgentId = null,
+    [property: JsonIgnore] string? ErrorCode = null,
+    [property: JsonIgnore] int ReportAttempts = 0);
+
+/// <summary>Where a cloud job's final report stands (implementation plan 10.5).</summary>
+public static class ReportStates
+{
+    public const string None = "none";
+    public const string Pending = "pending";
+    public const string Acked = "acked";
+    public const string Rejected = "rejected";
+}
 
 public sealed record JobEventDto(
     [property: JsonPropertyName("type")] string Type,

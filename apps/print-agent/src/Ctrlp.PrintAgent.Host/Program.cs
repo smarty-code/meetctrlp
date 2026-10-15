@@ -63,23 +63,26 @@ internal static class Program
             tokens,
             new HttpClient(Handler()) { Timeout = TimeSpan.FromSeconds(20) },
             log.Write);
-        var synchronizer = new AgentCloudSynchronizer(
+        var reports = new ReportOutbox(jobs, cloudContext, api, cloudStatus, log: log.Write);
+        var sync = new AgentSyncService(
             jobs,
             cloudContext,
             api,
+            cloudStatus,
+            reports,
             Path.Combine(dataRoot, "jobs"),
             new HttpClient(Handler()) { Timeout = TimeSpan.FromMinutes(5) },
-            log.Write);
+            log: log.Write);
         var doorbell = new DoorbellClient(
             cloudContext,
             tokens,
-            synchronizer,
+            sync,
             notifier,
             cloudStatus,
             new HttpClient(Handler()) { Timeout = Timeout.InfiniteTimeSpan },
             log: log.Write);
         var connectivity = new ConnectivityMonitor(doorbell, log: log.Write);
-        var cloud = new AgentCloud(cloudContext, tokens, synchronizer, cloudStatus);
+        var cloud = new AgentCloud(cloudContext, tokens, sync, cloudStatus, reports);
 
         var runtime = new AgentRuntime(options, printers, jobs, secrets, host, cloud);
         var dispatcher = runtime.CreateDispatcher();
@@ -96,7 +99,8 @@ internal static class Program
             notification =>
             {
                 _ = server.PublishAsync(notification.Type, notification);
-                _ = synchronizer.ReportAsync(notification.Job);
+                // The store already marked a finished cloud job's report pending; just wake the outbox.
+                reports.Signal();
             });
 
         if (options.ParentPid is int parentPid)
@@ -115,7 +119,8 @@ internal static class Program
         var background = new[]
         {
             queueWorker.RunAsync(lifecycle.Token),
-            synchronizer.RunAsync(lifecycle.Token),
+            sync.RunAsync(lifecycle.Token),
+            reports.RunAsync(lifecycle.Token),
             tokens.RunAsync(lifecycle.Token),
             doorbell.RunAsync(lifecycle.Token),
             connectivity.RunAsync(lifecycle.Token),

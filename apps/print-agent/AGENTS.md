@@ -85,12 +85,11 @@ Do **not**:
 
 - PDF/JPEG/PNG jobs are rendered through PDFium/GDI and submitted through `PrintDocument`; never send raw document bytes to `WritePrinter`. A successful submission is spool acceptance, not a physical-paper guarantee.
 - Restart recovery marks an ambiguous in-flight print as failed for an explicit operator retry; it never blindly duplicates output.
-- The agent calls the API as the signed-in shop user (`Authorization: Bearer <ID token>`, one refresh and retry on a 401); there is no device key any more. It claims only its assigned cloud jobs, stages/verifies them, reports lifecycle state, and acknowledges shred after a successful spool. That job loop is still the old poll (`AgentCloudSynchronizer`); the doorbell and `sync.request` only cut its wait short until `AgentSyncService` and `ReportOutbox` replace it (traffic scaling v2, P2-04).
-- Rules for the cloud sync loop (`src/Ctrlp.PrintAgent.Core/Cloud/AgentCloudSynchronizer.cs`). Keep them when changing it:
-  - **Separate jobs:** an order has one cloud job per document. Stage each polled job in its own try/catch so one bad document never holds back its siblings.
-  - **Failed staging:** if staging fails after a successful claim, report the job `FAILED` (`AGENT_STAGING_FAILED`). A claimed job left in `DISPATCHING` can't be retried from the shop.
-  - **Idempotency keys:** claim and stage keys include the cloud `retryCount` (`agent-claim-{jobId}-{retryCount}`, `agent-stage-{jobId}-{retryCount}`). That lets a cloud retry of the same job id be claimed again.
-  - **Acknowledgement:** reports are fire-and-forget and can arrive out of order. Mark a local job cloud-acked only after a final report (`COMPLETED`, `FAILED`, `CANCELLED`) succeeds. The sync sweep re-sends unacked final reports.
+- The agent calls the API as the signed-in shop user (`Authorization: Bearer <ID token>`, one refresh and retry on a 401); there is no device key. Cloud work (traffic scaling v2, implementation plan 10.4–10.5):
+  - **Sync** (`Core/Cloud/AgentSyncService`): on the doorbell's `workAt`, `sync.request` or a new session, `POST .../agents/{agentId}/sync` accepts paid orders and returns this PC's claimed jobs with download links. Signals coalesce. No timer while idle; only a failed sync is retried (2 s doubling to 60 s).
+  - **One print per lease:** a claimed job already in SQLite with the same `cloud_job_id` and `lease_id`, in any state, is skipped. A shop retry has a new lease and prints again.
+  - **Failed staging:** a download or hash failure is recorded as a FAILED job (`AGENT_STAGING_FAILED`) with its report pending, so the shop can retry or reassign it.
+  - **Reports** (`Core/Cloud/ReportOutbox`): `Complete`, `Fail` and `Cancel` mark a cloud job's `report_state` `pending` in the same SQLite update. The outbox sends up to 20 to `POST .../jobs/report`: `ok` → `acked`; `lease_mismatch`, `invalid_state`, `not_found` → `rejected`; `retry` or a failed request → back off 1 s doubling to 5 min, honouring `Retry-After`. Only the active shop and agent's reports go out.
   - **Error text:** the server limits `errorMessage` to 500 characters.
 - `printers.testPage` writes a one-page PDF and prints through the same GDI executor as orders. `host.exportLog` copies `agent.log` to a caller-supplied path without document bytes, tokens, or signed URLs.
 - Pause/resume of an in-flight Windows GDI job is unsupported; the queue UI retries, reassigns, or cancels instead.

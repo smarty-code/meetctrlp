@@ -9,18 +9,23 @@ public sealed class AgentCloud
         AgentCloudContext context,
         FirebaseTokenManager tokens,
         ISyncTrigger sync,
-        CloudStatus status)
+        CloudStatus status,
+        IReportSignal? reports = null)
     {
         Context = context;
         Tokens = tokens;
         Sync = sync;
         Status = status;
+        Reports = reports ?? NoReports.Instance;
     }
 
     public AgentCloudContext Context { get; }
     public FirebaseTokenManager Tokens { get; }
     public ISyncTrigger Sync { get; }
     public CloudStatus Status { get; }
+
+    /// <summary>Wakes the report outbox, for example after a local cancel.</summary>
+    public IReportSignal Reports { get; }
 
     /// <summary>Inert services for hosts and tests that don't exercise the cloud.</summary>
     public static AgentCloud CreateDetached(ISecretStore secrets)
@@ -29,6 +34,15 @@ public sealed class AgentCloud
         var status = new CloudStatus(new AgentNotifier());
         var tokens = new FirebaseTokenManager(context, secrets, status, new HttpClient());
         return new AgentCloud(context, tokens, NoSync.Instance, status);
+    }
+
+    private sealed class NoReports : IReportSignal
+    {
+        public static readonly NoReports Instance = new();
+
+        public void Signal()
+        {
+        }
     }
 
     private sealed class NoSync : ISyncTrigger

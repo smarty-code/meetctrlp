@@ -276,7 +276,10 @@ internal sealed class JobsCancelHandler : RpcHandler<JobIdRequest, JobDto>
             throw RpcException.InvalidParams("id is required");
         }
 
-        return _runtime.Jobs.Cancel(request.Id) ?? throw RpcException.JobNotFound(request.Id);
+        var job = _runtime.Jobs.Cancel(request.Id) ?? throw RpcException.JobNotFound(request.Id);
+        // A cancelled cloud job owes the server a final report (implementation plan 10.5).
+        _runtime.Cloud.Reports.Signal();
+        return job;
     }
 }
 
