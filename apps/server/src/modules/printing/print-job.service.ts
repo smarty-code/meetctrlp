@@ -202,15 +202,6 @@ async function refreshShopOfferedCapabilities(shopId: string) {
   invalidateShopConfig(shopId);
 }
 
-function readPreset(value: unknown, fallback: PrintSettings) {
-  const settings = asSettings(value, fallback);
-  const record = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-  const quality = ["DRAFT_300DPI", "STANDARD_600DPI", "HIGH_1200DPI"].includes(String(record.printQualityDpi))
-    ? String(record.printQualityDpi)
-    : "STANDARD_600DPI";
-  return { ...settings, printQualityDpi: quality, pageSelection: settings.pageSelection || "all" };
-}
-
 function asSettings(value: unknown, fallback: PrintSettings): PrintSettings {
   const record = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
   const colorMode = record.colorMode === "COLOR" || record.colorMode === "BW" ? record.colorMode : fallback.colorMode;

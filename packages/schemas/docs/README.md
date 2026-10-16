@@ -19,6 +19,24 @@ Parse untrusted JSON with these schemas in server route handlers before calling 
 - `printUserPrintConfigurationSchema` — settings for one cart document.
 - `printUserBatchConfigurationSchema` — `{ documents: [{ documentId, ...settings }] }`, 1 to 10 entries, saved in one write.
 - `printUserSubmitOrderRequestSchema` — `{ paymentMethod, idempotencyKey, expectedTotalPaise? }`.
+- `PrintUserDeleteDocumentResponse` — `{ ok, removed }`; `PrintUserClearCartResponse` — `{ ok, removed }` (count).
+- `PrintUserCartErrorCode` — `ALREADY_ORDERED`, `DOCUMENTS_STILL_UPLOADING`.
+
+## Page selection
+
+`@ctrlp/schemas/page-selection` (no zod import) is the one grammar for the cart, the quote and the printer:
+
+- `parsePageSelection(selection, pageCount)` accepts `all` or empty (every page), or tokens such as `1,3,5-8`; spaces and empty tokens are ignored.
+- It returns `{ ok: true, pages, canonical }`. Any token out of range or malformed gives `{ ok: false, reason }` for the whole selection.
+- `formatPageRanges(pages)` merges pages into the canonical form (`[1, 3, 5, 6, 7, 8]` gives `"1,3,5-8"`).
+
+## Print jobs and the agent
+
+- `dispatchPrintJobRequestSchema` overrides include `orientation` (`PORTRAIT` / `LANDSCAPE`).
+- `cancelPrintJobRequestSchema` — `{ reason? }` for `POST .../jobs/{jobId}/cancel`.
+- `syncAgentRequestSchema` — `{ held: [{ orderId, jobId, leaseId }] }`, at most 100; an empty body is valid.
+- `SyncAgentResponse.revoked` — `[{ orderId, jobId, leaseId, reason: CANCELLED | RESCUED | FINISHED | NOT_FOUND }]`.
+- `reportAgentJobsRequestSchema` accepts up to 20 reports of any shape. Each is parsed with `agentJobReportSchema` on the server, so one bad report gets its own `invalid_state` and doesn't fail the batch. `pagesPrinted` has no upper limit (the server clamps it), and error texts are cut to length.
 
 The guest flow is described in [`apps/server/docs/print-user.md`](../../../apps/server/docs/print-user.md).
 

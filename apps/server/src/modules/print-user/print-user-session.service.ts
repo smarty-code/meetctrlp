@@ -173,17 +173,6 @@ export async function loadGuestSession(guest: GuestPrincipal) {
   return session;
 }
 
-export async function savePrintUserDocuments(printUserId: string, documents: GuestDocument[]) {
-  await printUsersCollection().doc(printUserId).set(
-    {
-      documents,
-      lastSeenAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    },
-    { merge: true },
-  );
-}
-
 /**
  * Atomically read-modify-write guest documents (safe for parallel upload intents). Returning the
  * same `documents` array unchanged skips the write.

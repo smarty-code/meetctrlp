@@ -1,6 +1,6 @@
 # Upload ↔ Cart ↔ Order ↔ Print Job Sync: Diagnosis and Fix Plan
 
-Branch: `fix/upload` · Drafted: 2026-10-16 · Status: decisions D-1–D-4 accepted as recommended. Phases 1–6 are done and merged on `fix/upload`, with automated tests passing. Phases 3–4 have not been tried in a browser, and there is no end-to-end run of the agent against the server. Phase 7's manual matrix is open.
+Branch: `fix/upload` · Drafted: 2026-10-16 · Status: decisions D-1–D-4 accepted as recommended. Phases 1–6 are done and merged on `fix/upload`, with automated tests passing. Phases 3–4 have not been tried in a browser, and there is no end-to-end run of the agent against the server. Phase 7's manual matrix is open. The built system is documented in [`docs/arc/UPLOAD_ORDER_SYNC.md`](../../../arc/UPLOAD_ORDER_SYNC.md). The older docs were updated to match, and dead code in these flows was removed (listed there).
 
 ## 1. Goal
 

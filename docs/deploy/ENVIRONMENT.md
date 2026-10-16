@@ -45,10 +45,10 @@ PRINT_USER_ORIGIN=http://localhost:3002
 DESKTOP_ORIGIN=
 
 # --- Secrets the server checks (optional locally) ---
-# Guest cookie signing, 32+ characters. Unset locally = a per-process secret (guests reset on restart).
+# Guest cookie signing, 32+ characters. Unset locally = a per-process secret: every dev-server restart gives each visitor a new, empty cart. Set one to keep carts.
 PRINT_USER_COOKIE_SECRET=
-# Shared with the web app's /api proxy: lets the API trust the visitor IP the proxy sends.
-# Optional locally (unset = use X-Forwarded-For); required on Vercel.
+# Shared with the web app's /api proxy: lets the API trust the visitor IP the proxy sends (logged on new guest sessions).
+# Optional locally (unset = use X-Forwarded-For). Recommended on Vercel.
 CTRLP_PROXY_SECRET=
 # The daily clean-up accepts Authorization: Bearer <CRON_SECRET> (what Vercel Cron sends)...
 CRON_SECRET=
@@ -148,7 +148,7 @@ pnpm dlx vercel env add PRINT_USER_COOKIE_SECRET production
 | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | secret | yes | |
 | `PRINT_USER_ORIGIN` | plain | yes | The web app's URL (QR codes, customer links, CORS). Comma-separate to add a custom domain. |
 | `PRINT_USER_COOKIE_SECRET` | secret | **yes in production** | Without it every guest request fails with `503 authentication is not configured`. Changing it signs every guest out. |
-| `CTRLP_PROXY_SECRET` | secret | **yes behind the web app on Vercel** | Lets the API trust the visitor IP the web app's proxy sends. Must match the web app's. Missing or different: guest carts fail with 401. |
+| `CTRLP_PROXY_SECRET` | secret | recommended behind the web app on Vercel | Lets the API trust the visitor IP the web app's proxy sends. That IP is recorded on new guest sessions for abuse logging; it doesn't identify the guest. Must match the web app's. Missing or different: carts still work, but the web app's own address is recorded. |
 | `CRON_SECRET` | secret | for the Vercel cron | Vercel Cron sends it as `Authorization: Bearer …` to the daily clean-up. Unset: the cron gets 401. |
 | `CTRLP_MAINTENANCE_SECRET` | secret | no | Lets another scheduler, or you, call the clean-up with `x-ctrlp-maintenance-secret`. |
 | `ENABLE_EXPERIMENTAL_COREPACK` | plain | yes on Vercel | `1`: build with the repo's pinned pnpm 11. |
@@ -242,7 +242,7 @@ The Firebase web `apiKey` and `appId` are public by design (every visitor's brow
 | --- | --- |
 | `NEXT_PUBLIC_API_BASE_URL` | The API URL. A change needs a new rollout. |
 | `NEXT_PUBLIC_FIREBASE_API_KEY`, `_AUTH_DOMAIN`, `_PROJECT_ID`, `_APP_ID` | Live tracking. Without them the tracking page reads once and shows Refresh. |
-| `CTRLP_PROXY_SECRET` | Secret, runtime only. Same value as the API's. Without it, guests behind the proxy get 401 on cart calls. |
+| `CTRLP_PROXY_SECRET` | Secret, runtime only. Same value as the API's. Without it, the API can't see the visitor's IP and records the proxy's instead; carts still work. |
 
 ---
 

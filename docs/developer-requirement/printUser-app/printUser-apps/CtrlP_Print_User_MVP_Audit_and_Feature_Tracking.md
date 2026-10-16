@@ -75,7 +75,7 @@ The Print User Web App is engineered with a strict 5-layer architecture to ensur
 
 2. **Screen 02 Scope Alignment (Executed):**
    - **Discrepancy:** The initial implementation included an `OrientationSelector` (Portrait vs Landscape), which was explicitly excluded in Section 6 and Section 17 of the MVP specification. Meanwhile, `PageSelectionControl` was not mounted in the main page.
-   - **Resolution:** Replaced `OrientationSelector` with `PageSelectionControl`, wired up `parsePageSelection` and `isPageSelectionValid`, dynamically computed total pages from the selection expression, and enforced that invalid page expressions block proceeding to Review.
+   - **Resolution (later reversed, Oct 2026: `OrientationSelector` is back in use and `PageSelectionControl` was removed as unused; see item 8):** Replaced `OrientationSelector` with `PageSelectionControl`, wired up `parsePageSelection` and `isPageSelectionValid`, dynamically computed total pages from the selection expression, and enforced that invalid page expressions block proceeding to Review.
 
 3. **Screen 03 Headline Clarity (Executed):**
    - **Discrepancy:** The document review cards replaced the filename with a generic `copies × pages` header.
@@ -122,6 +122,27 @@ The Print User Web App is engineered with a strict 5-layer architecture to ensur
      - Run settings live in `apps/server/apphosting.yaml`: 1 GiB memory, one warm instance.
      - Details: [`apps/printUserWebapp/README.md`](../../../../apps/printUserWebapp/README.md#upload-page) and [`apps/server/docs/deployment.md`](../../../../apps/server/docs/deployment.md).
 
+8. **Upload, cart, order and print-job sync (16 Oct 2026):**
+   - **Discrepancy:**
+     - Cancel Upload did nothing.
+     - After a reload, or with one failed file, the shopper was stuck: the page had no list, no Continue and no retry.
+     - Deletes failed silently, so a "deleted" document could still be ordered and billed.
+     - There was no Clear all.
+     - The cart was tied to the client IP: carts were lost on a network change and shared on a common network.
+     - A failed online payment left an orphaned order that could never be paid.
+     - Page selections the cart accepted could fail at the printer, and orientation never reached it.
+   - **Resolution:**
+     - Uploads are abortable.
+     - The upload page has a file list with Remove, Retry, Clear all and Continue; it moves on by itself only after a clean batch.
+     - Deletes are awaited and undone on failure.
+     - The server checks out and empties the cart in one transaction, and its deletes and Clear all never touch an ordered file.
+     - The cookie alone identifies the guest.
+     - Payment retry pays the same order, and the order page offers **Pay now** and **Cancel order**.
+     - One strict page-selection parser is shared by the cart and the printer, and the customer's orientation now prints.
+     - The desktop drops jobs the shop cancelled or rescued.
+     - The unused `PageSelectionControl` and `lib/page-selection.ts` were removed. A page-selection UI should use `@ctrlp/schemas/page-selection` when it ships. `OrientationSelector` is in use, and orientation is carried to the printer.
+     - Details: [`docs/arc/UPLOAD_ORDER_SYNC.md`](../../../arc/UPLOAD_ORDER_SYNC.md); diagnosis and plan: [`CtrlP_Print_User_Upload_Sync_Fix_Plan.md`](./CtrlP_Print_User_Upload_Sync_Fix_Plan.md).
+
 ---
 
 ## 4. Feature Tracking Checklist
@@ -138,7 +159,10 @@ The Print User Web App is engineered with a strict 5-layer architecture to ensur
 - [x] Files already in the server cart are listed after a reload or when coming back from Customize.
 - [x] Persistent IndexedDB file caching via `file-store.ts`.
 - [x] "Shop Info" trigger opening secondary Screen 06 modal.
-- [x] Moves on to Screen 02 by itself once every file is uploaded. An outlined Continue button shows only when coming back from Screen 02 or after failed uploads.
+- [x] Moves on to Screen 02 by itself only after an upload batch that landed in full; a green Continue shows whenever a document is in the cart.
+- [x] Cancel Upload stops every upload in flight or queued and deletes their server intents.
+- [x] File list with Remove, Retry on failed files, and Clear all (with confirmation), all reflected in the server cart.
+- [x] Deletes wait for the server and are undone, with a message, if it refuses.
 
 ### Screen 02: Customize Prints (`/customize`)
 - [x] Dynamic document carousel with position indicator (e.g., `1 / 3`).
@@ -146,7 +170,7 @@ The Print User Web App is engineered with a strict 5-layer architecture to ensur
 - [x] Number of copies stepper (minimum 1, max 20).
 - [x] Print color selection (Black & White ₹3 vs Color ₹10).
 - [x] Fixed paper size indicator (A4).
-- [x] Page selection control ("All pages" vs "Selected pages" with expression parsing e.g. `1,3,5-8`).
+- [ ] Page selection control ("All pages" vs "Selected pages", e.g. `1,3,5-8`). The earlier `PageSelectionControl` was never mounted and was removed in Oct 2026. The server already validates and stores selections with `@ctrlp/schemas/page-selection`.
 - [x] Expression validation against total document page count.
 - [x] "Apply this setting to all files" action with toast notification.
 - [x] Live price and page count calculation in sticky summary bar.
@@ -169,8 +193,8 @@ The Print User Web App is engineered with a strict 5-layer architecture to ensur
 - [x] Payment method selection: "UPI / Online Payment" and "Cash at Shop".
 - [x] Clear instructions for Cash-at-Shop ("Pay when you collect your prints at the counter").
 - [x] Dynamic payment state machine (Initiated → Processing → Verification → Success / Failed).
-- [x] Error handling with safe retry mechanism.
-- [x] Prevention of duplicate payment submissions.
+- [x] Error handling with safe retry mechanism: a failed online payment is retried on the same order.
+- [x] Prevention of duplicate payment submissions: a stable idempotency key per cart and method, and recovery after a lost response.
 - [x] Redirection to Screen 05 with order identifier.
 
 ### Screen 05: Order Status & Tracking (`/order-status`)
@@ -188,6 +212,7 @@ The Print User Web App is engineered with a strict 5-layer architecture to ensur
 - [x] Background polling with exponential backoff and automatic stop on terminal state.
 - [x] Manual refresh button with animated spinner.
 - [x] "New Order" action to restart customer journey.
+- [x] **Pay now** and **Cancel order** for an unpaid order the shop hasn't accepted yet.
 - [x] Developer Simulator Bar for manual verification of all states.
 
 ### Screen 06: Shop Information Drawer

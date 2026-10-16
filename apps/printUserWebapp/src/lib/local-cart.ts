@@ -9,6 +9,5 @@ export function clearStoredCart() {
   try {
     window.sessionStorage.removeItem(STORAGE_KEYS.UPLOADED_FILES)
     window.sessionStorage.removeItem(STORAGE_KEYS.CONFIGURED_DOCUMENTS)
-    window.sessionStorage.removeItem(STORAGE_KEYS.ORDER_DRAFT)
   } catch {}
 }

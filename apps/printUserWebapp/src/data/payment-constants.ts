@@ -1,34 +1,7 @@
-export const PAYMENT_ROUTES = {
-  HOME: "/",
-  CUSTOMIZE: "/customize",
-  REVIEW: "/review",
-  PAYMENT: "/payment",
-  ORDER_STATUS: "/order-status",
-} as const
-
-export const PAYMENT_STATUS = {
-  NOT_STARTED: "NOT_STARTED",
-  METHOD_SELECTED: "METHOD_SELECTED",
-  INITIATING: "INITIATING",
-  PENDING: "PENDING",
-  VERIFICATION_PENDING: "VERIFICATION_PENDING",
-  SUCCESS: "SUCCESS",
-  FAILED: "FAILED",
-  CANCELLED: "CANCELLED",
-  CASH_PENDING: "CASH_PENDING",
-} as const
-
 export const PAYMENT_STORAGE_KEYS = {
   ACTIVE_TRANSACTION: "ctrlp-active-payment-transaction",
   /** The idempotency key of the checkout in progress, so a retried submit replays it. */
   CHECKOUT_KEY: "ctrlp-checkout-key",
-} as const
-
-export const PAYMENT_TIMINGS = {
-  PRICE_CHECK_MS: 300,
-  INITIATE_MS: 500,
-  VERIFY_MS: 900,
-  SUCCESS_TRANSITION_MS: 400,
 } as const
 
 export const PAYMENT_COPY = {

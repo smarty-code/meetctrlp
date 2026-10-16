@@ -1,15 +1,6 @@
-export const REVIEW_ROUTES = {
-  HOME: "/",
-  CUSTOMIZE: "/customize",
-  REVIEW: "/review",
-  PAYMENT: "/payment",
-  ORDER_STATUS: "/order-status",
-} as const
-
 export const STORAGE_KEYS = {
   UPLOADED_FILES: "ctrlp-uploaded-files",
   CONFIGURED_DOCUMENTS: "ctrlp-configured-documents",
-  ORDER_DRAFT: "ctrlp-order-draft",
   GUEST_SESSION: "ctrlp-guest-session-id",
 } as const
 
@@ -26,10 +17,6 @@ export const REVIEW_COPY = {
   editDocumentAria: (docName: string) => `Edit print settings for ${docName}`,
   allPages: "All pages",
   pagesPrefix: "Pages",
-  copiesSingular: "1 copy",
-  copiesPlural: (count: number) => `${count} copies`,
-  pagesSingular: "1 page",
-  pagesPlural: (count: number) => `${count} pages`,
   bwLabel: "B&W",
   colorLabel: "Color",
   defaultPaperSize: "A4",

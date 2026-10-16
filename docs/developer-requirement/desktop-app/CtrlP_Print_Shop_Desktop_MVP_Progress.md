@@ -89,13 +89,16 @@ Current stack: Windows Tauri 2 UI (`apps/print-shop`) + .NET 8 sidecar (`apps/pr
 ### Durable local queue (PRD Screen 4)
 
 - SQLite WAL journal at `%LOCALAPPDATA%\Ctrlp\PrintAgent\queue.db`, idempotent enqueue, bounded work queue, atomic claim, retry/cancel, cloud job correlation, restart recovery, and queue indexes.
-- Unified queue UI joins local `cloudJobId` to cloud jobs, with a details drawer, retry, reassign, and cancel (not while printing). Pause/resume is omitted because Windows cannot safely pause an in-flight GDI job.
+- Unified queue UI joins local `cloudJobId` to cloud jobs, with a details drawer, retry, reassign, and cancel (not while printing; through the server for cloud jobs). Claimed cloud jobs show as Printing. Orders show `queueErrors`: documents the server couldn't queue, and why. Pause/resume is omitted because Windows cannot safely pause an in-flight GDI job.
 - The background worker is independent of RPC request handling. JSON-RPC job notifications update the Tauri queue UI live.
 - The per-user agent remains alive after the desktop window closes; a second launch reconnects to its stable pipe rather than running competing workers.
 - The cloud synchronizer uses a device-scoped credential, leases assigned jobs, stages PDF/PNG/JPEG under the agent data root, verifies hashes, reports lifecycle state, and acknowledges shred after spool.
   - Each polled job is staged separately.
   - A staging failure after a claim is reported `FAILED`.
-  - Claim and stage keys include `retryCount`, so cloud retries are picked up again.
+  - Files are staged per lease (`jobs/{cloudJobId}/{leaseId}`), so a retried or rescued job is staged fresh and never shares a file with an older attempt.
+  - Only the signed-in shop and agent's rows are claimed, so jobs from a previous shop never print after a sign-out or shop switch.
+  - Each sync sends the leases this PC holds (`held`). Leases the shop cancelled or rescued come back `revoked` and are dropped without printing or reporting.
+  - Cloud jobs are retried and cancelled through the server (`.../jobs/{jobId}/retry`, `.../jobs/{jobId}/cancel`), never by re-printing the local copy.
   - A local job is acknowledged only after its final report is accepted. See [`Order_to_Print_Execution_Runbook.md`](./Order_to_Print_Execution_Runbook.md).
 - PDF pages render through PDFium (`Docnet.Core`); PNG/JPEG render with GDI and all formats submit with `PrintDocument`, never raw `WritePrinter` bytes. The spooler ID is reported when observable.
 

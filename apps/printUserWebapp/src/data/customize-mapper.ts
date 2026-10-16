@@ -1,14 +1,10 @@
-import { ConfigurableDocument, UploadedFileItem } from "../types/upload"
+import { ConfigurableDocument } from "../types/upload"
 import {
   cloneConfiguration,
   customizeConfig,
   defaultPrintConfiguration,
 } from "./customize-repository"
-import {
-  cacheUploadedFile,
-  getCachedFile,
-  getCachedFileUrl,
-} from "../lib/file-store"
+import { getCachedFile, getCachedFileUrl } from "../lib/file-store"
 
 type DocumentInput = Pick<
   ConfigurableDocument,
@@ -36,20 +32,6 @@ export function mapFilesToConfigurationDocuments(
   })
 }
 
-export function mapUploadedFilesToDocuments(
-  files: UploadedFileItem[]
-): ConfigurableDocument[] {
-  return mapFilesToConfigurationDocuments(
-    files.map(({ id, name, size, type, previewUrl }) => ({
-      id,
-      name,
-      size,
-      type,
-      previewUrl,
-    }))
-  )
-}
-
 export function mapStoredFilesToDocuments(
   files: DocumentInput[],
   idPrefix: string
@@ -60,24 +42,6 @@ export function mapStoredFilesToDocuments(
       id: file.id || `${idPrefix}-${index}`,
     }))
   )
-}
-
-export function mapFileListToDocuments(
-  fileList: FileList,
-  idPrefix: string
-): ConfigurableDocument[] {
-  const items = Array.from(fileList).map((file, idx) => {
-    const id = `${idPrefix}-${idx}-${Math.random().toString(36).substring(2, 6)}`
-    const previewUrl = cacheUploadedFile(id, file)
-    return {
-      id,
-      name: file.name,
-      size: file.size,
-      type: file.type || "application/octet-stream",
-      previewUrl,
-    }
-  })
-  return mapFilesToConfigurationDocuments(items)
 }
 
 export function copyConfigurationToDocument(

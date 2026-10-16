@@ -276,10 +276,6 @@ export async function loadGuestSession(options: { fresh?: boolean } = {}) {
   return session
 }
 
-export function fetchPublicShop(slug: string) {
-  return request<{ shop: PublicShop }>(`/api/v1/public/shops/${encodeURIComponent(slug)}`)
-}
-
 export async function startShopSession(slug: string) {
   // firebaseToken: a custom token for this guest, used only by the tracking page's listener.
   const body = await request<{ session: GuestSessionDto; shop: PublicShop; firebaseToken: string | null }>(

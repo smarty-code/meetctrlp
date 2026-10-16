@@ -193,15 +193,11 @@ export async function loadOrderDraft(options: { fresh?: boolean } = {}): Promise
 }
 
 /**
- * Persists the current draft to session storage
+ * Keeps the configured documents in sessionStorage, for the customize page's first paint
  */
 export function saveOrderDraft(draft: OrderDraft): void {
   if (typeof window === "undefined") return
   try {
-    window.sessionStorage.setItem(
-      STORAGE_KEYS.ORDER_DRAFT,
-      JSON.stringify(draft)
-    )
     window.sessionStorage.setItem(
       STORAGE_KEYS.CONFIGURED_DOCUMENTS,
       JSON.stringify(draft.documents)

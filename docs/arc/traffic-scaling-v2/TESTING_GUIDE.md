@@ -87,12 +87,12 @@ How it runs: `firebase emulators:exec` starts Firestore and the Realtime Databas
 
 | ID | Command | Pass |
 | --- | --- | --- |
-| T11 | `pnpm --filter server test:emulator` | All 38 tests pass. Runs the real services against the Auth and Firestore emulators: `syncAgent` (auto-accept of paid online orders, claims with new leases, re-delivery after 15 minutes with the same lease, `more` paging, 60-minute links or `null` when shredded), `reportAgentJobs` (`ok`, `lease_mismatch`, `invalid_state`, `not_found`, `retry`, READY once every document is done, shredding unless another active job uses the file), `retryPrintJob` (from FAILED, re-route from QUEUED, `PRINT_JOB_STILL_ACTIVE` before 15 minutes, rescue after), `getBoard` (full, delta with 5 s overlap, 200 cap, stale cursor), history, search and `runDailyMaintenance` |
+| T11 | `pnpm --filter server test:emulator` | All 71 tests pass. Runs the real services against the Auth and Firestore emulators: `syncAgent` (auto-accept of paid online orders, claims with new leases, re-delivery after 15 minutes with the same lease, `more` paging, 60-minute links or `null` when shredded), `reportAgentJobs` (`ok`, `lease_mismatch`, `invalid_state`, `not_found`, `retry`, READY once every document is done, shredding unless another active job uses the file), `retryPrintJob` (from FAILED, re-route from QUEUED, `PRINT_JOB_STILL_ACTIVE` before 15 minutes, rescue after), `getBoard` (full, delta with 5 s overlap, 200 cap, stale cursor), history, search and `runDailyMaintenance` |
 
 How it runs: `firebase emulators:exec` starts Auth and Firestore on the ports in `firebase.json` under the project `demo-ctrlp-server-tests`, then runs `apps/server/test/emulator/*.emulator.test.ts` one file at a time. Each test clears the emulators first.
 
 - **Never touches a real project.** `test/emulator/preload.mjs` stops the run unless the emulator hosts are set and the project starts with `demo-`, and it removes the service account, S3 and database variables from the test process. The env files in `apps/server` are never loaded.
-- **Storage is a fake.** `harness.ts` starts a local HTTP server that stands in for the S3 bucket and records deletes. A test can make a key fail with 403 to check the `retry` paths.
+- **Storage is a fake.** `harness.ts` starts a local HTTP server that stands in for the S3 bucket: it records deletes and answers HEAD (a key in `missing` is a 404). A test can make a key fail with 403 to check the `retry` paths.
 - **No doorbell rings.** `FIREBASE_DATABASE_URL` is unset, so rings are skipped (at most one `ring_skipped` warning per file).
 - **Expected noise.** The `retry` and maintenance tests make the fake bucket refuse a delete, so the output shows `Failed to delete printed document … AccessDenied` and `Failed to delete an abandoned guest file`. Those lines are expected; only `not ok` lines or a non-zero exit are failures.
 - **Java on PATH.** firebase-tools looks for `java` on PATH. If a new JDK isn't found yet, open a new terminal, or prepend it for the run: `$env:PATH = "C:\Program Files\Eclipse Adoptium\jdk-21…\bin;$env:PATH"` in PowerShell.
@@ -178,7 +178,7 @@ Keep the Realtime Database console open on `doorbell/<shopId>`.
 | ID | Steps | Pass |
 | --- | --- | --- |
 | F1 | Start a guest session: open a shop page in the web app, or `POST /api/v1/public/shops/<slug>/session`. | The response has `firebaseToken` (a long JWT string). If signing failed, it's `null` and the server logs "Failed to sign a guest Firebase token". |
-| F2 | Look at the `ctrlp_print_user` cookie in the browser's dev tools. | Six dot-separated parts starting with `v1.`, `HttpOnly`. The session response's documents have no `storageKey`. |
+| F2 | Look at the `ctrlp_print_user` cookie in the browser's dev tools. | Five dot-separated parts starting with `v2.` (no IP tag), `HttpOnly`. The session response's documents have no `storageKey`. |
 | F3 | Edit one character of the cookie's last part, then reload the review page (or `GET /api/v1/public/session`). | `401`. Opening the shop page again starts a new, empty cart. |
 | F4 | Use the same cookie from another network (copy it to a phone on mobile data, or switch Wi-Fi to a hotspot). | Cart routes keep working and the same cart continues: the cookie is not bound to the network (since 2026-10-16). |
 | F5 | With `FIRESTORE_OP_COUNTERS=1`, open the tracking page's fallback read (`GET /api/v1/public/session/orders/<id>`). | `reads: 1` (the order); no session read. |
@@ -224,8 +224,13 @@ Use Microsoft Print to PDF for most cases, and one physical printer for S1 and S
 | S8 | Make a job stick: queue a job, then claim it yourself with the sync `curl` (section 1.3) before the agent does, so the agent never stages it. | Before 15 minutes, `POST .../orders/<id>/jobs/<jobId>/retry` returns `409 PRINT_JOB_STILL_ACTIVE`. After 15 minutes, the desktop marks the job stuck and offers a rescue; confirming re-queues it (lease cleared) and the agent prints it once. (A sync after 15 minutes would also re-deliver it to the same agent.) |
 | S9 | Retry a FAILED job on a different printer that belongs to another PC. | The job moves to that printer's agent, which prints it. A late report from the first PC gets `lease_mismatch` and changes nothing. |
 | S10 | Retry a FAILED cloud job from the desktop's queue. | The retry goes to the cloud (the job goes back to `QUEUED`); the local copy is **not** re-printed. Exactly one new print. |
-| S11 | Call `sync` with the `curl` twice in a row while nothing is queued. | Both return `{ accepted: [], claimed: [], more: false }`. With counters on, each is a handful of reads (a few empty queries), no writes. |
+| S11 | Call `sync` with the `curl` twice in a row while nothing is queued. | Both return `{ accepted: [], claimed: [], revoked: [], more: false }`. With counters on, each is a handful of reads (a few empty queries), no writes. |
 | S12 | Queue more jobs than one sync returns (for example 30 single-page documents). | The first sync returns `more: true`; the agent calls again at once until everything is claimed. All print. |
+| S13 | Cancel a `QUEUED` job from the desktop queue (or `POST .../orders/<id>/jobs/<jobId>/cancel`). | The job is `CANCELLED` (`errorCode: CANCELLED_BY_SHOP`, no lease), nothing prints, and the document can be started again. |
+| S14 | Cancel a job the agent has claimed but not started. | Within 15 minutes the server answers `PRINT_JOB_STILL_ACTIVE`, and the desktop cancels its own queued row instead, which it reports as `CANCELLED` under its live lease. After 15 minutes the server cancels the job, and the next sync drops the row (`revoked: CANCELLED`). Nothing prints either way. |
+| S15 | Rescue a stuck job back onto the same PC (S8, then retry with the same printer). | The next sync returns the old lease in `revoked` (`RESCUED`) and the job in `claimed` under a new lease. It prints **once**. |
+| S16 | Accept an order with an A3 colour document when no printer offers A3. | The order shows the document under `queueErrors` ("no compatible online printer is available"). After you enable an A3 printer and dispatch it, the error clears. |
+| S17 | Choose landscape on the web app's customize page, then place the order. | The job's `resolvedSettings.orientation` is `LANDSCAPE`, and the page prints landscape. |
 
 ---
 
@@ -266,6 +271,17 @@ Use the browser's network tab, filtered to `/api/`.
 | W11 | Pay online. | The request sequence has no quote between the review page and `POST .../orders` (the order carries `expectedTotalPaise`). |
 | W12 | Change the shop's prices on the desktop while a customer is on review, then pay. | `POST .../orders` answers `priceChanged: true`; the page shows the new total and asks again. |
 | W13 | After placing an order, start a new one from the tracking page. | The upload page starts empty (one `GET /api/v1/public/session` to read the emptied cart). |
+| W14 | Pick three large files and tap **Cancel Upload** in the drawer. | The uploads stop (the PUTs are aborted), the drawer closes, and `GET /api/v1/public/session` shows no new documents. |
+| W15 | Upload two good files and one corrupt PDF. | The list shows the failed file with Retry and Remove; **Continue** is enabled for the two that worked; the page does not move on by itself. |
+| W16 | Upload two files, go to customize, then hard-reload the upload page. | The two documents are listed with Remove, Clear all and Continue. |
+| W17 | Tap **Clear all** and confirm. | `DELETE /api/v1/public/session/documents` answers `{ ok: true, removed: 2 }`; the list is empty; a reload shows nothing. |
+| W18 | Go offline (dev tools), then remove a document. | The document comes back in its place with a "Couldn't remove" message. Online again, it is still in the cart. |
+| W19 | Place an order in one tab, then remove one of its documents in another tab that still shows the cart. | The second tab says the document is already in your order; nothing is deleted from storage. |
+| W20 | With a file still uploading in another tab, press Pay. | `POST .../orders` answers `409 DOCUMENTS_STILL_UPLOADING`; no order is placed. |
+| W21 | Make the mock payment fail (unset `ALLOW_MOCK_PAYMENTS` for one run), then press **Try Again** after it works again. | The same order is paid; no second order and no "upload at least one document" error. Cash stays disabled for that order. |
+| W22 | Place an online order, close the tab before paying, reopen the review page. | It redirects to the order's page, which offers **Pay now** and **Cancel order**. The shop's board does not show the unpaid order. |
+| W23 | **Cancel order** on an unpaid order and confirm. | The order shows Cancelled; its files are gone from storage; a later payment for it is refused (`ORDER_CANCELLED`). |
+| W24 | Switch the phone between Wi-Fi and mobile data mid-cart. | The same cart continues (no 401s). Two phones on the same Wi-Fi each get their own cart. |
 
 ---
 

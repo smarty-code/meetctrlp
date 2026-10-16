@@ -32,20 +32,6 @@ export function formatColorMode(colorMode: ColorMode): string {
 }
 
 /**
- * Formats copies count with correct singular/plural grammar
- */
-export function formatCopies(copies: number): string {
-  return copies === 1 ? REVIEW_COPY.copiesSingular : REVIEW_COPY.copiesPlural(copies)
-}
-
-/**
- * Formats page count with correct singular/plural grammar
- */
-export function formatPageCount(count: number): string {
-  return count === 1 ? REVIEW_COPY.pagesSingular : REVIEW_COPY.pagesPlural(count)
-}
-
-/**
  * Formats paper size with fallback to default A4
  */
 export function formatPaperSize(paperSize?: string): string {

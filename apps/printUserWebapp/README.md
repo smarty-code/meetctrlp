@@ -44,25 +44,39 @@ The server cart (`GET /api/v1/public/session`) is the only source of truth for w
   - A failed storage `PUT` is retried once.
   - The server's file check (`complete`) is retried up to 3 times (after 1 s, then 2 s) on a dropped connection, 408, 429, or 5xx. The server is serverless, so these happen during cold starts and scaling. A 400 is final.
 - **Cleanup:** if an upload fails after the intent was created, the intent is deleted so it doesn't hold a cart slot.
+- **Cancelling:** `uploadGuestFile` takes an `AbortSignal`. A cancel at any step aborts the storage `PUT`, deletes the intent (also one created after the cancel), and throws `UploadCancelledError`, which the pages don't show as a failure.
+- **Deleting:** deletes are awaited. The page removes the document at once and puts it back with a message if the server refuses. `ALREADY_ORDERED` (409) means it is already in the order. `deleteGuestDocument` is idempotent, and `clearGuestCart` empties the server cart.
+- **Session:** a 401 from a cart route restarts the shop session once and retries (`lib/cloud.ts`).
+- **Caches:**
+  - Previews are kept in IndexedDB ([`src/lib/file-store.ts`](src/lib/file-store.ts)), pruned after 12 hours and dropped on delete or Clear all.
+  - `clearStoredCart` ([`src/lib/local-cart.ts`](src/lib/local-cart.ts)) clears the sessionStorage copies after Clear all and once an order is placed.
 
 API errors are thrown as `ApiError` (from [`src/lib/cloud.ts`](src/lib/cloud.ts)), which carries the HTTP `status`.
 
 ### Upload page
 
-[`src/app/s/[slug]/page.tsx`](src/app/s/[slug]/page.tsx) and [`src/components/documents-upload-card.tsx`](src/components/documents-upload-card.tsx):
+[`src/app/s/[slug]/page.tsx`](src/app/s/[slug]/page.tsx), [`src/components/documents-upload-card.tsx`](src/components/documents-upload-card.tsx) and [`src/components/upload-file-list.tsx`](src/components/upload-file-list.tsx):
 
-- **Moving on by itself:** when every file in the list is uploaded, the page goes to customize about 0.7 s later. There's no Continue button in this flow. If any file failed, the page stays so the shopper can retry or remove it. Once nothing has failed, it moves on.
-- **No bounce back:** a shopper who comes back from customize, with files already in the cart, is not sent forward again. An outlined **Continue with N documents** button appears instead. It also appears when some uploads failed and the shopper wants to go on without them.
-- **Progress button:** while uploading, the upload button becomes a progress bar. It shows **Uploading N documents** and one percentage for all files in the round, weighted by file size. A retry started mid-round joins that round, so the percentage doesn't restart.
-- **Last step:** the bar stops at 99% until the server has checked every file, and reads **Checking documents…** once all bytes are in storage. It shows **All uploaded** at 100% just before moving on.
-- **Animation:** the fill has a flat, wavy leading edge (keyframes `uploadWave` in [`src/app/globals.css`](src/app/globals.css)). It's off when the device asks for reduced motion.
-- **File list:** the list grows with the files instead of scrolling inside a fixed-height box (at most 10 files).
-
+- **The list:** every document in the server cart (after a reload too) and every file picked on this visit is shown, with its state.
+  - **Remove** works on any document; while one is uploading it reads **Cancel**.
+  - **Retry** appears on a failed upload.
+  - **Clear all** asks for confirmation. It then stops every upload and empties the server cart.
+- **Continue:** the green primary button shows whenever at least one document is in the cart and nothing is uploading, clearing or being removed. **Upload More Documents** becomes the lime outlined button.
+- **Moving on by itself:** only after an upload batch that landed in full, about 0.7 s later. Removing, clearing, cancelling, a failure, or arriving with a restored cart never moves the page on.
+- **Cancel Upload:** the drawer's button aborts every upload in flight or queued, and the files leave the list.
+- **Cap:** picking waits until the cart has loaded, so the 10-document limit counts what is already in it.
+- **Progress drawer:** it shows one percentage for all files in the round, weighted by file size. A retry started mid-round joins that round. The bar stops at 99% until the server has checked every file, and reads **Checking documents…** once all bytes are in storage.
 Other behaviour to keep:
 
-- **Continue on customize:** Continue is blocked while any upload is still running. A file that finishes later would be ordered without being shown.
+- **Continue on customize:** Continue is blocked while an upload or a delete is still running, and until the server cart has been read. A file that finishes later would be ordered without being shown; a stale first paint could list documents that are gone.
 - **Saving settings:** customize saves all document settings with one batch `PUT`.
-- **Review edits:** copy changes and deletes on the review page are written to the server in order, then re-quoted. Pay waits for those writes before comparing prices.
+- **Review edits:** copy changes and deletes on the review page are written to the server in order, then re-quoted. Pay waits for those writes before comparing prices. A failed write reloads the order from the server cart. Review never falls back to sessionStorage documents.
+- **Payment retry:** a failed online payment keeps its placed order; **Try Again** pays that same order, and cash is off for it.
+  - The idempotency key stays the same for the same documents and method, so a submit after a lost response replays the original order.
+  - If a submit fails with no answer and the cart turns out empty, the page opens the placed order.
+- **Order page:** for an unpaid `SUBMITTED` order, [`src/components/tracking/order-pending-actions.tsx`](src/components/tracking/order-pending-actions.tsx) offers **Pay now** (online) and **Cancel order**.
+
+How the whole flow fits together, including the server and the desktop agent: [`docs/arc/UPLOAD_ORDER_SYNC.md`](../../docs/arc/UPLOAD_ORDER_SYNC.md).
 
 ## Shop hours
 

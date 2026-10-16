@@ -137,7 +137,7 @@ The log is under Deployments → the deployment → **Building**.
 
 ### 6.1 The proxy secret
 
-The web app's `/api` proxy forwards every customer request to the API. Vercel replaces `X-Forwarded-For` with the address of whoever called it (here, the web app's server), so the proxy also sends the visitor's IP in `x-ctrlp-client-ip`, signed by a shared secret, `CTRLP_PROXY_SECRET`. The API trusts that header only when the secret matches. Without it, every guest's cookie would be tied to the web app's changing outgoing IP, and carts would fail with 401.
+The web app's `/api` proxy forwards every customer request to the API. Vercel replaces `X-Forwarded-For` with the address of whoever called it (here, the web app's server), so the proxy also sends the visitor's IP in `x-ctrlp-client-ip`, signed by a shared secret, `CTRLP_PROXY_SECRET`. The API trusts that header only when the secret matches. The IP is only recorded on a new guest session for abuse logging, since the guest cookie isn't bound to the IP (October 2026). Without the secret, the API records the web app's own address instead; carts still work.
 
 Use **the same value** in Vercel (step 5.2) and here:
 
@@ -186,7 +186,7 @@ pnpm exec firebase apphosting:rollouts:create ctrlp-web --git-branch fix/upload 
 | `Cannot find module '@ctrlp/ui'` or `workspace:*` errors | Check the root directory is exactly `apps/printUserWebapp`. The repo's `turbo.json`, `pnpm-workspace.yaml` and `pnpm-lock.yaml` at the root are the monorepo layout App Hosting expects. |
 | `secret … not found` or permission denied | Step 6.1/6.2: create the secret, or grant `ctrlp-web` access. |
 | The site calls `localhost:3000` | `NEXT_PUBLIC_API_BASE_URL` wasn't available at build time. It's built into the app; fix it and roll out again. |
-| Every cart call returns 401 | `CTRLP_PROXY_SECRET` differs between Vercel and App Hosting, or one side is missing it. |
+| Every cart call returns 401 | `PRINT_USER_COOKIE_SECRET` changed (every guest is signed out once), or the guest's session ended. The web app restarts the session by itself. A wrong `CTRLP_PROXY_SECRET` no longer causes 401s; it only records the wrong IP on new sessions. |
 
 ## Step 7. Connect the two URLs
 
@@ -215,7 +215,7 @@ Use your real `<web-url>` and add any custom domain. Without this rule uploads f
 
 [`apps/server/vercel.json`](../vercel.json) schedules `GET /api/v1/internal/maintenance/daily` at `0 22 * * *` (UTC), which is 03:30 in India. Vercel sends `Authorization: Bearer <CRON_SECRET>`, and the route accepts it when it matches the `CRON_SECRET` env var. So the only setup is `CRON_SECRET` in the Vercel env (it's in the env sheet's block). On Hobby the run lands somewhere inside that hour.
 
-The run removes tracking copies of orders finished more than 30 days ago, expired guest sessions (their cart files and Firebase Auth users), and the files of rejected or cancelled orders. It's bounded and safe to repeat.
+The run removes tracking copies of orders finished more than 30 days ago and expired guest sessions (their cart files and Firebase Auth users). It cancels online orders still unpaid 30 minutes after checkout and deletes their files; the summary reports `unpaidOrdersCancelled`. It also removes the files of rejected or cancelled orders. It's bounded and safe to repeat. The unpaid-order step needs the `orders` collection-group index on `status`, `payment.method`, `payment.status`, `createdAt` (step 4); until that index is enabled, the step logs an error and the others still run.
 
 Check it: Settings → **Cron Jobs** lists the job; **Run** triggers it now, and **View Logs** shows the response with what each step removed. To run it by hand:
 
@@ -342,7 +342,7 @@ Record results in the sheet in section 15.
 
 ## Still to confirm on the first deploy
 
-- **IP binding through the proxy:** two phones on different networks must get different carts, and one phone's cart must keep working across pages. If carts fail with 401, compare `CTRLP_PROXY_SECRET` on both sides.
+- **Guest identity through the proxy:** two phones on the same Wi-Fi must get different carts, one phone's cart must survive a switch between Wi-Fi and mobile data, and new `printUsers` documents should record the visitor's IP (not the web app's), which shows that `CTRLP_PROXY_SECRET` matches.
 - **Build from a subdirectory:** the first deploys prove the pnpm workspace packages (`@ctrlp/firebase`, `@ctrlp/schemas`, `@ctrlp/types`, `@ctrlp/ui`) build from each root directory, and that Corepack picks pnpm 11 on Vercel.
 - **Cold starts:** measure the first `complete` and the first desktop board fetch after an idle hour.
 - **Guest sign-in billing:** see step 3.

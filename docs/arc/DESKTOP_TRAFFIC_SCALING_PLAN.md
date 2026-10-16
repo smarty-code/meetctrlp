@@ -326,6 +326,8 @@ A C# console app streamed `/doorbell/spike.json` with an ID token while a script
 
 ### 7.3 Server endpoints
 
+> **Since built and extended (Oct 2026).** `sync` now takes the agent's `held` leases and returns `revoked` ones. Reports are parsed one at a time. There is a job cancel route. See [`UPLOAD_ORDER_SYNC.md`](./UPLOAD_ORDER_SYNC.md).
+
 - **`POST .../agents/{agentId}/sync`:**
   1. Auto-accepts up to 10 paid `SUBMITTED` orders (if the shop's `autoAcceptPaidOnline` is on), routing to this agent's printers first.
   2. Claims up to 10 QUEUED jobs for this agent.

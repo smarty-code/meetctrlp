@@ -1,11 +1,8 @@
-import { FieldValue, getFirebaseFirestore, type Timestamp } from "@ctrlp/firebase/firestore";
+import { getFirebaseFirestore, type Timestamp } from "@ctrlp/firebase/firestore";
 
 import { getShopConfigByShopId } from "@/src/modules/shops/shop-config.service";
-import { getShop, getShopBySlug, type StoredShop } from "@/src/modules/shops/firestore-shop-store";
-import {
-  isShopAcceptingOrders,
-  mapShopStatusToCustomer,
-} from "@/src/modules/print-user/print-user.helpers";
+import { getShopBySlug, type StoredShop } from "@/src/modules/shops/firestore-shop-store";
+import { mapShopStatusToCustomer } from "@/src/modules/print-user/print-user.helpers";
 import type { PublicShopDto } from "@/src/modules/print-user/print-user.types";
 
 export function toPublicShopDto(shop: StoredShop, config: Awaited<ReturnType<typeof getShopConfigByShopId>>): PublicShopDto {
@@ -50,19 +47,6 @@ export async function getPublicShopBySlug(slug: string) {
   return toPublicShopDto(shop, config);
 }
 
-export async function getPublicShopById(shopId: string) {
-  const shop = await getShop(shopId);
-  if (!shop) {
-    return undefined;
-  }
-  const config = await getShopConfigByShopId(shop.id);
-  return toPublicShopDto(shop, config);
-}
-
-export function requireActivePublicShop(shop: PublicShopDto) {
-  return isShopAcceptingOrders(shop.shopStatus);
-}
-
 export function timestampToIso(value: unknown) {
   if (!value) {
     return null;
@@ -77,10 +61,6 @@ export function timestampToIso(value: unknown) {
   }
 
   return typeof value === "string" ? value : null;
-}
-
-export function firestoreNow() {
-  return FieldValue.serverTimestamp();
 }
 
 export function printUsersCollection() {

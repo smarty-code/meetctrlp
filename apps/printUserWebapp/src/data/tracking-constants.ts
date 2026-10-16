@@ -3,22 +3,6 @@ import {
   StatusPresentationConfig,
 } from "../types/tracking";
 
-export const TRACKING_ROUTES = {
-  HOME: "/",
-  CUSTOMIZE: "/customize",
-  REVIEW: "/review",
-  PAYMENT: "/payment",
-  ORDER_STATUS: "/order-status",
-} as const;
-
-export const ORDER_LIFECYCLE_ORDER: OrderLifecycleStatus[] = [
-  "SUBMITTED",
-  "ACCEPTED",
-  "PRINTING",
-  "READY",
-  "COMPLETED",
-];
-
 export const ORDER_STATUS_PRESENTATION: Record<
   OrderLifecycleStatus,
   StatusPresentationConfig

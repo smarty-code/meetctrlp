@@ -378,6 +378,12 @@ Paths under `apps/server/` unless noted.
   - keep the submit idempotency key;
   - ring `order_submitted` (board).
 - `createShopOrder`: the same fields (no tracking copy); ring `order_submitted`.
+
+> **Changed 2026-10-16 (`fix/upload`).** `createPrintUserOrder` is gone.
+> - **One transaction.** `submitGuestOrder` writes the order (through `writePrintUserOrder`) and empties the guest's cart in the same transaction, so a document is never in both.
+> - **Rings.** Only a cash checkout rings `order_submitted`; an online order rings once it is paid.
+>
+> See [`docs/arc/UPLOAD_ORDER_SYNC.md`](./UPLOAD_ORDER_SYNC.md).
 - `confirmOnlinePayment`:
   - **remove auto-accept** (line 802; the shop config is read outside the transaction there today);
   - set `payment.status`, `payment.reference`, `lifecycle.paidAt`;
@@ -424,6 +430,16 @@ Paths under `apps/server/` unless noted.
   5. **After commit, on COMPLETED:** if no other QUEUED or DISPATCHING job in the order uses the same `documentId` (one query on the order's `printJobs`), `deleteObject(storageKey)`, then set `documents[i].shreddedAt`. If the delete fails, report `retry`. Today `confirmDocumentShredded` only sets `shreddedAt` and never deletes the object (`document.service.ts` 239–284).
 - **Ring the board once per request.**
 - **Output:** `{ results: [{ jobId, result: ok | retry | lease_mismatch | invalid_state | not_found }] }` with HTTP 200. HTTP 5xx only when the whole request failed.
+
+> **Changed 2026-10-16 (`fix/upload`).** See [`docs/arc/UPLOAD_ORDER_SYNC.md`](./UPLOAD_ORDER_SYNC.md).
+> - **`sync` input.** It takes `{ held: [{ orderId, jobId, leaseId }] }` (at most 100; `{}` still works).
+> - **`sync` output.** It returns `revoked: [{ orderId, jobId, leaseId, reason: CANCELLED | RESCUED | FINISHED | NOT_FOUND }]`, worked out before claiming, so the agent drops leases it must not print.
+> - **Redelivery** bumps `updatedAt` as well as `claimedAt`.
+> - **Reports** are parsed one at a time. One the server can't read is answered `invalid_state`, `pagesPrinted` is clamped to the job's total, and error texts are cut to length, so one bad report no longer fails the batch.
+> - **Retry** also refuses `DOCUMENT_MISSING`, `DOCUMENT_SHREDDED` and `ORDER_NOT_ACCEPTED`.
+> - **Cancel.** `POST .../orders/{orderId}/jobs/{jobId}/cancel` cancels a QUEUED, FAILED or stuck job and clears its lease.
+> - **`queueIncomingOrder`** records documents it can't queue in `order.queueErrors`.
+> - **Settings.** `resolvedSettings` now carries `orientation`.
 
 **Change:**
 
@@ -543,6 +559,8 @@ Paths under `apps/server/` unless noted.
 | `sync` | Only if jobs were queued for other agents | `jobs_queued` / `order_updated` |
 | Reject, cancel, ready, complete, cash collected, report, manual `printing` | no | `order_updated` |
 
+> **Changed 2026-10-16.** An online guest checkout no longer rings `order_submitted`, since unpaid online orders stay off the board until paid. Guest cancel, job cancel and a document that fails to queue ring `order_updated`. A job cancel rings `work` when a PC held the job.
+
 Shop-wide coalescing: two rings within the same request become one call.
 
 ### 6.10 Daily maintenance (Cloud Scheduler)
@@ -552,6 +570,8 @@ Shop-wide coalescing: two rings within the same request become one call.
 1. Delete `orderTracking` documents for orders terminal for more than 30 days.
 2. Delete expired `printUsers` sessions and their leftover storage objects.
 3. Delete storage objects for REJECTED or CANCELLED orders older than 1 day.
+
+> **Changed 2026-10-16.** A new step, run before step 3, cancels ONLINE orders still `SUBMITTED` and unpaid 30 minutes after checkout (`cancellation.reason: PAYMENT_TIMEOUT`) and deletes their files. Its query needs the collection-group index on `status`, `payment.method`, `payment.status`, `createdAt`. The route is `GET` with `Authorization: Bearer <CRON_SECRET>` from Vercel Cron, or `POST` with `x-ctrlp-maintenance-secret`.
 
 ### 6.11 Schemas and types
 
