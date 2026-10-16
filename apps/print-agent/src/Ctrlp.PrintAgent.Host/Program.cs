@@ -101,7 +101,8 @@ internal static class Program
                 _ = server.PublishAsync(notification.Type, notification);
                 // The store already marked a finished cloud job's report pending; just wake the outbox.
                 reports.Signal();
-            });
+            },
+            cloudContext);
 
         if (options.ParentPid is int parentPid)
         {

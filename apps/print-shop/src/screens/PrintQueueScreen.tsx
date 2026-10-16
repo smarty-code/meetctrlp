@@ -3,7 +3,7 @@ import { Badge } from "@ctrlp/ui/badge"
 import { Button } from "@ctrlp/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ctrlp/ui/card"
 
-import { mergeQueue, type QueueEntry, isStuckCloudJob } from "../lib/dashboard"
+import { canCancelQueueEntry, mergeQueue, type QueueEntry, isStuckCloudJob } from "../lib/dashboard"
 import type { CloudPrintJob, PrintJob, Printer } from "../lib/protocol"
 
 export function PrintQueueScreen({
@@ -39,39 +39,35 @@ export function PrintQueueScreen({
           <CardContent className="pt-6 text-ash">The print queue is empty.</CardContent>
         </Card>
       ) : (
-        visible.map((entry) => {
-          const terminal = entry.state === "completed" || entry.state === "cancelled"
-          const printing = entry.state === "printing"
-          return (
-            <Card key={entry.key} className="rounded-[12px]">
-              <CardHeader className="flex-row items-start justify-between">
-                <button type="button" className="text-left" onClick={() => setSelected(entry)}>
-                  <CardTitle>{entry.documentName}</CardTitle>
-                  <CardDescription>
-                    {entry.printerName} · {entry.pagesPrinted ?? 0}/{entry.pagesTotal ?? 0} pages
-                  </CardDescription>
-                </button>
-                <Badge>{entry.state}</Badge>
-              </CardHeader>
-              <CardContent className="flex flex-wrap items-center gap-2">
-                {entry.error ? <p className="w-full text-caption text-destructive">{entry.error}</p> : null}
-                {entry.state === "failed" || isStuckCloudJob(entry.cloud) ? (
-                  <Button size="sm" className="rounded-[12px]" disabled={busy} onClick={() => onRetry(entry)}>
-                    {entry.state === "failed" ? "Retry" : "Rescue"}
-                  </Button>
-                ) : null}
-                {!terminal && !printing && entry.local ? (
-                  <Button size="sm" variant="outline" className="rounded-[12px]" disabled={busy} onClick={() => onCancel(entry.local!.id)}>
-                    Cancel
-                  </Button>
-                ) : null}
-                <Button size="sm" variant="outline" className="rounded-[12px]" onClick={() => setSelected(entry)}>
-                  Details
+        visible.map((entry) => (
+          <Card key={entry.key} className="rounded-[12px]">
+            <CardHeader className="flex-row items-start justify-between">
+              <button type="button" className="text-left" onClick={() => setSelected(entry)}>
+                <CardTitle>{entry.documentName}</CardTitle>
+                <CardDescription>
+                  {entry.printerName} · {entry.pagesPrinted ?? 0}/{entry.pagesTotal ?? 0} pages
+                </CardDescription>
+              </button>
+              <Badge>{entry.state}</Badge>
+            </CardHeader>
+            <CardContent className="flex flex-wrap items-center gap-2">
+              {entry.error ? <p className="w-full text-caption text-destructive">{entry.error}</p> : null}
+              {entry.state === "failed" || isStuckCloudJob(entry.cloud) ? (
+                <Button size="sm" className="rounded-[12px]" disabled={busy} onClick={() => onRetry(entry)}>
+                  {entry.state === "failed" ? "Retry" : "Rescue"}
                 </Button>
-              </CardContent>
-            </Card>
-          )
-        })
+              ) : null}
+              {canCancelQueueEntry(entry) ? (
+                <Button size="sm" variant="outline" className="rounded-[12px]" disabled={busy} onClick={() => onCancel(entry.local!.id)}>
+                  Cancel
+                </Button>
+              ) : null}
+              <Button size="sm" variant="outline" className="rounded-[12px]" onClick={() => setSelected(entry)}>
+                Details
+              </Button>
+            </CardContent>
+          </Card>
+        ))
       )}
       {selected ? (
         <QueueDrawer
@@ -158,7 +154,7 @@ function QueueDrawer({
               </Button>
             </div>
           ) : null}
-          {entry.local && entry.state !== "printing" && entry.state !== "completed" && entry.state !== "cancelled" ? (
+          {canCancelQueueEntry(entry) ? (
             <Button variant="outline" className="w-full rounded-[12px]" disabled={busy} onClick={() => onCancel(entry.local!.id)}>
               Cancel
             </Button>

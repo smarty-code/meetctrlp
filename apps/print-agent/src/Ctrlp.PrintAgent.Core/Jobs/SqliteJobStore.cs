@@ -83,6 +83,19 @@ public sealed class SqliteJobStore : IJobRepository
                 report_state = CASE WHEN cloud_job_id IS NOT NULL AND report_state = 'none' THEN 'pending' ELSE report_state END
             WHERE state = 'printing';
             """);
+        // ClaimNext prints a cloud job only for the shop and PC that claimed it (cloud_shop_id, cloud_agent_id).
+        // A cloud job queued before those columns were filled in can't be matched to any session, so it would
+        // sit queued forever. Fail it, keeping the row, so the shop retries it under a new lease.
+        Execute(connection, """
+            UPDATE jobs
+            SET state = 'failed',
+                error = 'Queued before this PC recorded its shop. Retry it from the shop.',
+                error_code = 'AGENT_EXECUTION_FAILED',
+                updated_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000,
+                completed_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000
+            WHERE state IN ('created', 'queued') AND cloud_job_id IS NOT NULL
+              AND (cloud_shop_id IS NULL OR cloud_agent_id IS NULL);
+            """);
         // Finished cloud jobs from the old poll loop that were never acknowledged still need a report.
         Execute(connection, """
             UPDATE jobs SET report_state = 'pending'
@@ -273,17 +286,27 @@ public sealed class SqliteJobStore : IJobRepository
         return QuerySingle(connection, null, "SELECT * FROM jobs WHERE id = $id", ("$id", id));
     }
 
+    // Only work that hasn't started: a failed cloud job is already FAILED on the server, which answers a
+    // CANCELLED report for it with invalid_state.
     public JobDto? Cancel(string id) =>
-        Update(id, $"state = 'cancelled', completed_at = $now, {PendingReport}", "state IN ('created', 'queued', 'failed')");
+        Update(id, $"state = 'cancelled', completed_at = $now, {PendingReport}", "state IN ('created', 'queued')");
 
-    public JobDto? ClaimNext()
+    public JobDto? ClaimNext(string? shopId, string? agentId)
     {
         using var connection = Open();
         using var transaction = connection.BeginTransaction();
+        // A null shop or agent matches no cloud row (NULL = NULL is not true), so signed out only local jobs print.
         var job = QuerySingle(
             connection,
             transaction,
-            "SELECT * FROM jobs WHERE state = 'queued' AND document_path IS NOT NULL ORDER BY created_at LIMIT 1");
+            """
+            SELECT * FROM jobs
+            WHERE state = 'queued' AND document_path IS NOT NULL
+              AND (cloud_job_id IS NULL OR (cloud_shop_id = $shopId AND cloud_agent_id = $agentId))
+            ORDER BY created_at LIMIT 1
+            """,
+            ("$shopId", shopId),
+            ("$agentId", agentId));
         if (job is null)
         {
             transaction.Commit();
@@ -312,8 +335,10 @@ public sealed class SqliteJobStore : IJobRepository
     public JobDto? Fail(string id, string reason) =>
         Update(id, $"state = 'failed', error = $error, error_code = 'AGENT_EXECUTION_FAILED', completed_at = $now, {PendingReport}", "state = 'printing'", ("$error", reason));
 
+    // A cloud job's lease is spent once it failed: re-printing under it would be reported lease_mismatch or
+    // invalid_state, and would print twice if the shop also rescued it. The shop retries it with a new lease.
     public JobDto? Retry(string id) =>
-        Update(id, "state = 'queued', retry_count = retry_count + 1, error = NULL, error_code = NULL, started_at = NULL, completed_at = NULL, report_state = 'none', report_attempts = 0, report_next_at = NULL, report_last_error = NULL", "state = 'failed' AND document_path IS NOT NULL");
+        Update(id, "state = 'queued', retry_count = retry_count + 1, error = NULL, error_code = NULL, started_at = NULL, completed_at = NULL, report_state = 'none', report_attempts = 0, report_next_at = NULL, report_last_error = NULL", "state = 'failed' AND document_path IS NOT NULL AND cloud_job_id IS NULL");
 
     /// <summary>SET fragment that queues a cloud job's final report.</summary>
     private const string PendingReport =

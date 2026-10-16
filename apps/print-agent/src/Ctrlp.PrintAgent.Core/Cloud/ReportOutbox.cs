@@ -19,6 +19,10 @@ public interface IReportSignal
 public sealed class ReportOutbox : IReportSignal
 {
     public const int BatchSize = 20;
+
+    /// <summary>The server's limit for <c>pagesPrinted</c> (packages/schemas agent-sync.ts); one report above it 400s its batch.</summary>
+    public const int MaxPagesPrinted = 100_000;
+
     internal static readonly TimeSpan GatherDelay = TimeSpan.FromSeconds(1);
     internal static readonly TimeSpan MinBackoff = TimeSpan.FromSeconds(1);
     internal static readonly TimeSpan MaxBackoff = TimeSpan.FromMinutes(5);
@@ -193,12 +197,26 @@ public sealed class ReportOutbox : IReportSignal
             {
                 if (response.StatusCode == HttpStatusCode.BadRequest)
                 {
-                    // A malformed batch never gets better by resending it.
-                    foreach (var job in reportable)
+                    if (reportable.Count > 1)
                     {
-                        _jobs.SetReportState(job.Id, ReportStates.Rejected);
+                        // The server validates the whole batch, so one bad report fails all of them. Send each
+                        // on its own: only the bad one is rejected, and the rest are settled as usual.
+                        _log?.Invoke($"cloud reports status=400 count={reportable.Count}; resending one at a time");
+                        foreach (var job in reportable)
+                        {
+                            var failure = await SendAsync([job], cancellationToken).ConfigureAwait(false);
+                            if (failure is not null)
+                            {
+                                // The server or network failed: keep this and the unsent reports for the backoff.
+                                return failure;
+                            }
+                        }
+                        return null;
                     }
-                    _log?.Invoke($"cloud reports rejected status=400 count={reportable.Count}");
+
+                    // A malformed report never gets better by resending it.
+                    _jobs.SetReportState(reportable[0].Id, ReportStates.Rejected);
+                    _log?.Invoke($"cloud report rejected status=400 job={reportable[0].CloudJobId}");
                     return null;
                 }
 
@@ -252,13 +270,14 @@ public sealed class ReportOutbox : IReportSignal
         }
 
         var error = string.IsNullOrWhiteSpace(job.Error) ? null : job.Error.Length > 500 ? job.Error[..500] : job.Error;
+        var pagesPrinted = status == "COMPLETED" ? Math.Max(job.PagesPrinted, job.PagesTotal) : job.PagesPrinted;
         return new
         {
             orderId = job.CloudOrderId,
             jobId = job.CloudJobId,
             leaseId = job.LeaseId,
             status,
-            pagesPrinted = status == "COMPLETED" ? Math.Max(job.PagesPrinted, job.PagesTotal) : job.PagesPrinted,
+            pagesPrinted = Math.Clamp(pagesPrinted, 0, MaxPagesPrinted),
             spoolerJobId = job.SpoolerJobId is > 0 ? job.SpoolerJobId : null,
             errorCode = status == "FAILED" ? job.ErrorCode ?? "AGENT_EXECUTION_FAILED" : null,
             errorMessage = status == "FAILED" ? error : null,

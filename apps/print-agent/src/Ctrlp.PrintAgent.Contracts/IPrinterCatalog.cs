@@ -12,10 +12,23 @@ public interface IJobStore
     JobDto Enqueue(EnqueueJobRequest request);
     IReadOnlyList<JobDto> List();
     JobDto? Get(string id);
+    /// <summary>Cancels a job that hasn't started (<c>created</c> or <c>queued</c>); any other job comes back unchanged.</summary>
     JobDto? Cancel(string id);
-    JobDto? ClaimNext();
+
+    /// <summary>
+    /// Claims the oldest queued job this PC may print now: a local-only job (no cloud job id), or a cloud job
+    /// queued for the signed-in <paramref name="shopId"/> and <paramref name="agentId"/>. With no session
+    /// (both null) only local-only jobs are claimed, so a previous shop's work never prints.
+    /// </summary>
+    JobDto? ClaimNext(string? shopId, string? agentId);
+
     JobDto? Complete(string id, int? spoolerJobId = null);
     JobDto? Fail(string id, string reason);
+
+    /// <summary>
+    /// Re-queues a failed local-only job. A cloud job comes back unchanged: its lease is spent, so it is
+    /// retried from the shop, which issues a new lease.
+    /// </summary>
     JobDto? Retry(string id);
 
     /// <summary>The local record of a cloud job with this lease, in any state. A re-delivered job is skipped.</summary>

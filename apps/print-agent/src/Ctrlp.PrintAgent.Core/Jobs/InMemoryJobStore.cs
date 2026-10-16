@@ -111,20 +111,26 @@ public sealed class InMemoryJobStore : IJobStore
             return null;
         }
 
-        if (job.State is "completed" or "cancelled")
+        if (job.State is not ("created" or "queued"))
         {
             return job;
         }
 
-        var cancelled = Pending(job with { State = JobRunState.Cancelled.ToString().ToLowerInvariant() });
+        var cancelled = Pending(job with
+        {
+            State = JobRunState.Cancelled.ToString().ToLowerInvariant(),
+            CompletedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+        });
         _jobs[id] = cancelled;
         return cancelled;
     }
 
-    public JobDto? ClaimNext()
+    public JobDto? ClaimNext(string? shopId, string? agentId)
     {
         var job = _jobs.Values
-            .Where(candidate => candidate.State == "queued")
+            .Where(candidate => candidate.State == "queued" && candidate.DocumentPath is not null)
+            .Where(candidate => candidate.CloudJobId is null ||
+                (shopId is not null && agentId is not null && candidate.CloudShopId == shopId && candidate.CloudAgentId == agentId))
             .OrderBy(candidate => candidate.CreatedAt)
             .FirstOrDefault();
         if (job is null)
@@ -161,7 +167,7 @@ public sealed class InMemoryJobStore : IJobStore
         }));
 
     public JobDto? Retry(string id) =>
-        Update(id, job => job with
+        Update(id, job => job.State != "failed" || job.DocumentPath is null || job.CloudJobId is not null ? job : job with
         {
             State = JobRunState.Queued.ToString().ToLowerInvariant(),
             Error = null,

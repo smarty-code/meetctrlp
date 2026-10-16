@@ -61,7 +61,13 @@ public sealed class AgentSyncServiceTests : IDisposable
         }
     }
 
-    private static object Job(string jobId, string leaseId = "lease-1", string? hash = null, bool download = true) => new
+    private static object Job(
+        string jobId,
+        string leaseId = "lease-1",
+        string? hash = null,
+        bool download = true,
+        int? pagesTotal = 4,
+        int? pageCount = 2) => new
     {
         orderId = "order-1",
         orderNumber = "ORD-1",
@@ -73,10 +79,10 @@ public sealed class AgentSyncServiceTests : IDisposable
         printerId = "printer-1",
         printerSystemName = "HP LaserJet",
         printerName = "HP",
-        pagesTotal = 4,
+        pagesTotal,
         redelivered = false,
         download = download
-            ? new { url = $"https://files.test/{jobId}", sha256Hash = hash ?? PdfHash, mimeType = "application/pdf", pageCount = 2, expiresIn = 3600 }
+            ? new { url = $"https://files.test/{jobId}", sha256Hash = hash ?? PdfHash, mimeType = "application/pdf", pageCount, expiresIn = 3600 }
             : null,
     };
 
@@ -125,7 +131,7 @@ public sealed class AgentSyncServiceTests : IDisposable
     {
         _api.Responder = (_, _) => Task.FromResult(SyncResponse(false, Job("job-1")));
         await _sync.SyncAsync(CancellationToken.None);
-        var printed = _jobs.ClaimNext()!;
+        var printed = _jobs.ClaimNext("shop-1", "agent-1")!;
         _jobs.Complete(printed.Id);
 
         // Re-delivered after a lost response: same lease, so it must not print again.
@@ -137,6 +143,53 @@ public sealed class AgentSyncServiceTests : IDisposable
         _api.Responder = (_, _) => Task.FromResult(SyncResponse(false, Job("job-1", leaseId: "lease-2")));
         Assert.Equal(1, await _sync.SyncAsync(CancellationToken.None));
         Assert.Equal(2, _jobs.List().Count);
+    }
+
+    [Fact]
+    public async Task StagesEachLeaseInItsOwnFolder()
+    {
+        _api.Responder = (_, _) => Task.FromResult(SyncResponse(false, Job("job-1")));
+        await _sync.SyncAsync(CancellationToken.None);
+        var first = Assert.Single(_jobs.List());
+        Assert.Equal(Path.Combine(_staging, "job-1", "lease-1", "document.pdf"), first.DocumentPath);
+
+        // The shop rescued it (new lease) while this PC still has the first attempt.
+        _api.Responder = (_, _) => Task.FromResult(SyncResponse(false, Job("job-1", leaseId: "lease-2")));
+        await _sync.SyncAsync(CancellationToken.None);
+        var second = _jobs.List().Single(job => job.LeaseId == "lease-2");
+        Assert.Equal(Path.Combine(_staging, "job-1", "lease-2", "document.pdf"), second.DocumentPath);
+
+        // The old attempt finishing deletes only its own file, never the rescued lease's.
+        StagedDocument.TryDelete(_jobs.Fail(first.Id, "paper jam")!);
+        Assert.False(File.Exists(first.DocumentPath));
+        Assert.False(Directory.Exists(Path.Combine(_staging, "job-1", "lease-1")));
+        Assert.True(File.Exists(second.DocumentPath));
+
+        StagedDocument.TryDelete(_jobs.Complete(second.Id)!);
+        Assert.False(Directory.Exists(Path.Combine(_staging, "job-1")));
+    }
+
+    [Fact]
+    public async Task ANullPagesTotalDefaultsToOneInsteadOfFailingTheSync()
+    {
+        _api.Responder = (_, _) => Task.FromResult(SyncResponse(false, Job("job-1", pagesTotal: null, pageCount: null), Job("job-2")));
+
+        Assert.Equal(2, await _sync.SyncAsync(CancellationToken.None));
+
+        Assert.Equal(1, _jobs.List().Single(job => job.CloudJobId == "job-1").PagesTotal);
+        Assert.Equal(4, _jobs.List().Single(job => job.CloudJobId == "job-2").PagesTotal);
+    }
+
+    [Fact]
+    public async Task RefusesALeaseIdThatWouldLeaveTheStagingFolder()
+    {
+        _api.Responder = (_, _) => Task.FromResult(SyncResponse(false, Job("job-1", leaseId: "../../outside")));
+
+        Assert.Equal(0, await _sync.SyncAsync(CancellationToken.None));
+
+        var job = Assert.Single(_jobs.List());
+        Assert.Equal("AGENT_STAGING_FAILED", job.ErrorCode);
+        Assert.Empty(_files.Requests);
     }
 
     [Fact]
@@ -156,7 +209,7 @@ public sealed class AgentSyncServiceTests : IDisposable
             Assert.Null(job.DocumentPath);
         });
         Assert.Equal(2, _reports.Signals);
-        Assert.Null(_jobs.ClaimNext());
+        Assert.Null(_jobs.ClaimNext("shop-1", "agent-1"));
     }
 
     [Fact]

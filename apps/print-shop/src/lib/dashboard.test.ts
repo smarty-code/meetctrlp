@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest"
 
-import { STUCK_JOB_MS, dashboardMetrics, documentReadiness, filterOrders, isStuckCloudJob, mergeQueue, shopDay } from "./dashboard"
+import {
+  STUCK_JOB_MS,
+  canCancelQueueEntry,
+  dashboardMetrics,
+  documentReadiness,
+  filterOrders,
+  isStuckCloudJob,
+  mergeQueue,
+  retryTarget,
+  shopDay,
+} from "./dashboard"
 import type { CloudPrintJob, PrintJob, Printer, ShopOrder } from "./protocol"
 
 const order = {
@@ -99,6 +109,71 @@ describe("dashboard and order filters", () => {
     const merged = mergeQueue([local], [cloud, { ...cloud, id: "other", status: "FAILED" }])
     expect(merged).toHaveLength(2)
     expect(merged[0]?.cloud?.id === "cloud-job" || merged[1]?.cloud?.id === "cloud-job").toBe(true)
+  })
+})
+
+describe("print queue entries", () => {
+  const cloud: CloudPrintJob = {
+    id: "cloud-job",
+    orderId: "order-1",
+    documentId: "doc-1",
+    printerId: "cloud-1",
+    printerName: "Office",
+    agentId: "agent-1",
+    status: "DISPATCHING",
+    pagesTotal: 4,
+    pagesPrinted: 0,
+    spoolerJobId: null,
+    retryCount: 0,
+    requestedOverrides: {},
+    resolvedSettings: {},
+    errorCode: null,
+    errorMessage: null,
+    createdAt: null,
+    updatedAt: null,
+    startedAt: null,
+    completedAt: null,
+  }
+  const local = (state: string, extra: Partial<PrintJob> = {}): PrintJob => ({
+    id: `local-${state}`,
+    state,
+    copies: 1,
+    createdAt: 1,
+    cloudJobId: "cloud-job",
+    cloudOrderId: "order-1",
+    ...extra,
+  })
+
+  it("shows printing while this PC prints a job the server still calls dispatching", () => {
+    expect(mergeQueue([local("printing")], [cloud])[0]?.state).toBe("printing")
+  })
+
+  it("keeps the server status when the local row isn't printing", () => {
+    expect(mergeQueue([local("queued")], [cloud])[0]?.state).toBe("dispatching")
+    expect(mergeQueue([local("failed")], [{ ...cloud, status: "FAILED" }])[0]?.state).toBe("failed")
+    expect(mergeQueue([local("completed", { cloudJobId: null, cloudOrderId: null })], [])[0]?.state).toBe("completed")
+  })
+
+  it("offers cancel only before printing starts", () => {
+    const [queued] = mergeQueue([local("queued")], [cloud])
+    const [printing] = mergeQueue([local("printing")], [cloud])
+    const [failed] = mergeQueue([local("failed")], [{ ...cloud, status: "FAILED" }])
+    const [cloudOnly] = mergeQueue([], [cloud])
+    expect(canCancelQueueEntry(queued!)).toBe(true)
+    expect(canCancelQueueEntry(printing!)).toBe(false)
+    expect(canCancelQueueEntry(failed!)).toBe(false)
+    expect(canCancelQueueEntry(cloudOnly!)).toBe(false)
+  })
+
+  it("sends a cloud job's retry to the server even before the board has the job", () => {
+    const [withBoard] = mergeQueue([local("failed")], [{ ...cloud, status: "FAILED" }])
+    const [withoutBoard] = mergeQueue([local("failed")], [])
+    const [testPage] = mergeQueue([local("failed", { cloudJobId: null, cloudOrderId: null })], [])
+    const [noOrder] = mergeQueue([local("failed", { cloudOrderId: null })], [])
+    expect(retryTarget(withBoard!)).toEqual({ kind: "cloud", orderId: "order-1", jobId: "cloud-job" })
+    expect(retryTarget(withoutBoard!)).toEqual({ kind: "cloud", orderId: "order-1", jobId: "cloud-job" })
+    expect(retryTarget(testPage!)).toEqual({ kind: "local", id: "local-failed" })
+    expect(retryTarget(noOrder!)).toBeNull()
   })
 })
 

@@ -29,6 +29,9 @@ public sealed class RpcException : Exception
     public static RpcException JobNotFound(string id) =>
         new(RpcErrorCodes.JobNotFound, $"Job not found: {id}");
 
+    public static RpcException InvalidJobState(string message) =>
+        new(RpcErrorCodes.InvalidJobState, message);
+
     public static RpcException Internal(string message) =>
         new(RpcErrorCodes.InternalError, message);
 }

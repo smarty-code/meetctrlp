@@ -162,7 +162,7 @@ public sealed class AgentSyncService : ISyncTrigger
             ResolvedSettings: job.ResolvedSettings.ValueKind == JsonValueKind.Undefined ? "{}" : job.ResolvedSettings.GetRawText(),
             // One key per lease: a job the shop retries (new lease) is queued again, a re-delivery is not.
             IdempotencyKey: $"cloud-{job.JobId}-{job.LeaseId}",
-            PagesTotal: job.PagesTotal,
+            PagesTotal: job.PagesTotal ?? 1,
             CloudOrderId: job.OrderId,
             CloudDocumentId: job.DocumentId,
             LeaseId: job.LeaseId,
@@ -176,7 +176,7 @@ public sealed class AgentSyncService : ISyncTrigger
                 throw new InvalidOperationException("The document is no longer available to download.");
             }
 
-            var path = await StageAsync(job.JobId, job.Download, cancellationToken).ConfigureAwait(false);
+            var path = await StageAsync(job.JobId, job.LeaseId, job.Download, cancellationToken).ConfigureAwait(false);
             _jobs.Enqueue(request with { DocumentPath = path });
             return true;
         }
@@ -194,24 +194,45 @@ public sealed class AgentSyncService : ISyncTrigger
         }
     }
 
-    private async Task<string> StageAsync(string jobId, SyncDownload download, CancellationToken cancellationToken)
+    /// <summary>
+    /// Stages at <c>{root}/{jobId}/{leaseId}/document.ext</c>. Each lease has its own file: when the shop retries
+    /// a job, the old row finishing (and deleting its file) never takes the new lease's document with it.
+    /// </summary>
+    internal static string StagingPath(string stagingRoot, string jobId, string leaseId, string? mimeType)
     {
-        var directory = Path.Combine(_stagingRoot, jobId);
-        Directory.CreateDirectory(directory);
-        var extension = download.MimeType switch
+        var extension = mimeType switch
         {
             "image/png" => ".png",
             "image/jpeg" => ".jpg",
             _ => ".pdf",
         };
-        var path = Path.Combine(directory, $"document{extension}");
+        return Path.Combine(stagingRoot, PathSegment(jobId), PathSegment(leaseId), $"document{extension}");
+    }
 
-        using (var response = await _download.GetAsync(download.Url, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false))
+    /// <summary>Server ids become folder names; one that could leave the staging folder is refused.</summary>
+    private static string PathSegment(string value) =>
+        value is "." or ".." || value.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+            ? throw new InvalidOperationException("The job id can't be used as a folder name.")
+            : value;
+
+    private async Task<string> StageAsync(string jobId, string leaseId, SyncDownload download, CancellationToken cancellationToken)
+    {
+        var path = StagingPath(_stagingRoot, jobId, leaseId, download.MimeType);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+
+        try
         {
+            using var response = await _download.GetAsync(download.Url, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
             await using var source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
             await using var destination = File.Create(path);
             await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // A download cut off halfway leaves a partial file that nothing would print or delete.
+            TryDelete(path);
+            throw;
         }
 
         string actual;
@@ -227,6 +248,17 @@ public sealed class AgentSyncService : ISyncTrigger
         }
 
         return path;
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+        }
     }
 
     private static int Copies(JsonElement settings) =>
@@ -254,9 +286,11 @@ public sealed class AgentSyncService : ISyncTrigger
         string? PrinterId,
         string? PrinterSystemName,
         string? PrinterName,
-        int PagesTotal,
+        // Nullable: a null from the server must not fail the whole sync (and every job in it). Defaults to 1.
+        int? PagesTotal,
         bool Redelivered,
         SyncDownload? Download);
 
-    internal sealed record SyncDownload(string Url, string Sha256Hash, string? MimeType, int PageCount, int ExpiresIn);
+    // The agent doesn't read PageCount or ExpiresIn; nullable for the same reason as PagesTotal.
+    internal sealed record SyncDownload(string Url, string Sha256Hash, string? MimeType, int? PageCount, int? ExpiresIn);
 }

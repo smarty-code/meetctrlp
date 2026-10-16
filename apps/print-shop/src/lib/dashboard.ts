@@ -134,7 +134,9 @@ export function mergeQueue(localJobs: PrintJob[], cloudJobs: CloudPrintJob[]): Q
       cloud,
       documentName: local.documentName ?? cloud?.documentId ?? "Queued document",
       printerName: cloud?.printerName ?? local.printerId ?? "Unassigned printer",
-      state: cloud?.status?.toLowerCase() ?? local.state,
+      // The server hears from this PC only at the final report, so it says DISPATCHING while the page is
+      // on the printer. The local row knows better.
+      state: local.state === "printing" ? "printing" : (cloud?.status?.toLowerCase() ?? local.state),
       error: local.error ?? cloud?.errorMessage,
       createdAt: local.createdAt,
       pagesPrinted: local.pagesPrinted ?? cloud?.pagesPrinted,
@@ -156,6 +158,26 @@ export function mergeQueue(localJobs: PrintJob[], cloudJobs: CloudPrintJob[]): Q
     })
   }
   return entries.sort((left, right) => right.createdAt - left.createdAt)
+}
+
+/** The agent cancels only work that hasn't started: printing can't be stopped, and a failed job has nothing to cancel. */
+export function canCancelQueueEntry(entry: QueueEntry) {
+  return entry.local?.state === "created" || entry.local?.state === "queued"
+}
+
+export type RetryTarget = { kind: "cloud"; orderId: string; jobId: string } | { kind: "local"; id: string }
+
+/**
+ * Where a retry goes. A cloud job is retried by the server, which issues a new lease; the agent refuses to
+ * re-queue it under the spent one. Only a job that never came from the cloud (a test page) retries locally.
+ */
+export function retryTarget(entry: QueueEntry): RetryTarget | null {
+  const jobId = entry.cloud?.id ?? entry.local?.cloudJobId
+  if (jobId) {
+    const orderId = entry.cloud?.orderId ?? entry.local?.cloudOrderId
+    return orderId ? { kind: "cloud", orderId, jobId } : null
+  }
+  return entry.local ? { kind: "local", id: entry.local.id } : null
 }
 
 /** The shop-time calendar day (`YYYY-MM-DD`) of an instant. Shops are in India (Asia/Kolkata). */
