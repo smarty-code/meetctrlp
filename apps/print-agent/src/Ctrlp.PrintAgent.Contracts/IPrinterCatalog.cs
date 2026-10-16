@@ -34,6 +34,20 @@ public interface IJobStore
     /// <summary>The local record of a cloud job with this lease, in any state. A re-delivered job is skipped.</summary>
     JobDto? FindCloudJob(string cloudJobId, string leaseId);
 
+    /// <summary>
+    /// Unfinished cloud jobs (queued or printing) this shop and agent hold, oldest first. Sync sends their leases
+    /// as <c>held</c>, and the server answers which are revoked.
+    /// </summary>
+    IReadOnlyList<JobDto> HeldCloudJobs(string shopId, string agentId, int limit);
+
+    /// <summary>
+    /// Drops the row holding this revoked lease. A job that hasn't started is cancelled with <paramref name="reason"/>;
+    /// one already printing can't be stopped and finishes. Either way its report becomes
+    /// <see cref="ReportStates.Revoked"/>, so nothing is ever reported under that lease. Returns the row, or null
+    /// when no unsettled row has this lease.
+    /// </summary>
+    JobDto? Revoke(string cloudJobId, string leaseId, string reason);
+
     /// <summary>Records a cloud job that couldn't be staged as failed, with its report pending.</summary>
     JobDto RecordStagingFailure(EnqueueJobRequest request, string reason);
 

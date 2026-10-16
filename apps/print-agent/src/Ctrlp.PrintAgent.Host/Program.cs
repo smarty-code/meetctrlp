@@ -72,7 +72,9 @@ internal static class Program
             reports,
             Path.Combine(dataRoot, "jobs"),
             new HttpClient(Handler()) { Timeout = TimeSpan.FromMinutes(5) },
-            log: log.Write);
+            log: log.Write,
+            // A revoked lease's cancelled row, so the queue screen updates without a reload.
+            publish: notification => notifier.Publish(notification.Type, notification));
         var doorbell = new DoorbellClient(
             cloudContext,
             tokens,

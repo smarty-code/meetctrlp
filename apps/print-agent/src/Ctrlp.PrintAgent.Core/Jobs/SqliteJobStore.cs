@@ -192,6 +192,68 @@ public sealed class SqliteJobStore : IJobRepository
             ("$leaseId", leaseId));
     }
 
+    public IReadOnlyList<JobDto> HeldCloudJobs(string shopId, string agentId, int limit)
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT * FROM jobs
+            WHERE state IN ('created', 'queued', 'printing') AND cloud_job_id IS NOT NULL AND lease_id IS NOT NULL
+              AND cloud_order_id IS NOT NULL AND cloud_shop_id = $shopId AND cloud_agent_id = $agentId
+              AND report_state <> 'revoked'
+            ORDER BY created_at
+            LIMIT $limit
+            """;
+        command.Parameters.AddWithValue("$shopId", shopId);
+        command.Parameters.AddWithValue("$agentId", agentId);
+        command.Parameters.AddWithValue("$limit", limit);
+        using var reader = command.ExecuteReader();
+        var jobs = new List<JobDto>();
+        while (reader.Read())
+        {
+            jobs.Add(Read(reader));
+        }
+
+        return jobs;
+    }
+
+    public JobDto? Revoke(string cloudJobId, string leaseId, string reason)
+    {
+        using var connection = Open();
+        using var transaction = connection.BeginTransaction();
+        var job = QuerySingle(
+            connection,
+            transaction,
+            "SELECT * FROM jobs WHERE cloud_job_id = $cloudJobId AND lease_id = $leaseId AND report_state IN ('none', 'pending') ORDER BY created_at DESC LIMIT 1",
+            ("$cloudJobId", cloudJobId),
+            ("$leaseId", leaseId));
+        if (job is null)
+        {
+            transaction.Commit();
+            return null;
+        }
+
+        // Each SET expression sees the row as it was, so `state` below is the state before this update.
+        Execute(
+            connection,
+            transaction,
+            """
+            UPDATE jobs
+            SET state = CASE WHEN state IN ('created', 'queued') THEN 'cancelled' ELSE state END,
+                error = CASE WHEN state IN ('created', 'queued') THEN $error ELSE error END,
+                error_code = CASE WHEN state IN ('created', 'queued') THEN 'LEASE_REVOKED' ELSE error_code END,
+                completed_at = CASE WHEN state IN ('created', 'queued') THEN $now ELSE completed_at END,
+                report_state = 'revoked', report_next_at = NULL, report_last_error = NULL, updated_at = $now
+            WHERE id = $id
+            """,
+            ("$id", job.Id),
+            ("$error", reason),
+            ("$now", Now()));
+        var revoked = QuerySingle(connection, transaction, "SELECT * FROM jobs WHERE id = $id", ("$id", job.Id));
+        transaction.Commit();
+        return revoked;
+    }
+
     public IReadOnlyList<JobDto> DueReports(string shopId, string agentId, long nowMs, int limit)
     {
         using var connection = Open();
@@ -340,9 +402,9 @@ public sealed class SqliteJobStore : IJobRepository
     public JobDto? Retry(string id) =>
         Update(id, "state = 'queued', retry_count = retry_count + 1, error = NULL, error_code = NULL, started_at = NULL, completed_at = NULL, report_state = 'none', report_attempts = 0, report_next_at = NULL, report_last_error = NULL", "state = 'failed' AND document_path IS NOT NULL AND cloud_job_id IS NULL");
 
-    /// <summary>SET fragment that queues a cloud job's final report.</summary>
+    /// <summary>SET fragment that queues a cloud job's final report, unless the server revoked its lease.</summary>
     private const string PendingReport =
-        "report_state = CASE WHEN cloud_job_id IS NOT NULL THEN 'pending' ELSE report_state END, report_attempts = 0, report_next_at = NULL";
+        "report_state = CASE WHEN cloud_job_id IS NOT NULL AND report_state <> 'revoked' THEN 'pending' ELSE report_state END, report_attempts = 0, report_next_at = NULL";
 
     private JobDto? Update(string id, string set, string predicate, params (string Name, object? Value)[] values)
     {

@@ -122,6 +122,42 @@ public sealed class SqliteJobStoreTests : IDisposable
     }
 
     [Fact]
+    public void ListsHeldLeasesAndRevokesThemWithoutEverReporting()
+    {
+        var database = Path.Combine(_root, "queue.db");
+        var store = Create(database);
+        var printing = store.Enqueue(Request("key-held-printing") with { CloudJobId = "job-printing", LeaseId = "lease-p" });
+        store.ClaimNext("shop-1", "agent-1");
+        var queued = store.Enqueue(Request("key-held-queued") with { CloudJobId = "job-queued", LeaseId = "lease-q" });
+        var done = store.Enqueue(Request("key-held-done") with { CloudJobId = "job-done", LeaseId = "lease-d" });
+        store.Cancel(done.Id);
+        store.Enqueue(Request("key-held-other") with { CloudJobId = "job-other", LeaseId = "lease-o", CloudShopId = "shop-2" });
+
+        Assert.Equal(
+            [printing.Id, queued.Id],
+            store.HeldCloudJobs("shop-1", "agent-1", 100).Select(job => job.Id).OrderBy(id => id == queued.Id));
+        Assert.Single(store.HeldCloudJobs("shop-1", "agent-1", 1));
+
+        Assert.Null(store.Revoke("job-queued", "lease-other", "RESCUED"));
+        var dropped = store.Revoke("job-queued", "lease-q", "The shop cancelled this job.")!;
+        Assert.Equal("cancelled", dropped.State);
+        Assert.Equal("LEASE_REVOKED", dropped.ErrorCode);
+        Assert.Equal(ReportStates.Revoked, dropped.ReportState);
+        Assert.Null(store.Revoke("job-queued", "lease-q", "again")); // already settled
+
+        var stillPrinting = store.Revoke("job-printing", "lease-p", "The shop sent this job again.")!;
+        Assert.Equal("printing", stillPrinting.State);
+        Assert.Equal(ReportStates.Revoked, store.Complete(printing.Id)!.ReportState);
+        Assert.Equal(1, store.CountPendingReports("shop-1", "agent-1")); // only the local cancel of job-done
+        Assert.Empty(store.HeldCloudJobs("shop-1", "agent-1", 100));
+
+        // Startup migrations queue reports for unreported finished jobs; a revoked one is not unreported.
+        var reopened = Create(database);
+        Assert.Equal(ReportStates.Revoked, reopened.Get(queued.Id)!.ReportState);
+        Assert.Equal(ReportStates.Revoked, reopened.Get(printing.Id)!.ReportState);
+    }
+
+    [Fact]
     public void CancelsOnlyWorkThatHasntStarted()
     {
         var store = Create(Path.Combine(_root, "queue.db"));

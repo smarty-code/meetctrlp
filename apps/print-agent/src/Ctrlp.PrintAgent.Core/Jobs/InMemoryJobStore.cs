@@ -52,6 +52,40 @@ public sealed class InMemoryJobStore : IJobStore
             .OrderByDescending(job => job.CreatedAt)
             .FirstOrDefault();
 
+    public IReadOnlyList<JobDto> HeldCloudJobs(string shopId, string agentId, int limit) =>
+        _jobs.Values
+            .Where(job => job.State is "created" or "queued" or "printing" && job.CloudJobId is not null &&
+                job.LeaseId is not null && job.CloudOrderId is not null && job.CloudShopId == shopId &&
+                job.CloudAgentId == agentId && job.ReportState != ReportStates.Revoked)
+            .OrderBy(job => job.CreatedAt)
+            .Take(limit)
+            .ToArray();
+
+    public JobDto? Revoke(string cloudJobId, string leaseId, string reason)
+    {
+        var job = _jobs.Values
+            .Where(candidate => candidate.CloudJobId == cloudJobId && candidate.LeaseId == leaseId &&
+                candidate.ReportState is ReportStates.None or ReportStates.Pending)
+            .OrderByDescending(candidate => candidate.CreatedAt)
+            .FirstOrDefault();
+        if (job is null)
+        {
+            return null;
+        }
+
+        _reportNextAt.TryRemove(job.Id, out _);
+        return Update(job.Id, current => current.State is "created" or "queued"
+            ? current with
+            {
+                State = JobRunState.Cancelled.ToString().ToLowerInvariant(),
+                Error = reason,
+                ErrorCode = "LEASE_REVOKED",
+                CompletedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                ReportState = ReportStates.Revoked,
+            }
+            : current with { ReportState = ReportStates.Revoked });
+    }
+
     public IReadOnlyList<JobDto> DueReports(string shopId, string agentId, long nowMs, int limit) =>
         PendingFor(shopId, agentId)
             .Where(job => _reportNextAt.GetValueOrDefault(job.Id) <= nowMs)
@@ -86,10 +120,10 @@ public sealed class InMemoryJobStore : IJobStore
         _jobs.Values.Where(job =>
             job.ReportState == ReportStates.Pending && job.CloudShopId == shopId && job.CloudAgentId == agentId);
 
-    /// <summary>A finished cloud job always gets its final report queued.</summary>
+    /// <summary>A finished cloud job gets its final report queued, unless the server revoked its lease.</summary>
     private JobDto Pending(JobDto job)
     {
-        if (job.CloudJobId is null)
+        if (job.CloudJobId is null || job.ReportState == ReportStates.Revoked)
         {
             return job;
         }

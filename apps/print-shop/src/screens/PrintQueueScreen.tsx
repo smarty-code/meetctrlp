@@ -3,8 +3,15 @@ import { Badge } from "@ctrlp/ui/badge"
 import { Button } from "@ctrlp/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ctrlp/ui/card"
 
-import { canCancelQueueEntry, mergeQueue, type QueueEntry, isStuckCloudJob } from "../lib/dashboard"
+import { cancelTarget, isStuckCloudJob, mergeQueue, retryTarget, type QueueEntry } from "../lib/dashboard"
 import type { CloudPrintJob, PrintJob, Printer } from "../lib/protocol"
+
+/** Retry for a failed job, Rescue for one stuck on a PC that stopped syncing; never for an earlier attempt. */
+function canRetry(entry: QueueEntry) {
+  return (entry.state === "failed" || isStuckCloudJob(entry.cloud)) && retryTarget(entry) !== null
+}
+
+const SUPERSEDED_NOTE = "An earlier attempt. The shop has since sent this job again or cancelled it."
 
 export function PrintQueueScreen({
   jobs,
@@ -19,7 +26,7 @@ export function PrintQueueScreen({
   cloudJobs: CloudPrintJob[]
   printers: Printer[]
   busy: boolean
-  onCancel: (id: string) => void
+  onCancel: (entry: QueueEntry) => void
   onRetry: (entry: QueueEntry, printerId?: string) => void
   onReassign: (entry: QueueEntry, printerId: string) => void
 }) {
@@ -52,13 +59,14 @@ export function PrintQueueScreen({
             </CardHeader>
             <CardContent className="flex flex-wrap items-center gap-2">
               {entry.error ? <p className="w-full text-caption text-destructive">{entry.error}</p> : null}
-              {entry.state === "failed" || isStuckCloudJob(entry.cloud) ? (
+              {entry.superseded ? <p className="w-full text-caption text-ash">{SUPERSEDED_NOTE}</p> : null}
+              {canRetry(entry) ? (
                 <Button size="sm" className="rounded-[12px]" disabled={busy} onClick={() => onRetry(entry)}>
                   {entry.state === "failed" ? "Retry" : "Rescue"}
                 </Button>
               ) : null}
-              {canCancelQueueEntry(entry) ? (
-                <Button size="sm" variant="outline" className="rounded-[12px]" disabled={busy} onClick={() => onCancel(entry.local!.id)}>
+              {cancelTarget(entry) ? (
+                <Button size="sm" variant="outline" className="rounded-[12px]" disabled={busy} onClick={() => onCancel(entry)}>
                   Cancel
                 </Button>
               ) : null}
@@ -99,7 +107,7 @@ function QueueDrawer({
   onClose: () => void
   onRetry: (entry: QueueEntry, printerId?: string) => void
   onReassign: (entry: QueueEntry, printerId: string) => void
-  onCancel: (id: string) => void
+  onCancel: (entry: QueueEntry) => void
 }) {
   const [printerId, setPrinterId] = useState(entry.cloud?.printerId ?? printers.find((printer) => printer.enabled !== false)?.cloudId ?? "")
   const started = entry.local?.startedAt
@@ -126,12 +134,13 @@ function QueueDrawer({
           <p>Progress: {entry.pagesPrinted ?? 0}/{entry.pagesTotal ?? 0}</p>
           <p>Started: {started}</p>
           {entry.error ? <p className="text-destructive">{entry.error}</p> : null}
+          {entry.superseded ? <p className="text-caption text-ash">{SUPERSEDED_NOTE}</p> : null}
           {isStuckCloudJob(entry.cloud) ? (
             <p className="text-caption text-ash">
               Another PC took this job over 15 minutes ago and hasn't reported back. If that PC is off, send the job again here.
             </p>
           ) : null}
-          {entry.state === "failed" || isStuckCloudJob(entry.cloud) ? (
+          {canRetry(entry) ? (
             <div className="space-y-2">
               <select
                 value={printerId}
@@ -154,8 +163,8 @@ function QueueDrawer({
               </Button>
             </div>
           ) : null}
-          {canCancelQueueEntry(entry) ? (
-            <Button variant="outline" className="w-full rounded-[12px]" disabled={busy} onClick={() => onCancel(entry.local!.id)}>
+          {cancelTarget(entry) ? (
+            <Button variant="outline" className="w-full rounded-[12px]" disabled={busy} onClick={() => onCancel(entry)}>
               Cancel
             </Button>
           ) : null}
