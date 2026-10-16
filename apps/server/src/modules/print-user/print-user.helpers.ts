@@ -1,5 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 
+import { parsePageSelection as parseSharedPageSelection } from "@ctrlp/schemas/page-selection";
+
 import { printUserOrigin } from "./print-user-origin";
 
 export const PRINT_USER_COOKIE = "ctrlp_print_user";
@@ -127,50 +129,19 @@ export function guestStorageKey(
   return `uploads/${shopId}/${printUserId}/${docId}.${objectExtension(mimeType)}`;
 }
 
+// The cart, the quote and the printer share one strict grammar (@ctrlp/schemas/page-selection),
+// so a selection the cart accepts always dispatches, and bills exactly the pages that print.
+
+/** The pages a valid selection names; none for an invalid one. */
 export function parsePageSelection(expression: string, pageCount: number): number[] {
-  const pages = new Set<number>();
-
-  for (const token of expression.split(",")) {
-    const value = token.trim();
-    if (!value) {
-      continue;
-    }
-
-    if (/^\d+$/.test(value)) {
-      const page = Number(value);
-      if (page >= 1 && page <= pageCount) {
-        pages.add(page);
-      }
-      continue;
-    }
-
-    const range = value.match(/^(\d+)-(\d+)$/);
-    if (!range) {
-      continue;
-    }
-    const start = Number(range[1]);
-    const end = Number(range[2]);
-    if (start < 1 || end > pageCount || start > end) {
-      continue;
-    }
-    for (let page = start; page <= end; page += 1) {
-      pages.add(page);
-    }
-  }
-
-  return [...pages].sort((left, right) => left - right);
+  const result = parseSharedPageSelection(expression, pageCount);
+  return result.ok ? result.pages : [];
 }
 
+/** A chosen-pages selection: an explicit list or range within the document, not "all". */
 export function isPageSelectionValid(expression: string, pageCount: number) {
-  if (!expression.trim()) {
-    return false;
-  }
-  const pages = parsePageSelection(expression, pageCount);
-  const tokens = expression
-    .split(",")
-    .map((token) => token.trim())
-    .filter(Boolean);
-  return pages.length > 0 && tokens.every((token) => /^\d+$/.test(token) || /^\d+-\d+$/.test(token));
+  const text = expression.trim();
+  return text !== "" && text.toLowerCase() !== "all" && parseSharedPageSelection(text, pageCount).ok;
 }
 
 export function billablePages(pageCount: number, mode: "all" | "selected", expression: string) {
@@ -180,11 +151,13 @@ export function billablePages(pageCount: number, mode: "all" | "selected", expre
   return parsePageSelection(expression, pageCount).length;
 }
 
-export function pageSelectionValue(mode: "all" | "selected", expression: string, pages: number[]) {
+/** What the cart stores: "all", or a valid selection in canonical form (`"1,3,5-8"`). */
+export function pageSelectionValue(mode: "all" | "selected", expression: string, pageCount: number) {
   if (mode === "all") {
     return "all";
   }
-  return expression.trim() || pages.join(",");
+  const parsed = parseSharedPageSelection(expression, pageCount);
+  return parsed.ok ? parsed.canonical : expression.trim();
 }
 
 export function isSessionExpired(expiresAt: Date | string | null | undefined, now = new Date()) {
@@ -221,14 +194,19 @@ export function sessionCookieOptions(isProduction: boolean) {
   };
 }
 
+/**
+ * Whether the cart can be ordered. `documents` is every live cart entry (abandoned uploads already
+ * dropped), not only the READY ones: a file still uploading blocks the order instead of being
+ * silently left out of it.
+ */
 export function canSubmitGuestDocuments(
   documents: Array<{ status: string }>,
-): { ok: true } | { ok: false; reason: string } {
+): { ok: true } | { ok: false; status: 400 | 409; reason: string } {
   if (documents.length < 1) {
-    return { ok: false, reason: "upload at least one document" };
+    return { ok: false, status: 400, reason: "upload at least one document" };
   }
   if (documents.some((document) => document.status !== "READY")) {
-    return { ok: false, reason: "every document must finish uploading first" };
+    return { ok: false, status: 409, reason: "DOCUMENTS_STILL_UPLOADING" };
   }
   return { ok: true };
 }

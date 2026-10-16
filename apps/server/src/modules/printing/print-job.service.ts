@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import { FieldValue, getFirebaseFirestore } from "@ctrlp/firebase/firestore";
+import { getObjectSize, isMissingObjectError } from "@ctrlp/firebase";
+import { FieldValue, getFirebaseFirestore, type DocumentReference } from "@ctrlp/firebase/firestore";
 import type {
+  CancelPrintJobRequestInput,
   DispatchPrintJobRequestInput,
   PrinterOffered,
   PrinterTelemetryRequestInput,
@@ -19,8 +21,8 @@ import {
 import type { ShopPrincipal } from "@ctrlp/types";
 
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
-import { getShopOrder } from "@/src/modules/orders/order.service";
-import { decideRetry } from "@/src/modules/printing/job-model";
+import { getShopOrder, type OrderDto } from "@/src/modules/orders/order.service";
+import { decideCancel, decideRetry } from "@/src/modules/printing/job-model";
 import { parsePageSelection } from "@/src/modules/printing/page-selection";
 import { ringShop } from "@/src/modules/realtime/doorbell";
 import { invalidateShopConfig } from "@/src/modules/shops/shop-config.service";
@@ -58,11 +60,13 @@ type PrintSettings = {
   colorMode: "BW" | "COLOR";
   copies: number;
   paperSize: "A4" | "A3";
+  /** The agent's executor reads this from `resolvedSettings` (WindowsDocumentPrintExecutor). */
+  orientation: "PORTRAIT" | "LANDSCAPE";
   pageSelection: string;
   inputTray: string;
 };
 
-const REQUIRED_KEYS = ["colorMode", "copies", "paperSize", "pageSelection", "inputTray"] as const;
+const REQUIRED_KEYS = ["colorMode", "copies", "paperSize", "orientation", "pageSelection", "inputTray"] as const;
 
 export function printerIdFor(name: string) {
   return createHash("sha256").update(name).digest("hex").slice(0, 32);
@@ -100,6 +104,7 @@ function defaultSettings(isColorCapable: boolean): PrintSettings {
     colorMode: isColorCapable ? "COLOR" : "BW",
     copies: 1,
     paperSize: "A4",
+    orientation: "PORTRAIT",
     pageSelection: "all",
     inputTray: "AUTO_SELECT",
   };
@@ -200,11 +205,10 @@ async function refreshShopOfferedCapabilities(shopId: string) {
 function readPreset(value: unknown, fallback: PrintSettings) {
   const settings = asSettings(value, fallback);
   const record = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-  const orientation = record.orientation === "LANDSCAPE" ? "LANDSCAPE" : "PORTRAIT";
   const quality = ["DRAFT_300DPI", "STANDARD_600DPI", "HIGH_1200DPI"].includes(String(record.printQualityDpi))
     ? String(record.printQualityDpi)
     : "STANDARD_600DPI";
-  return { ...settings, orientation, printQualityDpi: quality, pageSelection: settings.pageSelection || "all" };
+  return { ...settings, printQualityDpi: quality, pageSelection: settings.pageSelection || "all" };
 }
 
 function asSettings(value: unknown, fallback: PrintSettings): PrintSettings {
@@ -213,9 +217,11 @@ function asSettings(value: unknown, fallback: PrintSettings): PrintSettings {
   const copies =
     typeof record.copies === "number" && Number.isInteger(record.copies) ? record.copies : fallback.copies;
   const paperSize = record.paperSize === "A3" || record.paperSize === "A4" ? record.paperSize : fallback.paperSize;
+  const orientation =
+    record.orientation === "LANDSCAPE" || record.orientation === "PORTRAIT" ? record.orientation : fallback.orientation;
   const pageSelection = typeof record.pageSelection === "string" ? record.pageSelection : fallback.pageSelection;
   const inputTray = typeof record.inputTray === "string" ? record.inputTray : fallback.inputTray;
-  return { colorMode, copies, paperSize, pageSelection, inputTray };
+  return { colorMode, copies, paperSize, orientation, pageSelection, inputTray };
 }
 
 function timestampToIso(value: unknown) {
@@ -622,6 +628,13 @@ export async function dispatchPrintJob(
   });
 
   if (created) {
+    // A document the operator dispatched by hand after queueing failed is no longer an error.
+    if (order.queueErrors.some((entry) => entry.documentId === input.documentId)) {
+      await db.doc(`shops/${user.shopId}/orders/${orderId}`).update({
+        queueErrors: order.queueErrors.filter((entry) => entry.documentId !== input.documentId),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
     await ringShop(user.shopId, {
       work: jobAgentId !== options.quietAgentId,
       event: "jobs_queued",
@@ -652,6 +665,39 @@ export async function listOrderPrintJobs(user: ShopPrincipal, orderId: string) {
   };
 }
 
+type OrderDocumentFile = { id?: string; docId?: string; storageKey?: string; storageBackend?: string; shreddedAt?: string | null };
+
+function findOrderDocument(documents: unknown, documentId: string) {
+  if (!Array.isArray(documents) || !documentId) {
+    return undefined;
+  }
+  return (documents as OrderDocumentFile[]).find((entry) => entry.docId === documentId || entry.id === documentId);
+}
+
+/**
+ * 409 `DOCUMENT_MISSING` when the job's stored file is gone from the bucket, so a retry is refused
+ * instead of queueing a job that can only fail again. Storage being unreachable is not proof the
+ * file is gone; the retry goes ahead and the agent's download decides.
+ */
+async function assertJobFileInStorage(
+  orderRef: DocumentReference,
+  jobRef: DocumentReference,
+) {
+  const [jobSnap, orderSnap] = await Promise.all([jobRef.get(), orderRef.get()]);
+  const document = jobSnap.exists ? findOrderDocument(orderSnap.get("documents"), String(jobSnap.get("documentId") ?? "")) : undefined;
+  // Missing jobs, documents and shredded files are refused inside the transaction.
+  if (!document?.storageKey || document.shreddedAt || document.storageBackend !== "s3") {
+    return;
+  }
+  try {
+    await getObjectSize(document.storageKey);
+  } catch (error) {
+    if (isMissingObjectError(error)) {
+      throw new AuthServiceError(409, "DOCUMENT_MISSING");
+    }
+  }
+}
+
 function millis(value: unknown) {
   if (value && typeof value === "object" && "toMillis" in value) {
     return (value as { toMillis: () => number }).toMillis();
@@ -678,6 +724,8 @@ export async function retryPrintJob(
   let orderNumber = "";
   let jobAgentId = "";
 
+  await assertJobFileInStorage(orderRef, jobRef);
+
   await db.runTransaction(async (transaction) => {
     retried = false;
     const [jobSnap, orderSnap, printerSnap] = await Promise.all([
@@ -701,6 +749,22 @@ export async function retryPrintJob(
     }
     if (decision.kind === "reject") {
       throw new AuthServiceError(409, decision.reason);
+    }
+
+    // A job is only worth queueing again if its order still prints and its file is still there.
+    const orderStatus = orderSnap.exists ? String(orderSnap.get("status") ?? "") : "";
+    if (orderStatus !== "SHOP_ACCEPTED" && orderStatus !== "PRINTING") {
+      throw new AuthServiceError(409, "ORDER_NOT_ACCEPTED");
+    }
+    const document = findOrderDocument(orderSnap.get("documents"), String(jobSnap.get("documentId") ?? ""));
+    if (!document) {
+      throw new AuthServiceError(404, "DOCUMENT_NOT_FOUND");
+    }
+    if (document.shreddedAt) {
+      throw new AuthServiceError(409, "DOCUMENT_SHREDDED");
+    }
+    if (!document.storageKey) {
+      throw new AuthServiceError(409, "DOCUMENT_NOT_READY");
     }
 
     const reroute: Record<string, unknown> = {};
@@ -751,6 +815,61 @@ export async function retryPrintJob(
 }
 
 /**
+ * Stops a job: one waiting, one that failed, or one a PC claimed and then went quiet (the rescue
+ * rule). The lease is cleared, so the PC learns from its next `sync` (`revoked`) that the job is no
+ * longer its to print, and a late report from it gets `lease_mismatch`. The document can be
+ * dispatched again later; nothing else about the order changes.
+ */
+export async function cancelPrintJob(
+  user: ShopPrincipal,
+  orderId: string,
+  jobId: string,
+  input: CancelPrintJobRequestInput,
+) {
+  const db = getFirebaseFirestore();
+  const jobRef = db.doc(`shops/${user.shopId}/orders/${orderId}/printJobs/${jobId}`);
+  let cancelled = false;
+  let heldByAgent = false;
+
+  await db.runTransaction(async (transaction) => {
+    cancelled = false;
+    const jobSnap = await transaction.get(jobRef);
+    if (!jobSnap.exists) {
+      throw new AuthServiceError(404, "PRINT_JOB_NOT_FOUND");
+    }
+    const status = String(jobSnap.get("status") ?? "");
+    const decision = decideCancel({ status, claimedAtMs: millis(jobSnap.get("claimedAt")), nowMs: Date.now() });
+    if (decision.kind === "replay") {
+      return;
+    }
+    if (decision.kind === "reject") {
+      throw new AuthServiceError(409, decision.reason);
+    }
+
+    const now = FieldValue.serverTimestamp();
+    transaction.update(jobRef, {
+      status: "CANCELLED",
+      leaseId: null,
+      claimedAt: null,
+      errorCode: "CANCELLED_BY_SHOP",
+      errorMessage: input.reason ?? null,
+      cancelledAt: now,
+      cancelledByUserId: user.shopUserId,
+      completedAt: now,
+      updatedAt: now,
+    });
+    heldByAgent = status === "DISPATCHING" || status === "PRINTING";
+    cancelled = true;
+  });
+
+  if (cancelled) {
+    // A PC that holds the job hears about it on its next sync; `work` makes that sync happen now.
+    await ringShop(user.shopId, { work: heldByAgent, event: "order_updated", orderId, orderNumber: "" });
+  }
+  return toPrintJobDto(await jobRef.get());
+}
+
+/**
  * Queues one job per document of an accepted order. Printers on `preferAgentId` (the PC that
  * accepted) are chosen first. Jobs routed to `quietAgentId` don't ring `work`: that agent is
  * already syncing and claims them in the same request.
@@ -761,6 +880,7 @@ export async function queueIncomingOrder(
   options: { preferAgentId?: string; quietAgentId?: string } = {},
 ) {
   const order = await getShopOrder(user, orderId);
+  const failures: OrderDto["queueErrors"] = [];
   for (const document of order.documents) {
     const record = document as {
       id?: string;
@@ -769,7 +889,13 @@ export async function queueIncomingOrder(
       copies?: number;
       paperSize?: "A4" | "A3";
       pageCount?: number;
-      config?: { colorMode?: "BW" | "COLOR"; copies?: number; paperSize?: "A4" | "A3"; pageSelection?: string };
+      config?: {
+        colorMode?: "BW" | "COLOR";
+        copies?: number;
+        paperSize?: "A4" | "A3";
+        orientation?: "PORTRAIT" | "LANDSCAPE";
+        pageSelection?: string;
+      };
     };
     const documentId = record.docId || record.id;
     if (!documentId) {
@@ -789,13 +915,36 @@ export async function queueIncomingOrder(
           colorMode,
           copies: record.config?.copies ?? record.copies ?? 1,
           paperSize,
+          // Older orders carry no orientation; the printer's preset applies to those.
+          orientation: record.config?.orientation,
           pageSelection: record.config?.pageSelection ?? "all",
         },
       }, { quietAgentId: options.quietAgentId });
     } catch (error) {
       console.error("Could not queue print job for document", documentId, error);
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push({
+        documentId,
+        // Service errors carry a code (PRINTER_INCOMPATIBLE) or a sentence; keep both readable.
+        code: /^[A-Z][A-Z_]+$/.test(message) ? message : "QUEUE_FAILED",
+        message,
+        at: new Date().toISOString(),
+      });
     }
   }
+
+  // The shop sees on the order which documents did not reach a printer, and why, instead of an
+  // order that sits in PRINTING with a document that never prints. A later run clears them.
+  if (failures.length > 0 || order.queueErrors.length > 0) {
+    await getFirebaseFirestore().doc(`shops/${user.shopId}/orders/${orderId}`).update({
+      queueErrors: failures,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  }
+  if (failures.length > 0) {
+    await ringShop(user.shopId, { work: false, event: "order_updated", orderId, orderNumber: order.orderNumber });
+  }
+  return { failures };
 }
 
 export async function writePrinterTelemetry(

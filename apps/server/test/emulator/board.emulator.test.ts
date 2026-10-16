@@ -57,6 +57,21 @@ describe("getBoard: full board", () => {
   });
 });
 
+describe("getBoard: online orders awaiting payment", () => {
+  it("leaves them out of the full board and of deltas until they are paid", async () => {
+    await seedOrder(shopId, "unpaid", { payment: { method: "ONLINE", status: "PENDING" }, updatedAt: secondsAgo(10) });
+    await seedOrder(shopId, "paid", { payment: { method: "ONLINE", status: "PAID" }, updatedAt: secondsAgo(10) });
+    await seedOrder(shopId, "cash", { payment: { method: "CASH", status: "PENDING" }, updatedAt: secondsAgo(10) });
+
+    const full = await getBoard(principalFor(shopId), undefined);
+    assert.deepEqual(ids(full.orders).sort(), ["cash", "paid"]);
+
+    const delta = await getBoard(principalFor(shopId), secondsAgo(60).toISOString());
+    assert.equal(delta.full, false);
+    assert.deepEqual(ids(delta.orders).sort(), ["cash", "paid"]);
+  });
+});
+
 describe("getBoard: deltas", () => {
   it("returns what changed since the cursor, with a 5 s overlap", async () => {
     const since = secondsAgo(60).toISOString();

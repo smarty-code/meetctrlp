@@ -12,6 +12,21 @@ import {
 } from "../data/tracking-repository";
 import { TRACKING_COPY, TRACKING_TIMINGS } from "../data/tracking-constants";
 import { useShopSession } from "../components/shop-session-provider";
+import { ApiError, cancelGuestOrder } from "../lib/cloud";
+import { clearActiveTransaction, payPlacedOrder } from "../data/payment-repository";
+
+/** What the guest can still do to an order the shop has not taken on yet. */
+export type PendingOrderAction = "pay" | "cancel";
+
+function cancelErrorMessage(error: unknown) {
+  if (error instanceof ApiError && error.message === "ORDER_ALREADY_PAID") {
+    return "This order is already paid, so it can't be cancelled here. Ask the shop.";
+  }
+  if (error instanceof ApiError && error.message === "ORDER_NOT_CANCELLABLE") {
+    return "The shop has already started on this order. Ask the shop to cancel it.";
+  }
+  return "Couldn't cancel the order. Check your connection and try again.";
+}
 
 /**
  * Live order tracking (TRAFFIC_SCALING_V2_IMPLEMENTATION.md 11.1): signs in with the session's guest
@@ -164,7 +179,55 @@ export function useOrderTracking() {
     router.push(routes.home);
   }, [router, routes.home]);
 
+  // Until the shop accepts it, an unpaid order is still the guest's: an online one can be paid
+  // (again), and any unpaid one cancelled. The server enforces both.
+  const isUnpaidSubmitted = order?.status === "SUBMITTED" && order.paymentState !== "SUCCESS";
+  const canPayNow = isUnpaidSubmitted && order?.paymentMethod === "ONLINE";
+  const canCancel = isUnpaidSubmitted;
+  const [pendingAction, setPendingAction] = useState<PendingOrderAction | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const payNow = useCallback(async () => {
+    if (!order || pendingAction) return;
+    setPendingAction("pay");
+    setActionError(null);
+    const paid = await payPlacedOrder(order.orderId);
+    if (!isMountedRef.current) return;
+    if (paid) {
+      clearActiveTransaction();
+      // The live listener shows the paid order; without one, read it once.
+      if (!isLive) await loadOnce();
+    } else {
+      setActionError("Payment didn't go through. Your order is saved; try again.");
+    }
+    if (isMountedRef.current) setPendingAction(null);
+  }, [isLive, loadOnce, order, pendingAction]);
+
+  const cancelOrder = useCallback(async () => {
+    if (!order || pendingAction) return;
+    setPendingAction("cancel");
+    setActionError(null);
+    try {
+      const tracking = await cancelGuestOrder(order.orderId);
+      clearActiveTransaction();
+      if (isMountedRef.current) setOrder(mapTrackingToOrder(tracking));
+    } catch (err) {
+      if (!isMountedRef.current) return;
+      setActionError(cancelErrorMessage(err));
+      // The order may have moved on (accepted, paid); show where it is now.
+      if (!isLive) void loadOnce();
+    } finally {
+      if (isMountedRef.current) setPendingAction(null);
+    }
+  }, [isLive, loadOnce, order, pendingAction]);
+
   return {
+    canPayNow,
+    canCancel,
+    pendingAction,
+    actionError,
+    payNow,
+    cancelOrder,
     order,
     isLoading,
     isRefreshing,

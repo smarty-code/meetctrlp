@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { STUCK_JOB_MS, allDocumentsDone, decideReport, decideRetry } from "./job-model.ts";
+import { STUCK_JOB_MS, allDocumentsDone, decideCancel, decideReport, decideRetry, revokedReason } from "./job-model.ts";
 
 describe("job reports", () => {
   const job = { status: "DISPATCHING", leaseId: "lease-1", agentId: "agent-1" };
@@ -68,5 +68,42 @@ describe("job retry", () => {
   it("never retries a completed or cancelled job", () => {
     assert.deepEqual(decideRetry({ status: "COMPLETED", claimedAtMs: 0, samePrinter: true, nowMs: now }), { kind: "reject", reason: "PRINT_JOB_STATUS_CONFLICT" });
     assert.deepEqual(decideRetry({ status: "CANCELLED", claimedAtMs: 0, samePrinter: true, nowMs: now }), { kind: "reject", reason: "PRINT_JOB_STATUS_CONFLICT" });
+  });
+});
+
+describe("job cancel", () => {
+  const now = 10 * STUCK_JOB_MS;
+
+  it("cancels waiting and failed jobs, and a claimed one only once its PC has gone quiet", () => {
+    assert.deepEqual(decideCancel({ status: "QUEUED", claimedAtMs: 0, nowMs: now }), { kind: "apply" });
+    assert.deepEqual(decideCancel({ status: "FAILED", claimedAtMs: 0, nowMs: now }), { kind: "apply" });
+    assert.deepEqual(
+      decideCancel({ status: "DISPATCHING", claimedAtMs: now - 1000, nowMs: now }),
+      { kind: "reject", reason: "PRINT_JOB_STILL_ACTIVE" },
+    );
+    assert.deepEqual(decideCancel({ status: "DISPATCHING", claimedAtMs: now - STUCK_JOB_MS, nowMs: now }), { kind: "apply" });
+  });
+
+  it("treats a cancelled job as a replay and never cancels a completed one", () => {
+    assert.deepEqual(decideCancel({ status: "CANCELLED", claimedAtMs: 0, nowMs: now }), { kind: "replay" });
+    assert.deepEqual(decideCancel({ status: "COMPLETED", claimedAtMs: 0, nowMs: now }), { kind: "reject", reason: "PRINT_JOB_STATUS_CONFLICT" });
+  });
+});
+
+describe("revoked leases", () => {
+  const held = { leaseId: "lease-1" };
+  const job = { exists: true, status: "DISPATCHING", leaseId: "lease-1", agentId: "agent-1" };
+
+  it("keeps a lease the agent still owns", () => {
+    assert.equal(revokedReason(job, held, "agent-1"), null);
+  });
+
+  it("revokes a lease whose job is gone, cancelled, finished or rescued", () => {
+    assert.equal(revokedReason({ ...job, exists: false }, held, "agent-1"), "NOT_FOUND");
+    assert.equal(revokedReason({ ...job, status: "CANCELLED", leaseId: null }, held, "agent-1"), "CANCELLED");
+    assert.equal(revokedReason({ ...job, status: "COMPLETED" }, held, "agent-1"), "FINISHED");
+    assert.equal(revokedReason({ ...job, status: "QUEUED", leaseId: null }, held, "agent-1"), "RESCUED");
+    assert.equal(revokedReason({ ...job, leaseId: "lease-2" }, held, "agent-1"), "RESCUED");
+    assert.equal(revokedReason({ ...job, agentId: "agent-2" }, held, "agent-1"), "RESCUED");
   });
 });

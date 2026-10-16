@@ -5,8 +5,9 @@ import { UploadedFileItem } from "../types/upload"
 import { customizeConfig } from "../data/customize-repository"
 import { DocumentCollageIllustration } from "./illustrations/document-collage-illustration"
 import { Button } from "@ctrlp/ui/button"
-import { Upload } from "lucide-react"
+import { ArrowRight, Upload } from "lucide-react"
 import { UploadProgressDrawer } from "./upload-progress-drawer"
+import { UploadFileList } from "./upload-file-list"
 
 interface DocumentsUploadCardProps {
   isAvailable?: boolean
@@ -18,6 +19,15 @@ interface DocumentsUploadCardProps {
   onFilesSelected: (files: FileList | null) => void
   onRemoveFile: (fileId: string) => void
   onRetryFile: (fileId: string) => void
+  /** Stops every upload in flight (the drawer's Cancel Upload). */
+  onCancelUploads: () => void
+  onClearAll: () => void
+  onContinue: () => void
+  /** At least one document is in the cart and nothing is uploading. */
+  canContinue?: boolean
+  /** The cart is still loading; picking now would count against an empty list. */
+  isCartLoading?: boolean
+  isClearing?: boolean
   isUploadingOverall?: boolean
   /** Every file is uploaded and the page is about to move on to customize. */
   isUploadComplete?: boolean
@@ -37,6 +47,13 @@ export const DocumentsUploadCard: React.FC<DocumentsUploadCardProps> = ({
   uploadedFiles,
   onFilesSelected,
   onRemoveFile,
+  onRetryFile,
+  onCancelUploads,
+  onClearAll,
+  onContinue,
+  canContinue = false,
+  isCartLoading = false,
+  isClearing = false,
   isUploadingOverall = false,
   isUploadComplete = false,
   isCheckingUploads = false,
@@ -67,23 +84,17 @@ export const DocumentsUploadCard: React.FC<DocumentsUploadCardProps> = ({
           ? `Upload your documents for instant A4 prints starting at ₹${startingPrice} per page.`
           : "Upload your documents for instant counter collection.")
 
+  const canPick = isAvailable && !isCartLoading && !isClearing
+  const hasFiles = uploadedFiles.length > 0
+
   const handleButtonClick = () => {
-    if (!isAvailable) return
+    if (!canPick) return
     fileInputRef.current?.click()
   }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onFilesSelected(e.target.files)
     if (e.target) e.target.value = ""
-  }
-
-  const handleCancelUpload = () => {
-    // Remove all uploading files from the list to cancel the upload round.
-    // This uses the existing onRemoveFile callback per file so the parent
-    // state is the single source of truth and any server-side cleanup runs.
-    uploadedFiles
-      .filter((file) => file.status === "uploading")
-      .forEach((file) => onRemoveFile(file.id))
   }
 
   return (
@@ -115,41 +126,60 @@ export const DocumentsUploadCard: React.FC<DocumentsUploadCardProps> = ({
             accept={customizeConfig.acceptedFileTypes}
             className="hidden"
             onChange={handleInputChange}
-            disabled={!isAvailable}
+            disabled={!canPick}
           />
 
-          {/* Primary CTA using design-system @ctrlp/ui Button */}
-          <div className="mt-5 sm:mt-6">
+          <UploadFileList
+            files={uploadedFiles}
+            isClearing={isClearing}
+            onRemove={onRemoveFile}
+            onRetry={onRetryFile}
+            onClearAll={onClearAll}
+          />
+
+          {/* With documents in the cart, Continue is the primary action and adding more is secondary. */}
+          <div className="mt-5 flex flex-col gap-3 sm:mt-6">
+            {hasFiles && (
+              <Button
+                type="button"
+                onClick={onContinue}
+                disabled={!canContinue}
+                size="default"
+                className="relative h-12 w-full overflow-hidden rounded-xl text-[15px] font-bold sm:h-13 sm:text-[16px] md:h-14 md:text-[17px]"
+              >
+                <span className="flex items-center gap-2">
+                  <span>Continue</span>
+                  <ArrowRight className="size-5 stroke-[2.5]" />
+                </span>
+              </Button>
+            )}
             <Button
               type="button"
               onClick={handleButtonClick}
-              disabled={!isAvailable}
+              disabled={!canPick}
+              variant={hasFiles ? "outline" : "default"}
               size="default"
-              className="relative h-12 w-full overflow-hidden rounded-xl text-[15px] font-bold sm:h-13 sm:text-[16px] md:h-14 md:text-[17px]"
+              className={`relative h-12 w-full overflow-hidden rounded-xl text-[15px] font-bold sm:h-13 sm:text-[16px] md:h-14 md:text-[17px] ${
+                hasFiles ? "border-2 text-midnight" : ""
+              }`}
             >
               <span className="flex items-center gap-2">
                 <Upload className="size-5 stroke-[2.5]" />
-                <span>
-                  {uploadedFiles.length > 0
-                    ? "Upload More Documents"
-                    : "Upload Document"}
-                </span>
+                <span>{hasFiles ? "Upload More Documents" : "Upload Document"}</span>
               </span>
             </Button>
           </div>
-
-
         </div>
       </div>
 
-      {/* Upload progress bottom sheet — replaces the old inline file list */}
+      {/* Upload progress bottom sheet; the list above shows each file once it closes. */}
       <UploadProgressDrawer
         open={showDrawer}
         documentCount={uploadingCount}
         progress={uploadProgress}
         isComplete={isUploadComplete}
         isChecking={isCheckingUploads}
-        onCancel={handleCancelUpload}
+        onCancel={onCancelUploads}
       />
     </>
   )

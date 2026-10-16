@@ -53,22 +53,31 @@ export type FakeS3 = {
   deleted: string[];
   /** Keys whose delete is refused with 403, as a storage outage would be. */
   failing: Set<string>;
+  /** Keys a HEAD reports as not found (404); every other key exists. */
+  missing: Set<string>;
   close: () => Promise<void>;
 };
 
 /**
- * A local stand-in for the S3 bucket that answers deletes and records them. Presigned download links
- * are signed offline, so they need only the endpoint and keys set here.
+ * A local stand-in for the S3 bucket that answers deletes (and records them) and HEAD requests.
+ * Presigned download links are signed offline, so they need only the endpoint and keys set here.
  */
 export async function startFakeS3(): Promise<FakeS3> {
   const deleted: string[] = [];
   const failing = new Set<string>();
+  const missing = new Set<string>();
   const server = createServer((request, response) => {
     request.resume();
     // Path-style requests: /{bucket}/{key}.
     const segments = new URL(request.url ?? "/", "http://fake-s3").pathname.split("/").slice(2);
     const key = segments.map(decodeURIComponent).join("/");
 
+    if (request.method === "HEAD") {
+      const gone = missing.has(key) || deleted.includes(key);
+      response.writeHead(gone ? 404 : 200, gone ? {} : { "Content-Length": "2048", "Content-Type": "application/pdf" });
+      response.end();
+      return;
+    }
     if (request.method !== "DELETE") {
       response.writeHead(501).end();
       return;
@@ -93,6 +102,7 @@ export async function startFakeS3(): Promise<FakeS3> {
   return {
     deleted,
     failing,
+    missing,
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }

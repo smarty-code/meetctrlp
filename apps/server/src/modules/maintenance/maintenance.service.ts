@@ -2,11 +2,18 @@
 import { deleteObject, getFirebaseAuth, isMissingObjectError } from "@ctrlp/firebase";
 import { getFirebaseFirestore } from "@ctrlp/firebase/firestore";
 
-import { shredOrderDocument, type StoredOrderDocument } from "@/src/modules/documents/document.service";
+import {
+  shredAllOrderDocuments,
+  shredOrderDocument,
+  type StoredOrderDocument,
+} from "@/src/modules/documents/document.service";
+import { cancelUnpaidOrder } from "@/src/modules/orders/order.service";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TRACKING_KEEP_MS = 30 * DAY_MS;
 const BATCH = 300;
+/** An online order still unpaid this long after checkout is abandoned. */
+export const UNPAID_ONLINE_ORDER_TTL_MS = 30 * 60 * 1000;
 
 /** 1. Tracking copies of orders that finished more than 30 days ago. */
 async function deleteOldTrackingCopies() {
@@ -101,17 +108,57 @@ async function deleteFilesOfDroppedOrders() {
   return files;
 }
 
+/**
+ * 4. Online orders whose payment never came: cancelled once the payment window has passed, and
+ * their files deleted. The shop never saw them (unpaid online orders stay off the board). One
+ * that was paid or accepted since the query is skipped by the cancel's own checks.
+ */
+async function cancelUnpaidOnlineOrders() {
+  let snapshot;
+  try {
+    snapshot = await getFirebaseFirestore()
+      .collectionGroup("orders")
+      .where("status", "==", "SUBMITTED")
+      .where("payment.method", "==", "ONLINE")
+      .where("payment.status", "==", "PENDING")
+      .where("createdAt", "<", new Date(Date.now() - UNPAID_ONLINE_ORDER_TTL_MS))
+      .limit(BATCH)
+      .get();
+  } catch (error) {
+    // Most likely the composite index is not deployed yet; the other clean-up steps still run.
+    console.error("Failed to query unpaid online orders", error);
+    return { cancelled: 0, found: 0 };
+  }
+
+  let cancelled = 0;
+  for (const order of snapshot.docs) {
+    const shopId = String(order.get("shopId") ?? order.ref.parent.parent?.id ?? "");
+    try {
+      const { changed } = await cancelUnpaidOrder(shopId, order.id, { reason: "PAYMENT_TIMEOUT" });
+      if (changed) {
+        cancelled += 1;
+        await shredAllOrderDocuments(shopId, order.id);
+      }
+    } catch (error) {
+      console.error("Failed to cancel an unpaid online order", shopId, order.id, error);
+    }
+  }
+  return { cancelled, found: snapshot.size };
+}
+
 export async function runDailyMaintenance() {
   const trackingCopies = await deleteOldTrackingCopies();
   const guests = await deleteExpiredGuestSessions();
+  const unpaid = await cancelUnpaidOnlineOrders();
   const droppedOrderFiles = await deleteFilesOfDroppedOrders();
   const summary = {
     trackingCopies,
     guestSessions: guests.sessions,
     guestFiles: guests.files,
+    unpaidOrdersCancelled: unpaid.cancelled,
     droppedOrderFiles,
     // Each step handles at most 300 items; run again if any number reached it.
-    more: trackingCopies >= BATCH || guests.sessions >= BATCH,
+    more: trackingCopies >= BATCH || guests.sessions >= BATCH || unpaid.found >= BATCH,
   };
   console.log(JSON.stringify({ severity: "INFO", message: "maintenance_daily", ...summary }));
   return summary;

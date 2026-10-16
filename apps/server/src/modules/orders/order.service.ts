@@ -80,11 +80,15 @@ export type OrderDto = {
       colorMode: "BW" | "COLOR";
       copies: number;
       paperSize: "A4" | "A3";
+      /** Absent on orders placed before orientation was carried to the printer. */
+      orientation?: "PORTRAIT" | "LANDSCAPE";
       pageSelection: string;
       billablePages?: number;
       inputTray: null;
     };
   }>;
+  /** Documents that could not be queued when the order was accepted, so the shop can see why. */
+  queueErrors: Array<{ documentId: string; code: string; message: string; at: string }>;
   items: Array<{
     description: string;
     quantity: number;
@@ -228,6 +232,24 @@ function parsePrint(value: unknown): OrderDto["print"] {
   };
 }
 
+function parseQueueErrors(value: unknown): OrderDto["queueErrors"] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((entry) => {
+    const record = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : null;
+    if (!record || typeof record.documentId !== "string") {
+      return [];
+    }
+    return [{
+      documentId: record.documentId,
+      code: typeof record.code === "string" ? record.code : "QUEUE_FAILED",
+      message: typeof record.message === "string" ? record.message : "",
+      at: typeof record.at === "string" ? record.at : "",
+    }];
+  });
+}
+
 function printJobPath(shopId: string, orderId: string) {
   return path.join(process.cwd(), "data", "print-jobs", shopId, orderId);
 }
@@ -287,6 +309,7 @@ export function toOrderDto(snapshot: { id: string; data: () => Record<string, un
       rejectedAt: timestampToIso(lifecycle.rejectedAt),
       cancelledAt: timestampToIso(lifecycle.cancelledAt),
     },
+    queueErrors: parseQueueErrors(data.queueErrors),
     print: parsePrint(data.print),
     createdAt: timestampToIso(data.createdAt),
     updatedAt: timestampToIso(data.updatedAt),
@@ -421,23 +444,6 @@ export async function getShopOrderById(shopId: string, orderId: string) {
   return toOrderDto(snapshot);
 }
 
-/** Returns the order a guest already placed with this idempotency key, if any. */
-export async function findPrintUserOrderByIdempotencyKey(
-  shopId: string,
-  printUserId: string,
-  idempotencyKey: string,
-) {
-  const keySnap = await getFirebaseFirestore()
-    .doc(`shops/${shopId}/idempotencyKeys/${idempotencyKey}`)
-    .get();
-  const orderId = keySnap.get("orderId");
-  if (!keySnap.exists || keySnap.get("action") !== "print-user-submit" || typeof orderId !== "string") {
-    return null;
-  }
-  const order = await getShopOrderById(shopId, orderId);
-  return order.printUserId === printUserId ? order : null;
-}
-
 export type PrintUserCheckoutDocument = {
   id: string;
   originalFilename: string;
@@ -449,19 +455,18 @@ export type PrintUserCheckoutDocument = {
   copies: number;
   colorMode: "BW" | "COLOR";
   paperSize: "A4" | "A3";
+  orientation: "PORTRAIT" | "LANDSCAPE";
+  /** Canonical (`"all"` or `"1,3,5-8"`), already checked against `pageCount`. */
   pageSelection: string;
   billablePages: number;
 };
 
-export async function createPrintUserOrder(input: {
-  shopId: string;
-  printUserId: string;
-  paymentMethod: "CASH" | "ONLINE";
-  idempotencyKey: string;
-  documents: PrintUserCheckoutDocument[];
-}) {
-  const config = await getShopConfigByShopId(input.shopId);
-  const documents = input.documents.map((document) => {
+/** Prices a guest checkout at the shop's current rates: one order line per document. */
+export function pricePrintUserDocuments(
+  config: Awaited<ReturnType<typeof getShopConfigByShopId>>,
+  documents: PrintUserCheckoutDocument[],
+) {
+  const lines = documents.map((document) => {
     const quote = quoteDocumentPrint(config, {
       billablePages: document.billablePages,
       copies: document.copies,
@@ -491,6 +496,7 @@ export async function createPrintUserOrder(input: {
           colorMode: document.colorMode,
           copies: document.copies,
           paperSize: document.paperSize,
+          orientation: document.orientation,
           pageSelection: document.pageSelection,
           billablePages: document.billablePages,
           inputTray: null,
@@ -504,95 +510,91 @@ export async function createPrintUserOrder(input: {
       },
     };
   });
-  const subtotalMinorUnits = documents.reduce((sum, line) => sum + line.item.totalPricePaise, 0);
-  const db = getFirebaseFirestore();
-  const shopRef = db.doc(`shops/${input.shopId}`);
-  const keyRef = db.doc(`shops/${input.shopId}/idempotencyKeys/${input.idempotencyKey}`);
-  const orderId = randomUUID();
-  const orderRef = ordersCollection(input.shopId).doc(orderId);
+  return {
+    lines,
+    subtotalMinorUnits: lines.reduce((sum, line) => sum + line.item.totalPricePaise, 0),
+  };
+}
+
+export type PricedPrintUserOrder = ReturnType<typeof pricePrintUserDocuments>;
+
+/**
+ * Writes a new guest order in the caller's transaction: the shop's next order number, the order, its
+ * tracking copy and the idempotency key. `shop` is the shop document that transaction already read,
+ * since Firestore needs every read before the first write. The caller rings the shop after commit.
+ */
+export function writePrintUserOrder(
+  transaction: Transaction,
+  shop: { ref: DocumentReference; get: (field: string) => unknown },
+  input: {
+    orderId: string;
+    shopId: string;
+    printUserId: string;
+    paymentMethod: "CASH" | "ONLINE";
+    idempotencyKey: string;
+    priced: PricedPrintUserOrder;
+  },
+) {
+  const { lines, subtotalMinorUnits } = input.priced;
   const now = FieldValue.serverTimestamp();
-  let reusedOrderId: string | null = null;
+  const currentSequence = shop.get("orderSequence");
+  const sequence =
+    typeof currentSequence === "number" && Number.isInteger(currentSequence)
+      ? currentSequence + 1
+      : FIRST_ORDER_SEQUENCE + 1;
+  const orderNumber = `ORD-${sequence}`;
+  const pickupCode = String(sequence % 10_000).padStart(4, "0");
 
-  await db.runTransaction(async (transaction) => {
-    const keySnap = await transaction.get(keyRef);
-    if (keySnap.exists) {
-      if (keySnap.get("action") === "print-user-submit" && typeof keySnap.get("orderId") === "string") {
-        reusedOrderId = keySnap.get("orderId") as string;
-        return;
-      }
-      throw new AuthServiceError(409, "IDEMPOTENCY_KEY_REUSED");
-    }
-
-    const shop = await transaction.get(shopRef);
-
-    if (!shop.exists) {
-      throw new AuthServiceError(404, "shop not found");
-    }
-
-    const currentSequence = shop.get("orderSequence");
-    const sequence =
-      typeof currentSequence === "number" && Number.isInteger(currentSequence)
-        ? currentSequence + 1
-        : FIRST_ORDER_SEQUENCE + 1;
-    const orderNumber = `ORD-${sequence}`;
-    const pickupCode = String(sequence % 10_000).padStart(4, "0");
-
-    transaction.update(shopRef, {
-      orderSequence: sequence,
-      updatedAt: now,
-    });
-    const order = {
-      id: orderId,
-      orderNumber,
-      shopId: input.shopId,
-      channel: "PRINT_USER" satisfies OrderChannel,
-      printUserId: input.printUserId,
-      customerPhone: null,
-      status: "SUBMITTED",
-      pickupCode,
-      amounts: {
-        subtotalMinorUnits,
-        taxMinorUnits: 0,
-        totalMinorUnits: subtotalMinorUnits,
-      },
-      payment: {
-        method: input.paymentMethod,
-        status: "PENDING",
-        amountPaise: subtotalMinorUnits,
-      },
-      documents: documents.map((line) => line.document),
-      items: documents.map((line) => line.item),
-      rejection: {
-        rejectedAt: null,
-        reason: null,
-        category: null,
-      },
-      lifecycle: { ...EMPTY_LIFECYCLE, submittedAt: now },
-      completedDocumentIds: [],
-      searchKeys: buildSearchKeys({
-        orderNumber,
-        pickupCode,
-        customerPhone: null,
-        filenames: documents.map((line) => line.document.originalFilename),
-      }),
-      createdAt: now,
-      updatedAt: now,
-    };
-    transaction.set(orderRef, order);
-    transaction.set(trackingRef(orderId), { ...trackingCopy(order), updatedAt: now });
-    transaction.set(keyRef, {
-      orderId,
-      action: "print-user-submit",
-      createdAt: now,
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-    });
+  transaction.update(shop.ref, {
+    orderSequence: sequence,
+    updatedAt: now,
   });
-
-  const order = await getShopOrderById(input.shopId, reusedOrderId ?? orderId);
-  if (!reusedOrderId) {
-    await ringShop(input.shopId, { work: false, event: "order_submitted", orderId, orderNumber: order.orderNumber });
-  }
-  return order;
+  const order = {
+    id: input.orderId,
+    orderNumber,
+    shopId: input.shopId,
+    channel: "PRINT_USER" satisfies OrderChannel,
+    printUserId: input.printUserId,
+    customerPhone: null,
+    status: "SUBMITTED",
+    pickupCode,
+    amounts: {
+      subtotalMinorUnits,
+      taxMinorUnits: 0,
+      totalMinorUnits: subtotalMinorUnits,
+    },
+    payment: {
+      method: input.paymentMethod,
+      status: "PENDING",
+      amountPaise: subtotalMinorUnits,
+    },
+    documents: lines.map((line) => line.document),
+    items: lines.map((line) => line.item),
+    rejection: {
+      rejectedAt: null,
+      reason: null,
+      category: null,
+    },
+    lifecycle: { ...EMPTY_LIFECYCLE, submittedAt: now },
+    completedDocumentIds: [],
+    searchKeys: buildSearchKeys({
+      orderNumber,
+      pickupCode,
+      customerPhone: null,
+      filenames: lines.map((line) => line.document.originalFilename),
+    }),
+    createdAt: now,
+    updatedAt: now,
+  };
+  transaction.set(ordersCollection(input.shopId).doc(input.orderId), order);
+  transaction.set(trackingRef(input.orderId), { ...trackingCopy(order), updatedAt: now });
+  transaction.set(getFirebaseFirestore().doc(`shops/${input.shopId}/idempotencyKeys/${input.idempotencyKey}`), {
+    orderId: input.orderId,
+    action: "print-user-submit",
+    createdAt: now,
+    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+  });
+  return { orderNumber };
 }
 
 /**
@@ -783,6 +785,9 @@ export async function confirmOnlinePayment(
     if (!orderSnap.exists) throw new AuthServiceError(404, "ORDER_NOT_FOUND");
     if (orderSnap.get("payment.method") !== "ONLINE") throw new AuthServiceError(409, "ORDER_NOT_ONLINE");
     if (orderSnap.get("payment.status") === "PAID") return;
+    // The guest cancelled it, or its payment window ran out. A real provider's late callback
+    // would need a refund here; that is not built yet.
+    if (orderSnap.get("status") === "CANCELLED") throw new AuthServiceError(409, "ORDER_CANCELLED");
 
     const now = FieldValue.serverTimestamp();
     applyOrderChange(transaction, orderRef, orderSnap.data() ?? {}, {
@@ -802,6 +807,55 @@ export async function confirmOnlinePayment(
     await ringShop(shopId, { work: true, event: "order_paid", orderId, orderNumber: order.orderNumber });
   }
   return { order };
+}
+
+export type UnpaidCancelReason = "GUEST_CANCELLED" | "PAYMENT_TIMEOUT";
+
+/**
+ * Cancels a SUBMITTED order that is not paid: the guest withdrawing it before the shop takes it
+ * on, or the clean-up of an online order whose payment never came. With `printUserId` it only
+ * cancels that guest's order. Idempotent: an order already cancelled is returned unchanged.
+ * The caller deletes the files.
+ */
+export async function cancelUnpaidOrder(
+  shopId: string,
+  orderId: string,
+  options: { reason: UnpaidCancelReason; printUserId?: string },
+) {
+  const orderRef = ordersCollection(shopId).doc(orderId);
+  let changed = false;
+
+  await getFirebaseFirestore().runTransaction(async (transaction) => {
+    changed = false;
+    const orderSnap = await transaction.get(orderRef);
+    if (!orderSnap.exists) {
+      throw new AuthServiceError(404, "ORDER_NOT_FOUND");
+    }
+    const current = orderSnap.data() ?? {};
+    if (options.printUserId && current.printUserId !== options.printUserId) {
+      throw new AuthServiceError(403, "this order does not belong to the guest session");
+    }
+    if (current.status === "CANCELLED") {
+      return;
+    }
+    if (current.status !== "SUBMITTED") {
+      // The shop accepted, rejected or finished it; only the shop can stop it now.
+      throw new AuthServiceError(409, "ORDER_NOT_CANCELLABLE");
+    }
+    if (orderSnap.get("payment.status") === "PAID") {
+      throw new AuthServiceError(409, "ORDER_ALREADY_PAID");
+    }
+    changed = applyOrderChange(transaction, orderRef, current, {
+      status: "CANCELLED",
+      fields: { "cancellation.reason": options.reason },
+    }).changed;
+  });
+
+  const order = await getShopOrderById(shopId, orderId);
+  if (changed) {
+    await ringShop(shopId, { work: false, event: "order_updated", orderId, orderNumber: order.orderNumber });
+  }
+  return { order, changed };
 }
 
 export async function cancelShopOrder(

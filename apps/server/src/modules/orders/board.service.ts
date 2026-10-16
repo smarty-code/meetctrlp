@@ -10,6 +10,7 @@ import {
   DELTA_CAP,
   UNFINISHED_JOB_STATUSES,
   deltaStart,
+  isAwaitingOnlinePayment,
   shopDateRange,
 } from "@/src/modules/orders/board-model";
 import { toOrderDto, type OrderDto } from "@/src/modules/orders/order.service";
@@ -34,7 +35,10 @@ function shopJobs(shopId: string) {
   return getFirebaseFirestore().collectionGroup("printJobs").where("shopId", "==", shopId);
 }
 
-/** Active orders and unfinished jobs, or what changed since the cursor. */
+/**
+ * Active orders and unfinished jobs, or what changed since the cursor. Online orders awaiting
+ * payment are left out of both, so a shop never sees work it can't start.
+ */
 export async function getBoard(user: ShopPrincipal, since: string | undefined): Promise<BoardResponse> {
   // The server's clock at request start; the next delta overlaps it by 5 s.
   const now = Date.now();
@@ -49,7 +53,7 @@ export async function getBoard(user: ShopPrincipal, since: string | undefined): 
     if (changedOrders.size <= DELTA_CAP && changedJobs.size <= DELTA_CAP) {
       return {
         full: false,
-        orders: changedOrders.docs.map(toOrderDto),
+        orders: changedOrders.docs.map(toOrderDto).filter((order) => !isAwaitingOnlinePayment(order)),
         jobs: changedJobs.docs.map(toPrintJobDto),
         cursor,
       };
@@ -62,7 +66,10 @@ export async function getBoard(user: ShopPrincipal, since: string | undefined): 
   ]);
   return {
     full: true,
-    orders: activeOrders.docs.map(toOrderDto).sort((left, right) => (right.createdAt ?? "").localeCompare(left.createdAt ?? "")),
+    orders: activeOrders.docs
+      .map(toOrderDto)
+      .filter((order) => !isAwaitingOnlinePayment(order))
+      .sort((left, right) => (right.createdAt ?? "").localeCompare(left.createdAt ?? "")),
     jobs: unfinishedJobs.docs.map(toPrintJobDto),
     cursor,
   };

@@ -9,6 +9,7 @@ import { OrderBillPaymentSection } from "../../../../components/tracking/order-b
 import { TrackingShopAccordion } from "../../../../components/tracking/tracking-shop-accordion";
 import { TrackingLoadingSkeleton } from "../../../../components/tracking/tracking-loading-skeleton";
 import { TrackingErrorState } from "../../../../components/tracking/tracking-error-state";
+import { OrderPendingActions } from "../../../../components/tracking/order-pending-actions";
 import { TRACKING_COPY } from "../../../../data/tracking-constants";
 
 function OrderStatusContent() {
@@ -23,6 +24,12 @@ function OrderStatusContent() {
     refresh,
     startNewOrder,
     retryLoad,
+    canPayNow,
+    canCancel,
+    pendingAction,
+    actionError,
+    payNow,
+    cancelOrder,
   } = useOrderTracking();
 
   if (isLoading) {
@@ -67,7 +74,15 @@ function OrderStatusContent() {
         onNewOrder={startNewOrder}
       />
       <main className="mx-auto w-full max-w-2xl flex-1 pb-16 space-y-0">
-        {awaitingShop ? (
+        <OrderPendingActions
+          canPayNow={canPayNow}
+          canCancel={canCancel}
+          pendingAction={pendingAction}
+          actionError={actionError}
+          onPayNow={() => void payNow()}
+          onCancel={() => void cancelOrder()}
+        />
+        {awaitingShop && !canPayNow ? (
           <div role="status" className="mx-4 mt-4 rounded-[12px] border border-macaw-blue bg-paper px-4 py-3">
             <p className="text-body font-bold text-midnight">{TRACKING_COPY.notConfirmedTitle}</p>
             <p className="mt-1 text-caption text-ash">{TRACKING_COPY.notConfirmedDescription}</p>

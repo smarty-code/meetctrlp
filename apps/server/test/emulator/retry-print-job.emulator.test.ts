@@ -18,6 +18,7 @@ import {
   seedPrinter,
   seedShop,
   startFakeS3,
+  storedDocument,
   type FakeS3,
 } from "./harness.ts";
 
@@ -130,6 +131,25 @@ describe("retryPrintJob", () => {
     assert.equal(sync.claimed.length, 1);
     assert.notEqual(sync.claimed[0].leaseId, "lease-1");
     assert.equal(sync.claimed[0].redelivered, false);
+  });
+
+  it("refuses a job whose file is shredded, missing from storage, or whose order no longer prints", async () => {
+    await seedJob(shopId, "order-1", "job-1", { status: "FAILED" });
+
+    s3.missing.add(`uploads/${shopId}/order-1/doc-1.pdf`);
+    await assert.rejects(retry("job-1"), { status: 409, message: "DOCUMENT_MISSING" });
+    s3.missing.clear();
+
+    await seedOrder(shopId, "order-1", {
+      status: "PRINTING",
+      documents: [storedDocument(shopId, "order-1", "doc-1", { shreddedAt: new Date().toISOString() })],
+    });
+    await assert.rejects(retry("job-1"), { status: 409, message: "DOCUMENT_SHREDDED" });
+
+    await seedOrder(shopId, "order-1", { status: "CANCELLED" });
+    await assert.rejects(retry("job-1"), { status: 409, message: "ORDER_NOT_ACCEPTED" });
+
+    assert.equal((await readJob(shopId, "order-1", "job-1")).status, "FAILED");
   });
 
   it("refuses finished jobs, unknown jobs and unusable printers", async () => {

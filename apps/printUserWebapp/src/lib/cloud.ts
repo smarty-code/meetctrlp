@@ -1,3 +1,5 @@
+import { clearStoredCart } from "./local-cart"
+
 const API_BASE = ""
 
 export type PublicShop = {
@@ -198,7 +200,19 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+// The shop this page's guest session belongs to, kept to start the session again after a 401.
+let currentShopSlug: string | null = null
+let restartingSession: Promise<unknown> | null = null
+
+/** One session restart for any number of requests that hit a 401 at the same time. */
+function restartShopSession(slug: string) {
+  restartingSession ??= startShopSession(slug).finally(() => {
+    restartingSession = null
+  })
+  return restartingSession
+}
+
+async function request<T>(path: string, init: RequestInit = {}, isRetry = false): Promise<T> {
   const headers = new Headers(init.headers)
   if (init.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json")
@@ -209,6 +223,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     credentials: "include",
     headers,
   })
+  // A cart route's 401 means the guest cookie is gone: it expired, or its signing key changed.
+  // Start the session again once and retry, rather than failing every request until a reload.
+  if (response.status === 401 && !isRetry && currentShopSlug && path.startsWith("/api/v1/public/session")) {
+    await restartShopSession(currentShopSlug)
+    return request<T>(path, init, true)
+  }
   const body = (await response.json().catch(() => ({}))) as T & ErrorBody
   if (!response.ok) {
     throw new ApiError(body.error ?? `Request failed (${response.status})`, response.status)
@@ -266,6 +286,7 @@ export async function startShopSession(slug: string) {
     `/api/v1/public/shops/${encodeURIComponent(slug)}/session`,
     { method: "POST" },
   )
+  currentShopSlug = body.shop.slug
   rememberSession(body.session)
   return body
 }
@@ -297,12 +318,35 @@ export async function completeDocumentUpload(docId: string) {
   return document
 }
 
+/** Cart errors sent as the response's `error` (PrintUserCartErrorCode in @ctrlp/schemas). */
+export const CART_ERROR = {
+  /** 409 on delete: the document is already in the placed order. */
+  alreadyOrdered: "ALREADY_ORDERED",
+  /** 409 on submit: a cart file is still uploading. */
+  stillUploading: "DOCUMENTS_STILL_UPLOADING",
+} as const
+
+/** The delete was refused because the document is already in the guest's placed order. */
+export function isAlreadyOrderedError(error: unknown) {
+  return error instanceof ApiError && error.status === 409 && error.message === CART_ERROR.alreadyOrdered
+}
+
+/** Idempotent: `removed` is false when the document was already gone from the cart. */
 export async function deleteGuestDocument(docId: string) {
-  const body = await request<{ ok: boolean }>(
+  const body = await request<{ ok: true; removed: boolean }>(
     `/api/v1/public/session/documents/${encodeURIComponent(docId)}`,
     { method: "DELETE" },
   )
   forgetDocument(docId)
+  return body
+}
+
+/** Clear all: empties the server cart, uploads still in flight included. A placed order is kept. */
+export async function clearGuestCart() {
+  const body = await request<{ ok: true; removed: number }>("/api/v1/public/session/documents", {
+    method: "DELETE",
+  })
+  if (lastSession) lastSession = { ...lastSession, documents: [] }
   return body
 }
 
@@ -353,7 +397,10 @@ export async function submitGuestOrder(input: {
     body: JSON.stringify(input),
   })
   // Placing the order takes its documents out of the cart; the next order reads the cart again.
-  if (body.order) lastSession = null
+  if (body.order) {
+    lastSession = null
+    clearStoredCart()
+  }
   return body
 }
 
@@ -364,6 +411,17 @@ export function mockConfirmPayment(orderId: string, idempotencyKey: string) {
   )
 }
 
+/**
+ * Cancels the guest's order while it is SUBMITTED and unpaid; its files are deleted. Returns the
+ * tracking copy. 409 `ORDER_NOT_CANCELLABLE` once the shop has it, `ORDER_ALREADY_PAID` once paid.
+ */
+export function cancelGuestOrder(orderId: string) {
+  return request<OrderTrackingDto>(
+    `/api/v1/public/session/orders/${encodeURIComponent(orderId)}/cancel`,
+    { method: "POST" },
+  )
+}
+
 /** One read of the order's tracking copy: the fallback when the live listener isn't available. */
 export function fetchOrderTracking(orderId: string) {
   return request<OrderTrackingDto>(
@@ -371,14 +429,31 @@ export function fetchOrderTracking(orderId: string) {
   )
 }
 
+/** The shopper cancelled this upload (Cancel Upload, Remove, or Clear all). Not a failure to show. */
+export class UploadCancelledError extends Error {
+  constructor() {
+    super("Upload cancelled")
+    this.name = "UploadCancelledError"
+  }
+}
+
 export function uploadToPresignedUrl(
   uploadUrl: string,
   file: File,
   contentType: string,
   onProgress: (percent: number) => void,
+  signal?: AbortSignal,
 ) {
   return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new UploadCancelledError())
+      return
+    }
     const xhr = new XMLHttpRequest()
+    const abort = () => xhr.abort()
+    signal?.addEventListener("abort", abort, { once: true })
+    xhr.onloadend = () => signal?.removeEventListener("abort", abort)
+    xhr.onabort = () => reject(new UploadCancelledError())
     xhr.open("PUT", uploadUrl)
     xhr.setRequestHeader("Content-Type", contentType)
     xhr.upload.onprogress = (event) => {

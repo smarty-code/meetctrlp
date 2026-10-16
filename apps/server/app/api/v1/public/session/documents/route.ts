@@ -2,6 +2,7 @@ import { parseBody } from "@/src/modules/shops/shop-route";
 import { authErrorResponse } from "@/src/modules/auth/auth-http";
 import { runPrintUser } from "@/src/modules/print-user/print-user-http";
 import {
+  clearGuestCart,
   createUploadIntent,
   updateGuestDocumentConfigurations,
 } from "@/src/modules/print-user/print-user.service";
@@ -20,6 +21,11 @@ export async function POST(request: Request) {
   } catch (error) {
     return authErrorResponse(error);
   }
+}
+
+/** Clear all: empties the guest's cart. A placed order is not affected. */
+export async function DELETE(request: Request) {
+  return runPrintUser(request, (session) => clearGuestCart(session));
 }
 
 export async function PUT(request: Request) {

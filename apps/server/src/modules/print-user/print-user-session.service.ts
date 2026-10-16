@@ -57,7 +57,7 @@ function parseDocuments(value: unknown): GuestDocument[] {
   });
 }
 
-function toSession(
+export function toSession(
   snapshot: { id: string; data: () => Record<string, unknown> | undefined },
 ): PrintUserSession {
   const data = snapshot.data() ?? {};
@@ -80,30 +80,6 @@ export async function getPrintUserSession(printUserId: string) {
     return undefined;
   }
   return toSession(snapshot);
-}
-
-async function findResumableSession(shopId: string, ipAddress: string) {
-  const now = new Date();
-  const snapshot = await printUsersCollection()
-    .where("shopId", "==", shopId)
-    .where("ipAddress", "==", ipAddress)
-    .limit(10)
-    .get();
-
-  if (snapshot.empty) {
-    return undefined;
-  }
-
-  const sessions = snapshot.docs
-    .map((document) => toSession(document))
-    .filter((session) => !isSessionExpired(session.expiresAt, now))
-    .sort((left, right) => {
-      const leftMs = left.expiresAt ? new Date(left.expiresAt).getTime() : 0;
-      const rightMs = right.expiresAt ? new Date(right.expiresAt).getTime() : 0;
-      return rightMs - leftMs;
-    });
-
-  return sessions[0];
 }
 
 /** Moves the session's end out to `expiresAt`. Called when the cookie is re-issued (at most hourly). */
@@ -135,6 +111,12 @@ export function toPublicSession(session: PrintUserSession) {
   };
 }
 
+/**
+ * The guest is the browser holding the cookie. Its session resumes from any network. No cookie, a
+ * cookie for another shop, or an ended session starts a new, empty cart. Nothing is looked up by
+ * IP, so two visitors on one network (shop Wi-Fi, carrier NAT) never share a cart. `ipAddress` is
+ * recorded on a new session for abuse logging only.
+ */
 export async function createOrResumePrintUserSession(input: {
   shopId: string;
   shopSlug: string;
@@ -143,19 +125,9 @@ export async function createOrResumePrintUserSession(input: {
 }) {
   if (input.cookiePrintUserId) {
     const existing = await getPrintUserSession(input.cookiePrintUserId);
-    if (
-      existing &&
-      existing.shopId === input.shopId &&
-      existing.ipAddress === input.ipAddress &&
-      !isSessionExpired(existing.expiresAt)
-    ) {
+    if (existing && existing.shopId === input.shopId && !isSessionExpired(existing.expiresAt)) {
       return resumeSession(existing);
     }
-  }
-
-  const resumed = await findResumableSession(input.shopId, input.ipAddress);
-  if (resumed && resumed.shopId === input.shopId) {
-    return resumeSession(resumed);
   }
 
   const id = randomUUID();
@@ -212,7 +184,10 @@ export async function savePrintUserDocuments(printUserId: string, documents: Gue
   );
 }
 
-/** Atomically read-modify-write guest documents (safe for parallel upload intents). */
+/**
+ * Atomically read-modify-write guest documents (safe for parallel upload intents). Returning the
+ * same `documents` array unchanged skips the write.
+ */
 export async function mutatePrintUserDocuments<T>(
   printUserId: string,
   mutate: (documents: GuestDocument[]) => { documents: GuestDocument[]; result: T },
@@ -227,6 +202,9 @@ export async function mutatePrintUserDocuments<T>(
 
     const session = toSession(snapshot);
     const { documents: nextDocuments, result } = mutate(session.documents);
+    if (nextDocuments === session.documents) {
+      return result;
+    }
 
     transaction.set(
       ref,
@@ -240,37 +218,5 @@ export async function mutatePrintUserDocuments<T>(
     );
 
     return result;
-  }, { maxAttempts: 10 });
-}
-
-/**
- * Records the placed order and removes its documents from the guest cart in one write, so the
- * next order in this session starts empty and the per-order file limit is not consumed by files
- * that were already submitted.
- */
-export async function checkoutPrintUserDocuments(
-  printUserId: string,
-  orderId: string,
-  submittedDocumentIds: string[],
-) {
-  const ref = printUsersCollection().doc(printUserId);
-  const submitted = new Set(submittedDocumentIds);
-
-  await getFirebaseFirestore().runTransaction(async (transaction) => {
-    const snapshot = await transaction.get(ref);
-    if (!snapshot.exists) {
-      throw new AuthServiceError(401, "guest session not found");
-    }
-
-    transaction.set(
-      ref,
-      {
-        documents: toSession(snapshot).documents.filter((entry) => !submitted.has(entry.id)),
-        activeOrderId: orderId,
-        lastSeenAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
   }, { maxAttempts: 10 });
 }

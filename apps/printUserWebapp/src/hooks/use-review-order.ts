@@ -16,7 +16,9 @@ import {
   validateOrderDraft,
 } from "../data/order-repository"
 import {
+  checkoutIdempotencyKey,
   getAvailablePaymentMethods,
+  hasPlacedOrder,
   initiateOnlinePaymentTransaction,
   verifyPaymentTransaction,
   submitCashPaymentOrder,
@@ -26,7 +28,13 @@ import {
 } from "../data/payment-repository"
 import { PAYMENT_COPY } from "../data/payment-constants"
 import { useShopSession } from "../components/shop-session-provider"
-import { deleteGuestDocument, quoteGuestSession, saveDocumentConfiguration } from "../lib/cloud"
+import {
+  deleteGuestDocument,
+  loadGuestSession,
+  quoteGuestSession,
+  saveDocumentConfiguration,
+} from "../lib/cloud"
+import { removeCachedFile } from "../lib/file-store"
 import { quoteToPricing, toApiColor, toApiOrientation, toApiPaper } from "../lib/print-user-map"
 
 /** Review edits are priced once they pause this long (TRAFFIC_SCALING_V2_IMPLEMENTATION.md 11.2). */
@@ -61,20 +69,20 @@ export function useReviewOrder() {
     loadOrderDraft(options)
       .then((loaded) => {
         if (!isMountedRef.current) return
+        // An online order placed before a reload, with its payment unfinished: the cart is empty
+        // now, and the order's own page is where it is paid or cancelled.
+        const existingTx = getActiveTransaction()
+        if (hasPlacedOrder(existingTx) && existingTx.state !== "SUCCESS" && loaded.documents.length === 0) {
+          router.replace(`${routes.orderStatus}?orderId=${encodeURIComponent(existingTx.orderId)}`)
+          return
+        }
+        if (existingTx) clearActiveTransaction()
+
         setDraft(loaded)
         setLoadError(null)
         setValidationError(null)
         setPaymentError(null)
-
-        // Restore existing in-flight transaction if matching order ID
-        const existingTx = getActiveTransaction()
-        if (existingTx && existingTx.orderId === loaded.orderId) {
-          setActiveTransaction(existingTx)
-          setPaymentState(existingTx.state)
-          setUserSelectedMethod(existingTx.method)
-        } else {
-          setPaymentState("METHOD_SELECTED")
-        }
+        setPaymentState("METHOD_SELECTED")
       })
       .catch((err) => {
         if (!isMountedRef.current) return
@@ -86,7 +94,7 @@ export function useReviewOrder() {
           setIsLoading(false)
         }
       })
-  }, [])
+  }, [router, routes.orderStatus])
 
   const quoteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -104,11 +112,18 @@ export function useReviewOrder() {
     loadDraft({ fresh: true })
   }, [loadDraft])
 
-  // Derive Available Payment Methods from Shop Context
+  // Derive Available Payment Methods from Shop Context. Once an online order is placed and waiting
+  // for its payment, cash is off: the cart is already in that order.
   const availableMethods = useMemo<PaymentMethodItem[]>(() => {
     if (!draft?.shop) return []
-    return getAvailablePaymentMethods(draft.shop)
-  }, [draft])
+    const methods = getAvailablePaymentMethods(draft.shop)
+    if (!hasPlacedOrder(activeTransaction)) return methods
+    return methods.map((method) =>
+      method.id === "CASH"
+        ? { ...method, enabled: false, disabledReason: PAYMENT_COPY.onlineOrderPendingReason }
+        : method
+    )
+  }, [draft, activeTransaction])
 
   // Derive active selected payment method safely
   const selectedMethod = useMemo<PaymentMethodId>(() => {
@@ -154,6 +169,10 @@ export function useReviewOrder() {
   useEffect(() => {
     draftRef.current = draft
   }, [draft])
+  const activeTransactionRef = useRef<PaymentTransaction | null>(activeTransaction)
+  useEffect(() => {
+    activeTransactionRef.current = activeTransaction
+  }, [activeTransaction])
 
   const handleSyncError = useCallback(
     (error: unknown) => {
@@ -266,7 +285,11 @@ export function useReviewOrder() {
       }
       setDraft(updatedDraft)
       saveOrderDraft(updatedDraft)
-      syncWithServer(() => deleteGuestDocument(documentId))
+      // A failed delete reloads the order from the server cart, which brings the document back.
+      syncWithServer(async () => {
+        await deleteGuestDocument(documentId)
+        void removeCachedFile(documentId)
+      })
     },
     [draft, syncWithServer]
   )
@@ -275,12 +298,26 @@ export function useReviewOrder() {
     setPriceNotice(null)
   }, [])
 
+  // A payment that failed after its order was placed keeps that order: the retry pays it, rather
+  // than submitting again against the cart the order already emptied.
   const handlePaymentRetry = useCallback(() => {
-    clearActiveTransaction()
-    setActiveTransaction(null)
+    if (!hasPlacedOrder(activeTransactionRef.current)) {
+      clearActiveTransaction()
+      setActiveTransaction(null)
+    }
     setPaymentError(null)
     setPaymentState("METHOD_SELECTED")
   }, [])
+
+  // After a submit failed with no answer, the order may still have been placed (a lost response).
+  // An empty cart with a latest order means it was: show that order instead of an error.
+  const openPlacedOrderIfAny = useCallback(async () => {
+    const session = await loadGuestSession({ fresh: true }).catch(() => null)
+    const cartEmpty = session?.documents.every((document) => document.status !== "READY") ?? false
+    if (!session?.activeOrderId || !cartEmpty || !isMountedRef.current) return false
+    router.push(`${routes.orderStatus}?orderId=${encodeURIComponent(session.activeOrderId)}`)
+    return true
+  }, [router, routes.orderStatus])
 
   const handlePaymentSubmit = useCallback(async () => {
     if (!draftRef.current || isSubmittingRef.current || isValidating) return
@@ -306,16 +343,21 @@ export function useReviewOrder() {
     setIsSubmitting(true)
 
     try {
-      const idempotencyKey = `idemp_pay_${draft.orderId}_${Date.now()}`
+      const idempotencyKey = checkoutIdempotencyKey(draft, selectedMethod)
+      const placedTransaction = activeTransactionRef.current
 
       if (selectedMethod === "ONLINE") {
         setPaymentState("INITIATING")
 
-        // 1. Authoritative price verification & transaction initiation
-        const initResult = await initiateOnlinePaymentTransaction(
-          draft,
-          idempotencyKey
-        )
+        // 1. Authoritative price verification & transaction initiation, unless the order is
+        // already placed and only its payment is being retried.
+        const initResult = hasPlacedOrder(placedTransaction)
+          ? {
+              priceChanged: false,
+              authoritativeTotal: placedTransaction.amount,
+              transaction: placedTransaction,
+            }
+          : await initiateOnlinePaymentTransaction(draft, idempotencyKey)
 
         if (!isMountedRef.current) return
 
@@ -396,6 +438,7 @@ export function useReviewOrder() {
     } catch (err) {
       if (!isMountedRef.current) return
       console.error("Payment transaction error:", err)
+      if (await openPlacedOrderIfAny()) return
       setPaymentState("FAILED")
       setPaymentError(PAYMENT_COPY.paymentFailedDescription)
     } finally {
@@ -404,7 +447,7 @@ export function useReviewOrder() {
         setIsSubmitting(false)
       }
     }
-  }, [isValidating, selectedMethod, router, routes.orderStatus, settleEdits])
+  }, [isValidating, selectedMethod, router, routes.orderStatus, settleEdits, openPlacedOrderIfAny])
 
   const canSubmit = useMemo(() => {
     if (

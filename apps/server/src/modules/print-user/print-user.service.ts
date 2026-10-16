@@ -5,8 +5,12 @@ import {
   isMissingObjectError,
   readObject,
 } from "@ctrlp/firebase";
+import { FieldValue, getFirebaseFirestore } from "@ctrlp/firebase/firestore";
+import { parsePageSelection as parseSharedPageSelection } from "@ctrlp/schemas/page-selection";
 import type {
   PrintUserBatchConfigurationInput,
+  PrintUserDeleteDocumentResponse,
+  PrintUserClearCartResponse,
   PrintUserPrintConfigurationInput,
   PrintUserSubmitOrderRequestInput,
   PrintUserUploadIntentRequestInput,
@@ -15,12 +19,18 @@ import type {
 import { AuthServiceError } from "@/src/modules/auth/auth.errors";
 import { trackingCopy } from "@/src/modules/orders/order-model";
 import { inspectDocument } from "@/src/modules/documents/inspect-document";
+import { shredAllOrderDocuments } from "@/src/modules/documents/document.service";
 import {
+  cancelUnpaidOrder,
   confirmOnlinePayment,
-  createPrintUserOrder,
-  findPrintUserOrderByIdempotencyKey,
   getShopOrderById,
+  pricePrintUserDocuments,
+  writePrintUserOrder,
+  type OrderDto,
+  type PricedPrintUserOrder,
+  type PrintUserCheckoutDocument,
 } from "@/src/modules/orders/order.service";
+import { ringShop } from "@/src/modules/realtime/doorbell";
 import { getShopConfigByShopId, quoteDocumentPrint } from "@/src/modules/shops/shop-config.service";
 import {
   MAX_FILE_BYTES,
@@ -33,15 +43,17 @@ import {
   guestStorageKey,
   isAbandonedUpload,
   isPageSelectionValid,
+  isSessionExpired,
   normalizeMimeType,
   officeFormatMessage,
   pageSelectionValue,
 } from "@/src/modules/print-user/print-user.helpers";
 import {
-  checkoutPrintUserDocuments,
   loadGuestSession,
   mutatePrintUserDocuments,
+  toSession,
 } from "@/src/modules/print-user/print-user-session.service";
+import { printUsersCollection } from "@/src/modules/print-user/print-user-shop.service";
 import type { GuestPrincipal } from "@/src/modules/print-user/print-user-cookie";
 import type { GuestDocument, PrintUserSession } from "@/src/modules/print-user/print-user.types";
 import { randomUUID } from "node:crypto";
@@ -72,12 +84,23 @@ async function deleteStoredObjects(documents: GuestDocument[]) {
   );
 }
 
-async function removeGuestDocument(printUserId: string, document: GuestDocument) {
-  await deleteStoredObjects([document]);
-  await mutatePrintUserDocuments(printUserId, (documents) => ({
-    documents: documents.filter((entry) => entry.id !== document.id),
-    result: undefined,
-  }));
+/**
+ * Takes one document out of the cart, then deletes its file. The cart entry goes first, in a
+ * transaction, and the file only if that entry was still there. Checkout moves entries into the
+ * order in its own transaction, so a file that an order needs is never deleted from here.
+ */
+async function removeGuestDocument(printUserId: string, docId: string) {
+  const removed = await mutatePrintUserDocuments(printUserId, (documents) => {
+    const target = documents.find((entry) => entry.id === docId);
+    return {
+      documents: target ? documents.filter((entry) => entry.id !== docId) : documents,
+      result: target ?? null,
+    };
+  });
+  if (removed) {
+    await deleteStoredObjects([removed]);
+  }
+  return removed;
 }
 
 export async function createUploadIntent(session: GuestPrincipal, input: PrintUserUploadIntentRequestInput) {
@@ -126,7 +149,7 @@ export async function createUploadIntent(session: GuestPrincipal, input: PrintUs
   try {
     uploadUrl = await createPresignedUploadUrl(storageKey, mimeType, PRESIGN_TTL_SECONDS);
   } catch (error) {
-    await removeGuestDocument(session.id, document).catch(() => undefined);
+    await removeGuestDocument(session.id, document.id).catch(() => undefined);
     const message = error instanceof Error ? error.message : "";
     if (message.includes("Missing required environment variable")) {
       throw new AuthServiceError(503, "document storage is not configured");
@@ -169,7 +192,7 @@ export async function completeGuestDocument(session: GuestPrincipal, docId: stri
     throw missingUpload(error);
   }
   if (storedBytes > MAX_FILE_BYTES) {
-    await removeGuestDocument(session.id, document).catch(() => undefined);
+    await removeGuestDocument(session.id, document.id).catch(() => undefined);
     throw new AuthServiceError(400, "file exceeds the 50MB limit");
   }
 
@@ -190,7 +213,7 @@ export async function completeGuestDocument(session: GuestPrincipal, docId: stri
     inspected = inspectDocument(bytes, document.mimeType);
   } catch (error) {
     // An unreadable file can never become printable, so free its cart slot right away.
-    await removeGuestDocument(session.id, document).catch(() => undefined);
+    await removeGuestDocument(session.id, document.id).catch(() => undefined);
     throw error;
   }
 
@@ -218,9 +241,52 @@ export async function completeGuestDocument(session: GuestPrincipal, docId: stri
   });
 }
 
-export async function deleteGuestDocument(guest: GuestPrincipal, docId: string) {
-  const session = await loadGuestSession(guest);
-  await removeGuestDocument(session.id, requireDocument(session, docId));
+/** 409 `ALREADY_ORDERED` when `docId` left the cart in the guest's latest order. */
+async function assertNotOrdered(guest: GuestPrincipal, docId: string) {
+  const { activeOrderId } = await loadGuestSession(guest);
+  if (!activeOrderId) {
+    return;
+  }
+  let order: OrderDto;
+  try {
+    order = await getShopOrderById(guest.shopId, activeOrderId);
+  } catch (error) {
+    if (error instanceof AuthServiceError && error.status === 404) {
+      return;
+    }
+    throw error;
+  }
+  if (order.printUserId === guest.id && order.documents.some((entry) => entry.id === docId)) {
+    throw new AuthServiceError(409, "ALREADY_ORDERED");
+  }
+}
+
+/**
+ * Deletes a cart document. Idempotent: a document that is already gone is `removed: false`. One that
+ * has been ordered is a 409 `ALREADY_ORDERED`, so the page can say so instead of hiding it.
+ */
+export async function deleteGuestDocument(
+  guest: GuestPrincipal,
+  docId: string,
+): Promise<PrintUserDeleteDocumentResponse> {
+  if (await removeGuestDocument(guest.id, docId)) {
+    return { ok: true, removed: true };
+  }
+  await assertNotOrdered(guest, docId);
+  return { ok: true, removed: false };
+}
+
+/**
+ * Empties the cart: every entry (ready, uploading or failed) in one transaction, then their files.
+ * A placed order is not touched; its documents already left the cart at checkout.
+ */
+export async function clearGuestCart(guest: GuestPrincipal): Promise<PrintUserClearCartResponse> {
+  const removed = await mutatePrintUserDocuments(guest.id, (documents) => ({
+    documents: documents.length > 0 ? [] : documents,
+    result: documents,
+  }));
+  await deleteStoredObjects(removed);
+  return { ok: true, removed: removed.length };
 }
 
 function resolveDocumentConfiguration(
@@ -260,7 +326,7 @@ function resolveDocumentConfiguration(
     colorMode: input.colorMode,
     copies: input.copies,
     paperSize: input.paperSize,
-    pageSelection: pageSelectionValue(input.pageSelection.mode, input.pageSelection.expression, []),
+    pageSelection: pageSelectionValue(input.pageSelection.mode, input.pageSelection.expression, pageCount),
     billablePages: billed,
     orientation: input.orientation ?? document.config.orientation,
   };
@@ -309,40 +375,62 @@ export async function quoteGuestSession(guest: GuestPrincipal) {
   return quoteSessionDocuments(await loadGuestSession(guest));
 }
 
-async function quoteSessionDocuments(session: PrintUserSession) {
-  const config = await getShopConfigByShopId(session.shopId);
-  const ready = session.documents.filter((document) => document.status === "READY" && document.pageCount);
-  const items = ready.map((document) => {
-    const billed = document.config.billablePages || document.pageCount || 1;
-    const quote = quoteDocumentPrint(config, {
-      billablePages: billed,
-      copies: document.config.copies,
-      colorMode: document.config.colorMode,
-      paperSize: document.config.paperSize,
-    });
-    return {
-      documentId: document.id,
-      documentName: document.originalFilename,
-      billablePages: billed,
-      copies: document.config.copies,
-      colorMode: document.config.colorMode,
-      paperSize: document.config.paperSize,
-      unitPricePaise: quote.unitPricePaise,
-      totalPaise: quote.totalPaise,
-    };
-  });
-  const totalPaise = items.reduce((sum, item) => sum + item.totalPaise, 0);
+function toCheckoutDocument(document: GuestDocument): PrintUserCheckoutDocument {
+  const pageCount = document.pageCount ?? 1;
+  // Read with the printer's grammar, so the pages billed are the pages that print. A selection
+  // saved before that grammar was strict can fail here; the guest fixes it on the customize page.
+  const selection = parseSharedPageSelection(document.config.pageSelection, pageCount);
+  if (!selection.ok) {
+    throw new AuthServiceError(
+      400,
+      `${document.originalFilename}: use valid pages from 1 to ${pageCount}, such as 1,3,5-8`,
+    );
+  }
+  return {
+    id: document.id,
+    originalFilename: document.originalFilename,
+    mimeType: document.mimeType,
+    fileSizeBytes: document.fileSizeBytes,
+    pageCount,
+    sha256Hash: document.sha256Hash ?? "",
+    storageKey: document.storageKey,
+    copies: document.config.copies,
+    colorMode: document.config.colorMode,
+    paperSize: document.config.paperSize,
+    orientation: document.config.orientation,
+    pageSelection: selection.canonical,
+    billablePages: selection.pages.length,
+  };
+}
 
+/** The quote for priced order lines, so the cart quote and the order are priced by one function. */
+function quoteFromLines({ lines, subtotalMinorUnits }: PricedPrintUserOrder) {
+  const items = lines.map(({ document }) => ({
+    documentId: document.id,
+    documentName: document.originalFilename,
+    billablePages: document.config.billablePages,
+    copies: document.copies,
+    colorMode: document.colorMode,
+    paperSize: document.paperSize,
+    unitPricePaise: document.unitPricePaise,
+    totalPaise: document.totalPaise,
+  }));
   return {
     currency: "INR" as const,
     items,
-    totalPaise,
+    totalPaise: subtotalMinorUnits,
     totalSelectedPages: items.reduce((sum, item) => sum + item.billablePages * item.copies, 0),
     totalCopies: items.reduce((sum, item) => sum + item.copies, 0),
   };
 }
 
-function quoteFromOrder(order: Awaited<ReturnType<typeof createPrintUserOrder>>) {
+async function quoteSessionDocuments(session: PrintUserSession) {
+  const config = await getShopConfigByShopId(session.shopId);
+  const ready = session.documents.filter((document) => document.status === "READY" && document.pageCount);
+  return quoteFromLines(pricePrintUserDocuments(config, ready.map(toCheckoutDocument)));
+}
+
+function quoteFromOrder(order: OrderDto) {
   const items = order.documents.map((document) => {
     const billed = document.config?.billablePages || document.pageCount || 1;
     return {
@@ -365,70 +453,118 @@ function quoteFromOrder(order: Awaited<ReturnType<typeof createPrintUserOrder>>)
   };
 }
 
+/**
+ * Places the guest's order from their cart. One transaction writes the order and empties the cart,
+ * so a document is always in exactly one of them: a delete or clear racing this checkout either
+ * lands first (and the document is not ordered) or finds the entry gone (and leaves its file alone).
+ */
 export async function submitGuestOrder(guest: GuestPrincipal, input: PrintUserSubmitOrderRequestInput) {
-  // A retried submit must return the original order even though checkout emptied the cart.
-  const placed = await findPrintUserOrderByIdempotencyKey(guest.shopId, guest.id, input.idempotencyKey);
-  if (placed) {
-    // Also covers a first attempt that created the order but failed before clearing the cart.
-    await checkoutPrintUserDocuments(
-      guest.id,
-      placed.id,
-      placed.documents.map((document) => document.id),
+  const db = getFirebaseFirestore();
+  const config = await getShopConfigByShopId(guest.shopId);
+  const keyRef = db.doc(`shops/${guest.shopId}/idempotencyKeys/${input.idempotencyKey}`);
+  const shopRef = db.doc(`shops/${guest.shopId}`);
+  const cartRef = printUsersCollection().doc(guest.id);
+  const orderId = randomUUID();
+
+  const outcome = await db.runTransaction(async (transaction) => {
+    const [keySnap, shopSnap, cartSnap] = await Promise.all([
+      transaction.get(keyRef),
+      transaction.get(shopRef),
+      transaction.get(cartRef),
+    ]);
+
+    // A retried submit returns the original order, though checkout has emptied the cart since.
+    if (keySnap.exists) {
+      const placedOrderId = keySnap.get("orderId");
+      if (keySnap.get("action") === "print-user-submit" && typeof placedOrderId === "string") {
+        return { kind: "replay" as const, orderId: placedOrderId };
+      }
+      throw new AuthServiceError(409, "IDEMPOTENCY_KEY_REUSED");
+    }
+    if (!shopSnap.exists) {
+      throw new AuthServiceError(404, "shop not found");
+    }
+    const cart = cartSnap.exists ? toSession(cartSnap) : null;
+    if (!cart || cart.shopId !== guest.shopId) {
+      throw new AuthServiceError(401, "guest session not found");
+    }
+    if (isSessionExpired(cart.expiresAt)) {
+      throw new AuthServiceError(401, "guest session expired");
+    }
+
+    const now = new Date();
+    const live = cart.documents.filter((entry) => !isAbandonedUpload(entry, now));
+    const submitCheck = canSubmitGuestDocuments(live);
+    if (!submitCheck.ok) {
+      throw new AuthServiceError(submitCheck.status, submitCheck.reason);
+    }
+
+    const priced = pricePrintUserDocuments(config, live.map(toCheckoutDocument));
+    const quote = quoteFromLines(priced);
+    if (typeof input.expectedTotalPaise === "number" && input.expectedTotalPaise !== quote.totalPaise) {
+      return { kind: "priceChanged" as const, quote };
+    }
+
+    writePrintUserOrder(transaction, shopSnap, {
+      orderId,
+      shopId: guest.shopId,
+      printUserId: guest.id,
+      paymentMethod: input.paymentMethod,
+      idempotencyKey: input.idempotencyKey,
+      priced,
+    });
+    // Abandoned uploads leave with the ordered documents; their files are deleted after commit.
+    transaction.set(
+      cartRef,
+      {
+        documents: [],
+        activeOrderId: orderId,
+        lastSeenAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
     );
+    return {
+      kind: "placed" as const,
+      quote,
+      abandoned: cart.documents.filter((entry) => isAbandonedUpload(entry, now)),
+    };
+  }, { maxAttempts: 10 });
+
+  if (outcome.kind === "priceChanged") {
+    return { priceChanged: true as const, quote: outcome.quote, order: null };
+  }
+
+  if (outcome.kind === "replay") {
+    const placed = await getShopOrderById(guest.shopId, outcome.orderId);
+    if (placed.printUserId !== guest.id) {
+      // Never hand back another guest's order for a reused key.
+      throw new AuthServiceError(409, "IDEMPOTENCY_KEY_REUSED");
+    }
     return { priceChanged: false as const, quote: quoteFromOrder(placed), order: placed };
   }
 
-  const session = await loadGuestSession(guest);
-  const ready = session.documents.filter((document) => document.status === "READY" && document.pageCount);
-  const submitCheck = canSubmitGuestDocuments(ready);
-  if (!submitCheck.ok) {
-    throw new AuthServiceError(400, submitCheck.reason);
+  await deleteStoredObjects(outcome.abandoned);
+  const order = await getShopOrderById(guest.shopId, orderId);
+  // An online order stays off the shop's board until it is paid, and the payment rings then.
+  if (input.paymentMethod === "CASH") {
+    await ringShop(guest.shopId, { work: false, event: "order_submitted", orderId, orderNumber: order.orderNumber });
   }
+  return { priceChanged: false as const, quote: outcome.quote, order };
+}
 
-  const quote = await quoteSessionDocuments(session);
-  if (
-    typeof input.expectedTotalPaise === "number" &&
-    input.expectedTotalPaise !== quote.totalPaise
-  ) {
-    return {
-      priceChanged: true as const,
-      quote,
-      order: null,
-    };
-  }
-
-  const order = await createPrintUserOrder({
-    shopId: session.shopId,
-    printUserId: session.id,
-    paymentMethod: input.paymentMethod,
-    idempotencyKey: input.idempotencyKey,
-    documents: ready.map((document) => ({
-      id: document.id,
-      originalFilename: document.originalFilename,
-      mimeType: document.mimeType,
-      fileSizeBytes: document.fileSizeBytes,
-      pageCount: document.pageCount ?? 1,
-      sha256Hash: document.sha256Hash ?? "",
-      storageKey: document.storageKey,
-      copies: document.config.copies,
-      colorMode: document.config.colorMode,
-      paperSize: document.config.paperSize,
-      pageSelection: document.config.pageSelection,
-      billablePages: document.config.billablePages || document.pageCount || 1,
-    })),
+/**
+ * The guest withdraws their order before the shop takes it on: allowed while it is SUBMITTED and
+ * unpaid (409 `ORDER_NOT_CANCELLABLE` or `ORDER_ALREADY_PAID` otherwise). Its files are deleted
+ * right away, since nothing will print them. Returns the customer-safe tracking view.
+ */
+export async function cancelGuestOrder(guest: GuestPrincipal, orderId: string) {
+  const { order } = await cancelUnpaidOrder(guest.shopId, orderId, {
+    reason: "GUEST_CANCELLED",
+    printUserId: guest.id,
   });
-
-  if (order.printUserId !== session.id) {
-    // createPrintUserOrder replays by key alone; never hand back another guest's order.
-    throw new AuthServiceError(409, "IDEMPOTENCY_KEY_REUSED");
-  }
-
-  await checkoutPrintUserDocuments(
-    session.id,
-    order.id,
-    ready.map((document) => document.id),
-  );
-  return { priceChanged: false as const, quote, order };
+  await shredAllOrderDocuments(guest.shopId, orderId);
+  return { ...trackingCopy(order), updatedAt: order.updatedAt };
 }
 
 export async function getGuestOrder(session: GuestPrincipal, orderId: string) {

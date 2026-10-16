@@ -4,6 +4,14 @@ export const ACTIVE_ORDER_STATUSES = ["SUBMITTED", "SHOP_ACCEPTED", "PRINTING", 
 /** PRINTING is kept for jobs claimed before that job state was dropped. */
 export const UNFINISHED_JOB_STATUSES = ["QUEUED", "DISPATCHING", "PRINTING", "FAILED"] as const;
 
+/**
+ * An online order placed but not yet paid. The shop can't act on it, so the board leaves it out
+ * until the payment lands; the guest or the daily clean-up cancels it otherwise.
+ */
+export function isAwaitingOnlinePayment(order: { status: string; payment: { method: string; status: string } }) {
+  return order.status === "SUBMITTED" && order.payment.method === "ONLINE" && order.payment.status !== "PAID";
+}
+
 /** A delta returns at most this many orders and jobs; more means "send the full board". */
 export const DELTA_CAP = 200;
 

@@ -44,6 +44,8 @@ export interface UploadedFileItem {
   previewUrl?: string
   /** The upload round this file was sent in; the upload button reports the active round's combined progress. */
   uploadRound?: number
+  /** When its upload finished on this page (ms), so a cart read that began earlier does not drop it. */
+  completedAt?: number
 }
 
 export type ColorMode = "color" | "bw"

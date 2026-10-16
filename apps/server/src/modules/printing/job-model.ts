@@ -45,6 +45,51 @@ export function allDocumentsDone(
   return expected.length > 0 && expected.every((id) => done.has(id));
 }
 
+export type CancelDecision = { kind: "replay" } | { kind: "apply" } | { kind: "reject"; reason: string };
+
+/**
+ * Whether the operator may cancel a job: one waiting (QUEUED), one that failed, or one a PC claimed
+ * and then went quiet for 15 minutes (the same rule as rescue). A job a live PC is handling is left
+ * alone, since it may be printing; cancelling a cancelled job is a replay.
+ */
+export function decideCancel(input: { status: string; claimedAtMs: number; nowMs: number }): CancelDecision {
+  if (input.status === "CANCELLED") {
+    return { kind: "replay" };
+  }
+  if (input.status === "QUEUED" || input.status === "FAILED") {
+    return { kind: "apply" };
+  }
+  const active = input.status === "DISPATCHING" || input.status === "PRINTING";
+  if (active && input.nowMs - input.claimedAtMs >= STUCK_JOB_MS) {
+    return { kind: "apply" };
+  }
+  return { kind: "reject", reason: active ? "PRINT_JOB_STILL_ACTIVE" : "PRINT_JOB_STATUS_CONFLICT" };
+}
+
+/** Why a lease an agent still holds is no longer valid, or null while it is. */
+export type RevokedReason = "NOT_FOUND" | "CANCELLED" | "RESCUED" | "FINISHED";
+
+export function revokedReason(
+  job: { exists: boolean; status: string; leaseId: unknown; agentId: unknown },
+  held: { leaseId: string },
+  agentId: string,
+): RevokedReason | null {
+  if (!job.exists) {
+    return "NOT_FOUND";
+  }
+  if (job.status === "CANCELLED") {
+    return "CANCELLED";
+  }
+  if (job.status === "COMPLETED" || job.status === "FAILED") {
+    return "FINISHED";
+  }
+  // QUEUED again, or claimed under another lease or by another PC: the operator rescued it.
+  if (job.leaseId !== held.leaseId || job.agentId !== agentId) {
+    return "RESCUED";
+  }
+  return null;
+}
+
 export type RetryDecision = { kind: "replay" } | { kind: "apply" } | { kind: "reject"; reason: string };
 
 /**

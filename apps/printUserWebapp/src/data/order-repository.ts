@@ -12,7 +12,6 @@ import {
 } from "./customize-repository"
 import { STORAGE_KEYS } from "./review-constants"
 import { restoreCachedFile } from "../lib/file-store"
-import { mapStoredFilesToDocuments } from "./customize-mapper"
 import { loadGuestSession, quoteGuestSession } from "../lib/cloud"
 import { guestDocumentsToConfigurable, mapPublicShopToContext, quoteToPricing } from "../lib/print-user-map"
 import { readStoredPublicShop } from "../components/shop-session-provider"
@@ -37,8 +36,14 @@ export function calculateOrderPricing(
 ): OrderPricingBreakdown {
   const items: OrderPricingItem[] = documents.map((doc) => {
     const effectivePages = getEffectivePages(doc)
-    const ratePerPage =
-      doc.configuration.colorMode === "color"
+    // The shop's own rates, as the server quotes them; the defaults only cover a missing shop.
+    const ratePerPage = shop.pricing
+      ? (doc.configuration.paperSize === "A3"
+          ? shop.pricing.colorA3PricePaise
+          : doc.configuration.colorMode === "color"
+            ? shop.pricing.colorA4PricePaise
+            : shop.pricing.bwA4PricePaise) / 100
+      : doc.configuration.colorMode === "color"
         ? customizeConfig.pricePerPage.color
         : shop.startingPriceA4 ?? customizeConfig.pricePerPage.bw
     const totalAmount = effectivePages * doc.configuration.copies * ratePerPage
@@ -133,41 +138,24 @@ function getOrCreateGuestSessionId(): string {
 
 /**
  * Builds the order draft from the guest cart (the one already held, unless `fresh`), restoring
- * any cached file handles, and prices it with one server quote.
+ * any cached file handles, and prices it with one server quote. A cart that can't be read fails
+ * the load (the review page offers a retry): the order is placed from the server cart, so a copy
+ * from sessionStorage could show documents that are no longer in it.
  */
 export async function loadOrderDraft(options: { fresh?: boolean } = {}): Promise<OrderDraft> {
   const storedShop = readStoredPublicShop()
   const shop = storedShop ? mapPublicShopToContext(storedShop) : mockShop
   const sessionId = getOrCreateGuestSessionId()
-  let documents: ConfigurableDocument[] = []
 
-  try {
-    const session = await loadGuestSession(options)
-    const fileLookup = new Map<string, { file?: File; previewUrl?: string }>()
-    if (typeof window !== "undefined") {
-      for (const document of session.documents) {
-        const cached = await restoreCachedFile(document.id)
-        if (cached) fileLookup.set(document.id, cached)
-      }
-    }
-    documents = guestDocumentsToConfigurable(session.documents, fileLookup)
-  } catch {
-    if (typeof window !== "undefined") {
-      try {
-        const storedConfigured = window.sessionStorage.getItem(STORAGE_KEYS.CONFIGURED_DOCUMENTS)
-        if (storedConfigured) {
-          documents = JSON.parse(storedConfigured)
-        } else {
-          const storedUploaded = window.sessionStorage.getItem(STORAGE_KEYS.UPLOADED_FILES)
-          if (storedUploaded) {
-            documents = mapStoredFilesToDocuments(JSON.parse(storedUploaded), "doc")
-          }
-        }
-      } catch (error) {
-        console.warn("Failed reading order draft from storage:", error)
-      }
+  const session = await loadGuestSession(options)
+  const fileLookup = new Map<string, { file?: File; previewUrl?: string }>()
+  if (typeof window !== "undefined") {
+    for (const document of session.documents) {
+      const cached = await restoreCachedFile(document.id)
+      if (cached) fileLookup.set(document.id, cached)
     }
   }
+  const documents: ConfigurableDocument[] = guestDocumentsToConfigurable(session.documents, fileLookup)
 
   const restoredDocs = await Promise.all(
     documents.map(async (doc) => {

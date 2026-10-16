@@ -12,7 +12,7 @@ import { OrderSummaryBar } from "../../../../components/customize/order-summary-
 import { OrientationSelector } from "../../../../components/customize/orientation-selector"
 import { PaperSizeSelector } from "../../../../components/customize/paper-size-selector"
 import { useShopSession } from "../../../../components/shop-session-provider"
-import { restoreCachedFile } from "../../../../lib/file-store"
+import { removeCachedFile, restoreCachedFile } from "../../../../lib/file-store"
 import {
   guestDocumentsToConfigurable,
   paiseToRupees,
@@ -22,6 +22,7 @@ import {
 } from "../../../../lib/print-user-map"
 import {
   deleteGuestDocument,
+  isAlreadyOrderedError,
   loadGuestSession,
   saveDocumentConfigurations,
 } from "../../../../lib/cloud"
@@ -94,6 +95,10 @@ export default function CustomizePage() {
   const [previewPage, setPreviewPage] = useState(1)
   const [isUpdatingPrice, setIsUpdatingPrice] = useState(false)
   const [pendingUploads, setPendingUploads] = useState(0)
+  const [pendingRemovals, setPendingRemovals] = useState(0)
+  // False until the server cart has been read: the first paint from sessionStorage is not proof
+  // that those documents still exist, so Continue waits for it.
+  const [isCartSynced, setIsCartSynced] = useState(false)
   const [notification, setNotification] = useState<string | null>(null)
   const selectedDocument =
     documents.find((document) => document.id === selectedId) ?? documents[0]
@@ -101,32 +106,32 @@ export default function CustomizePage() {
 
   // sessionStorage only gives a fast first paint; the server cart decides which documents exist.
   // Local settings are kept for documents still in the cart, so unsaved edits survive navigation.
-  useEffect(() => {
-    let cancelled = false
-    void loadGuestSession()
-      .then((session) => {
-        if (cancelled) return
-        setDocuments((current) => {
-          const local = new Map(current.map((document) => [document.id, document]))
-          const next = guestDocumentsToConfigurable(session.documents, new Map()).map((serverDocument) => {
-            const existing = local.get(serverDocument.id)
-            return existing
-              ? {
-                  ...serverDocument,
-                  file: existing.file,
-                  previewUrl: existing.previewUrl,
-                  configuration: copyConfigurationToDocument(existing.configuration, serverDocument),
-                }
-              : serverDocument
-          })
-          persistDocuments(next)
-          return next
+  const syncFromServer = (fresh: boolean) =>
+    loadGuestSession({ fresh }).then((session) => {
+      setIsCartSynced(true)
+      setDocuments((current) => {
+        const local = new Map(current.map((document) => [document.id, document]))
+        const next = guestDocumentsToConfigurable(session.documents, new Map()).map((serverDocument) => {
+          const existing = local.get(serverDocument.id)
+          return existing
+            ? {
+                ...serverDocument,
+                file: existing.file,
+                previewUrl: existing.previewUrl,
+                configuration: copyConfigurationToDocument(existing.configuration, serverDocument),
+              }
+            : serverDocument
         })
+        persistDocuments(next)
+        return next
       })
-      .catch(() => undefined)
-    return () => {
-      cancelled = true
-    }
+    })
+
+  useEffect(() => {
+    void syncFromServer(false).catch(() =>
+      setNotification("Couldn't load your documents. Check your connection and reload the page."),
+    )
+    // Runs once: later syncs are started by a failed write.
   }, [])
 
   useEffect(() => {
@@ -244,14 +249,36 @@ export default function CustomizePage() {
     })()
   }
 
-  const removeSelected = () => {
+  const removeSelected = async () => {
     if (!selectedDocument) return
-    const remaining = documents.filter((document) => document.id !== selectedDocument.id)
+    const target = selectedDocument
+    const index = documents.findIndex((document) => document.id === target.id)
+    const remaining = documents.filter((document) => document.id !== target.id)
     setDocuments(remaining)
     setSelectedId(remaining[0]?.id ?? "")
     setPreviewPage(1)
     persistDocuments(remaining)
-    void deleteGuestDocument(selectedDocument.id).catch(() => undefined)
+    setPendingRemovals((count) => count + 1)
+    try {
+      await deleteGuestDocument(target.id)
+      void removeCachedFile(target.id)
+    } catch (error) {
+      if (isAlreadyOrderedError(error)) {
+        setNotification(`${target.name} is already in your order`)
+        void syncFromServer(true).catch(() => undefined)
+        return
+      }
+      // The server still has it, so it would still be ordered: put it back.
+      setDocuments((current) => {
+        if (current.some((document) => document.id === target.id)) return current
+        const next = [...current.slice(0, index), target, ...current.slice(index)]
+        persistDocuments(next)
+        return next
+      })
+      setNotification(`Couldn't remove ${target.name}. Check your connection and try again.`)
+    } finally {
+      setPendingRemovals((count) => count - 1)
+    }
   }
 
   const moveDocument = (offset: number) => {
@@ -292,10 +319,12 @@ export default function CustomizePage() {
     [bwPrice, colorPrice, documents],
   )
   const canContinue =
+    isCartSynced &&
     documents.length > 0 &&
     documents.every((document) => document.status === "ready") &&
     !isUpdatingPrice &&
-    pendingUploads === 0
+    pendingUploads === 0 &&
+    pendingRemovals === 0
 
   const handleContinueToReview = async () => {
     if (!canContinue) return
@@ -346,14 +375,14 @@ export default function CustomizePage() {
               }}
               onMove={moveDocument}
               onPreviewPage={setPreviewPage}
-              onRemove={removeSelected}
+              onRemove={() => void removeSelected()}
               onPageCountDetected={handlePageCountDetected}
             />
             <section className="mx-auto grid max-w-3xl gap-4 lg:grid-cols-2" aria-label={customizeCopy.preview}>
               <DocumentConfigurationCard
                 document={selectedDocument}
                 fileIndex={documents.findIndex((d) => d.id === selectedDocument.id) + 1}
-                onRemove={removeSelected}
+                onRemove={() => void removeSelected()}
                 onCopiesChange={(copies) =>
                   updateDocument(selectedDocument.id, {
                     copies: Math.min(customizeConfig.maxCopies, copies),

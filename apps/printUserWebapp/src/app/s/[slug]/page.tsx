@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useEffect, useState } from "react"
+import React, { useCallback, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { MobileHeader } from "../../../components/mobile-header"
 import { HeroSection } from "../../../components/hero-section"
@@ -8,17 +8,31 @@ import { DocumentsUploadCard } from "../../../components/documents-upload-card"
 import { PromiseSection } from "../../../components/promise-section"
 import { FAQSection } from "../../../components/faq-section"
 import { BrandFooter } from "../../../components/brand-footer"
-import { cacheUploadedFile, getCachedFileUrl, restoreCachedFile } from "../../../lib/file-store"
+import {
+  cacheUploadedFile,
+  getCachedFileUrl,
+  removeCachedFile,
+  removeCachedFiles,
+  restoreCachedFile,
+} from "../../../lib/file-store"
 import { Info } from "lucide-react"
 import { ShopInfoDrawer } from "../../../components/shop-info-drawer"
 import { VideoCard } from "../../../components/video-card"
 import { faqList } from "../../../data/mock-shop"
 import { UploadedFileItem } from "../../../types/upload"
 import { useShopSession } from "../../../components/shop-session-provider"
-import { deleteGuestDocument, loadGuestSession } from "../../../lib/cloud"
+import {
+  clearGuestCart,
+  deleteGuestDocument,
+  isAlreadyOrderedError,
+  loadGuestSession,
+  type GuestDocumentDto,
+} from "../../../lib/cloud"
+import { clearStoredCart } from "../../../lib/local-cart"
 import {
   MAX_DOCUMENTS_PER_ORDER,
   UPLOAD_CONCURRENCY,
+  isUploadCancelled,
   runWithConcurrency,
   uploadGuestFile,
   validateSelectedFile,
@@ -48,6 +62,33 @@ function stashUploadedFiles(files: UploadedFileItem[]) {
   )
 }
 
+type ServerCart = { restored: UploadedFileItem[]; startedAt: number }
+
+/** The server cart's ready documents, with cached files for previews. */
+async function readServerCart(fresh: boolean): Promise<ServerCart> {
+  const startedAt = Date.now()
+  const session = await loadGuestSession({ fresh })
+  const restored = await Promise.all(
+    session.documents.filter((document) => document.status === "READY").map(toUploadedItem),
+  )
+  return { restored, startedAt }
+}
+
+async function toUploadedItem(document: GuestDocumentDto): Promise<UploadedFileItem> {
+  const cached = await restoreCachedFile(document.id)
+  return {
+    id: document.id,
+    file: cached?.file,
+    name: document.originalFilename,
+    size: document.fileSizeBytes,
+    type: document.mimeType,
+    pageCount: document.pageCount ?? undefined,
+    progress: 100,
+    status: "success",
+    previewUrl: cached?.url,
+  }
+}
+
 export default function ShopUploadPage() {
   const router = useRouter()
   const { shop, routes } = useShopSession()
@@ -55,14 +96,28 @@ export default function ShopUploadPage() {
   const [uploadRound, setUploadRound] = useState(0)
   const [notification, setNotification] = useState<string | null>(null)
   const [isShopInfoOpen, setIsShopInfoOpen] = useState(false)
+  const [isCartLoading, setIsCartLoading] = useState(true)
+  const [isClearing, setIsClearing] = useState(false)
+  const [pendingRemovals, setPendingRemovals] = useState(0)
+  // Set when an upload batch ends with every file in the cart. Removing, clearing, cancelling and
+  // a failure clear it, so only a clean batch moves on by itself; otherwise Continue is there.
+  const [autoContinue, setAutoContinue] = useState(false)
+  // One per picked file, made before it starts, so Cancel and Clear all also stop queued files.
+  const controllers = useRef(new Map<string, AbortController>())
+
   const isUploadingOverall = uploadedFiles.some((file) => file.status === "uploading")
-  // Once everything picked on this visit is in the cart, the order moves on by itself. Coming
-  // back from customize (no round yet) must not bounce the shopper straight forward again.
   const isReadyToContinue =
-    uploadRound > 0 &&
+    autoContinue &&
     !isUploadingOverall &&
+    !isClearing &&
+    pendingRemovals === 0 &&
     uploadedFiles.length > 0 &&
     uploadedFiles.every((file) => file.status === "success")
+  const canContinue =
+    !isUploadingOverall &&
+    !isClearing &&
+    pendingRemovals === 0 &&
+    uploadedFiles.some((file) => file.status === "success")
 
   // Byte-weighted so one large PDF is not drowned out by a few small photos. Held below 100
   // until the server accepts every file, since storage reaching 100% is not the last step.
@@ -85,66 +140,88 @@ export default function ShopUploadPage() {
     isUploadingOverall &&
     roundFiles.every((file) => file.status === "success" || file.progress >= 100)
 
+  const goToCustomize = useCallback(() => {
+    stashUploadedFiles(uploadedFiles)
+    router.push(routes.customize)
+  }, [uploadedFiles, router, routes.customize])
+
   useEffect(() => {
     if (!isReadyToContinue) return
-    const timer = window.setTimeout(() => {
-      stashUploadedFiles(uploadedFiles)
-      router.push(routes.customize)
-    }, AUTO_CONTINUE_DELAY_MS)
+    const timer = window.setTimeout(goToCustomize, AUTO_CONTINUE_DELAY_MS)
     return () => window.clearTimeout(timer)
-  }, [isReadyToContinue, uploadedFiles, router, routes.customize])
+  }, [isReadyToContinue, goToCustomize])
 
   const showToast = (msg: string) => {
     setNotification(msg)
     setTimeout(() => setNotification(null), 3000)
   }
 
-  // The server cart is the source of truth: show files already in it (e.g. after a reload or
-  // coming back from customize) so the list, the cap, and the order all agree.
+  // The server cart is the source of truth for which documents are listed (after a reload, coming
+  // back from customize, or a failed delete), so the list, the cap and the order agree. Files
+  // picked here that are uploading or failed stay beside it, as does one that finished after
+  // this read began.
+  const applyServerCart = ({ restored, startedAt }: ServerCart) => {
+    setUploadedFiles((prev) => {
+      const serverIds = new Set(restored.map((item) => item.id))
+      const fromServer = restored.map((item) => {
+        const local = prev.find((file) => file.id === item.id)
+        return local
+          ? {
+              ...item,
+              file: local.file ?? item.file,
+              previewUrl: local.previewUrl ?? item.previewUrl,
+              uploadRound: local.uploadRound,
+            }
+          : item
+      })
+      const localOnly = prev.filter(
+        (file) =>
+          !serverIds.has(file.id) &&
+          (file.status !== "success" || (file.completedAt ?? 0) > startedAt),
+      )
+      return [...fromServer, ...localOnly]
+    })
+  }
+
+  const syncFromServer = (fresh: boolean) => readServerCart(fresh).then(applyServerCart)
+
+  // Picking stays off until the cart is known, so the 10-file cap counts what is already in it.
   useEffect(() => {
     let cancelled = false
-    void loadGuestSession()
-      .then(async (session) => {
-        const ready = session.documents.filter((document) => document.status === "READY")
-        const restored = await Promise.all(
-          ready.map(async (document): Promise<UploadedFileItem> => {
-            const cached = await restoreCachedFile(document.id)
-            return {
-              id: document.id,
-              file: cached?.file,
-              name: document.originalFilename,
-              size: document.fileSizeBytes,
-              type: document.mimeType,
-              pageCount: document.pageCount ?? undefined,
-              progress: 100,
-              status: "success",
-              previewUrl: cached?.url,
-            }
-          }),
-        )
-        if (cancelled) return
-        setUploadedFiles((prev) => [
-          ...restored.filter((item) => !prev.some((file) => file.id === item.id)),
-          ...prev,
-        ])
+    void readServerCart(false)
+      .then((cart) => {
+        if (!cancelled) applyServerCart(cart)
       })
       .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setIsCartLoading(false)
+      })
     return () => {
       cancelled = true
     }
+    // Runs once on mount; later reads follow a failed delete or clear.
   }, [])
 
   const updateFile = (id: string, patch: Partial<UploadedFileItem>) => {
     setUploadedFiles((prev) => prev.map((file) => (file.id === id ? { ...file, ...patch } : file)))
   }
 
+  const dropFiles = (ids: string[]) => {
+    const dropped = new Set(ids)
+    setUploadedFiles((prev) => prev.filter((file) => !dropped.has(file.id)))
+  }
+
   const runUpload = async (items: UploadedFileItem[]) => {
     let succeeded = 0
+    let cancelled = 0
     await runWithConcurrency(items, UPLOAD_CONCURRENCY, async (item) => {
-      if (!item.file) return
+      const controller = controllers.current.get(item.id)
+      if (!item.file || !controller) return
       try {
-        const { document, file } = await uploadGuestFile(item.file, (progress) =>
-          updateFile(item.id, { progress }),
+        const { document, file } = await uploadGuestFile(
+          item.file,
+          (progress) => updateFile(item.id, { progress }),
+          controller.signal,
         )
         succeeded += 1
         updateFile(item.id, {
@@ -158,15 +235,38 @@ export default function ShopUploadPage() {
           pageCount: document.pageCount ?? undefined,
           type: document.mimeType,
           previewUrl: getCachedFileUrl(document.id) || item.previewUrl,
+          completedAt: Date.now(),
         })
       } catch (error) {
+        if (isUploadCancelled(error)) {
+          // Already off the list; the upload deleted its own cart entry.
+          cancelled += 1
+          dropFiles([item.id])
+          return
+        }
         updateFile(item.id, {
           status: "error",
           errorMessage: error instanceof Error ? error.message : "Upload failed",
         })
+      } finally {
+        controllers.current.delete(item.id)
       }
     })
-    return succeeded
+    return { succeeded, cancelled }
+  }
+
+  /** Starts uploads. A batch that lands in the cart in full moves the order on by itself. */
+  const startUploads = (items: UploadedFileItem[]) => {
+    for (const item of items) controllers.current.set(item.id, new AbortController())
+    setAutoContinue(false)
+    void runUpload(items).then(({ succeeded, cancelled }) => {
+      if (cancelled > 0) return
+      if (succeeded === items.length) {
+        setAutoContinue(true)
+      } else {
+        showToast(`${succeeded} of ${items.length} documents uploaded`)
+      }
+    })
   }
 
   // A new round starts whenever nothing is in flight; a retry sent mid-round joins it, so the
@@ -179,7 +279,7 @@ export default function ShopUploadPage() {
   }
 
   const handleFilesSelected = (files: FileList | null) => {
-    if (!files || files.length === 0) return
+    if (!files || files.length === 0 || isCartLoading || isClearing) return
 
     let remainingSlots =
       MAX_DOCUMENTS_PER_ORDER - uploadedFiles.filter((file) => file.status !== "error").length
@@ -211,28 +311,86 @@ export default function ShopUploadPage() {
 
     setUploadedFiles((prev) => [...prev, ...newItems])
     const validNewItems = newItems.filter((item) => item.status === "uploading")
-    if (validNewItems.length === 0) return
-    void runUpload(validNewItems).then((succeeded) => {
-      // A fully uploaded round moves on to customize by itself; only a partial one needs a note.
-      if (succeeded < validNewItems.length) {
-        showToast(`${succeeded} of ${validNewItems.length} documents uploaded`)
-      }
-    })
+    if (validNewItems.length === 0) {
+      setAutoContinue(false)
+      return
+    }
+    startUploads(validNewItems)
   }
 
-  const handleRemoveFile = (fileId: string) => {
-    const target = uploadedFiles.find((file) => file.id === fileId)
-    // An in-flight upload would land in the cart after being hidden here; let it finish first.
-    if (!target || target.status === "uploading") return
-    setUploadedFiles((prev) => prev.filter((file) => file.id !== fileId))
-    if (target.status === "success") {
-      void deleteGuestDocument(fileId).catch(() => undefined)
+  /** Stops uploads in flight or queued, and takes them off the list. */
+  const cancelUploads = (ids: string[]) => {
+    for (const id of ids) controllers.current.get(id)?.abort()
+    dropFiles(ids)
+  }
+
+  const handleCancelUploads = () => {
+    setAutoContinue(false)
+    cancelUploads(uploadedFiles.filter((file) => file.status === "uploading").map((file) => file.id))
+  }
+
+  const handleRemoveFile = async (fileId: string) => {
+    const index = uploadedFiles.findIndex((file) => file.id === fileId)
+    const target = uploadedFiles[index]
+    if (!target) return
+    setAutoContinue(false)
+    if (target.status === "uploading") {
+      cancelUploads([fileId])
+      return
+    }
+    dropFiles([fileId])
+    // A failed upload already discarded its cart entry; only a document in the cart needs the server.
+    if (target.status !== "success") return
+
+    setPendingRemovals((count) => count + 1)
+    try {
+      await deleteGuestDocument(fileId)
+      void removeCachedFile(fileId)
+    } catch (error) {
+      if (isAlreadyOrderedError(error)) {
+        showToast(`${target.name} is already in your order`)
+        void syncFromServer(true).catch(() => undefined)
+        return
+      }
+      // Put it back where it was: the server still has it, so it would still be ordered.
+      setUploadedFiles((prev) =>
+        prev.some((file) => file.id === fileId)
+          ? prev
+          : [...prev.slice(0, index), target, ...prev.slice(index)],
+      )
+      showToast(`Couldn't remove ${target.name}. Check your connection and try again.`)
+    } finally {
+      setPendingRemovals((count) => count - 1)
+    }
+  }
+
+  const handleClearAll = async () => {
+    const previous = uploadedFiles
+    setAutoContinue(false)
+    setIsClearing(true)
+    // Stop every upload first, so none lands in the cart after it is emptied.
+    for (const controller of controllers.current.values()) controller.abort()
+    setUploadedFiles([])
+    try {
+      await clearGuestCart()
+      clearStoredCart()
+      void removeCachedFiles(
+        previous.filter((file) => file.status === "success").map((file) => file.id),
+      )
+      showToast("All documents cleared")
+    } catch {
+      showToast("Couldn't clear your documents. Check your connection and try again.")
+      await syncFromServer(true).catch(() =>
+        setUploadedFiles(previous.filter((file) => file.status === "success")),
+      )
+    } finally {
+      setIsClearing(false)
     }
   }
 
   const handleRetryFile = (fileId: string) => {
     const target = uploadedFiles.find((file) => file.id === fileId)
-    if (!target?.file) return
+    if (!target?.file || isClearing) return
     const activeCount = uploadedFiles.filter(
       (file) => file.status !== "error" && file.id !== fileId,
     ).length
@@ -248,7 +406,11 @@ export default function ShopUploadPage() {
       uploadRound: startUploadRound(),
     }
     updateFile(fileId, retried)
-    void runUpload([retried])
+    startUploads([retried])
+  }
+
+  const handleContinue = () => {
+    if (canContinue) goToCustomize()
   }
 
   const isAvailable = shop.status === "OPEN" || shop.status === "BUSY"
@@ -305,8 +467,14 @@ export default function ShopUploadPage() {
           shopName={shop.name}
           uploadedFiles={uploadedFiles}
           onFilesSelected={handleFilesSelected}
-          onRemoveFile={handleRemoveFile}
+          onRemoveFile={(fileId) => void handleRemoveFile(fileId)}
           onRetryFile={handleRetryFile}
+          onCancelUploads={handleCancelUploads}
+          onClearAll={() => void handleClearAll()}
+          onContinue={handleContinue}
+          canContinue={canContinue}
+          isCartLoading={isCartLoading}
+          isClearing={isClearing}
           isUploadingOverall={isUploadingOverall}
           isUploadComplete={isReadyToContinue}
           isCheckingUploads={isCheckingUploads}

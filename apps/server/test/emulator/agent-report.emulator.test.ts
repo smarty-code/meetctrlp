@@ -233,3 +233,31 @@ describe("reportAgentJobs: shredding", () => {
     assert.deepEqual(s3.deleted, [keyOf("doc-1")]);
   });
 });
+
+describe("reportAgentJobs: reports the server can't fully read", () => {
+  it("accepts an over-large page count and a long error, and answers an unreadable report on its own", async () => {
+    await seedPrintingOrder(["doc-1", "doc-2"]);
+    const longError = "Spooler: ".padEnd(2000, "x");
+
+    const response = await reportAgentJobs(principalFor(shopId), AGENT, {
+      reports: [
+        report({ pagesPrinted: 9_999_999 }),
+        report({ jobId: "job-2", leaseId: "lease-2", status: "FAILED", errorCode: "SPOOLER", errorMessage: longError }),
+        { orderId: "order-1", jobId: "job-3", leaseId: "lease-3", status: "DONE" },
+        { status: "COMPLETED" },
+      ],
+    });
+
+    assert.deepEqual(response.results, [
+      { jobId: "job-1", result: "ok" },
+      { jobId: "job-2", result: "ok" },
+      { jobId: "job-3", result: "invalid_state" },
+    ]);
+    const completed = await readJob(shopId, "order-1", "job-1");
+    assert.equal(completed.status, "COMPLETED");
+    assert.equal(completed.pagesPrinted, 2);
+    const failed = await readJob(shopId, "order-1", "job-2");
+    assert.equal(failed.status, "FAILED");
+    assert.equal(failed.errorMessage.length, 500);
+  });
+});

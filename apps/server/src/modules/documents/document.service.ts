@@ -250,6 +250,23 @@ export async function recordDocumentAccess(
 }
 
 /**
+ * Deletes every stored file of an order nothing will print (a cancelled one). False if any delete
+ * failed; the dropped-order clean-up tries those again within the week.
+ */
+export async function shredAllOrderDocuments(shopId: string, orderId: string) {
+  const snapshot = await getFirebaseFirestore().doc(`shops/${shopId}/orders/${orderId}`).get();
+  const documents = (snapshot.get("documents") ?? []) as StoredOrderDocument[];
+  let allDeleted = true;
+  for (const document of documents) {
+    if (document.shreddedAt || !document.storageKey) {
+      continue;
+    }
+    allDeleted = (await shredOrderDocument(shopId, orderId, document.docId ?? document.id)) && allDeleted;
+  }
+  return allDeleted;
+}
+
+/**
  * Deletes a printed document's file, then marks it `shreddedAt`. Returns false if the delete
  * failed, so the caller can retry. A file that is already gone counts as deleted.
  */

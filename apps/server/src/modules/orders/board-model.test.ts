@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { DELTA_OVERLAP_MS, deltaStart, shopDateRange, shopDayStart } from "./board-model.ts";
+import { DELTA_OVERLAP_MS, deltaStart, isAwaitingOnlinePayment, shopDateRange, shopDayStart } from "./board-model.ts";
+
+describe("orders awaiting online payment", () => {
+  it("are only submitted online orders that are not paid", () => {
+    const order = (status: string, method: string, payment: string) => ({ status, payment: { method, status: payment } });
+    assert.equal(isAwaitingOnlinePayment(order("SUBMITTED", "ONLINE", "PENDING")), true);
+    assert.equal(isAwaitingOnlinePayment(order("SUBMITTED", "ONLINE", "PAID")), false);
+    assert.equal(isAwaitingOnlinePayment(order("SUBMITTED", "CASH", "PENDING")), false);
+    assert.equal(isAwaitingOnlinePayment(order("SHOP_ACCEPTED", "ONLINE", "PENDING")), false);
+    assert.equal(isAwaitingOnlinePayment(order("CANCELLED", "ONLINE", "PENDING")), false);
+  });
+});
 
 describe("shop-time dates", () => {
   it("starts a shop day at 18:30 UTC the day before", () => {

@@ -494,6 +494,8 @@ Paths under `apps/server/` unless noted.
 
 **Signed cookie.** The value is `v1.<printUserId>.<expiresAtEpochSeconds>.<ipHash>.<hmac>`, with HMAC-SHA256 using the new secret `PRINT_USER_COOKIE_SECRET`. Today the cookie is the raw `printUserId` (`print-user-http.ts` 25), checked by reading the session document and comparing the IP on every call, so this is also a hardening step.
 
+> **Changed 2026-10-16 (`fix/upload`).** The IP binding is gone. The cookie is now `v2.<printUserId>.<shopId>.<expiresAtEpochSeconds>.<hmac>`, and session start no longer resumes a cart by shop and IP. A phone that changes networks lost its cart, and visitors sharing an address (shop Wi-Fi, carrier NAT) could resume each other's cart. A v1 cookie still verifies, with its IP tag ignored, until it expires. See `docs/developer-requirement/printUser-app/printUser-apps/CtrlP_Print_User_Upload_Sync_Fix_Plan.md` (S2).
+
 `requirePrintUserSession` then:
 
 - verifies the cookie with **no read**;
@@ -624,7 +626,7 @@ Clients never write anywhere. The server bypasses rules (Admin SDK for Firestore
 | `orders` | Collection | `status` ASC, `payment.status` ASC | `sync` auto-accept |
 | `orders` | Collection | `status` ASC, `createdAt` DESC | History filtered by status |
 | `orders` | Collection | `searchKeys` ARRAY_CONTAINS, `createdAt` DESC | Search |
-| `printUsers` | Collection | `shopId` ASC, `ipAddress` ASC | Session resume (existing query; check whether it needs a composite) |
+| `printUsers` | Collection | `shopId` ASC, `ipAddress` ASC | Not needed since 2026-10-16: sessions are no longer resumed by IP |
 
 - Automatic single-field indexes cover the full board's `status in [...]` and the order changes' `updatedAt >`.
 - Drop draft indexes on fields that are never written.
@@ -1077,7 +1079,7 @@ Estimates are for one engineer who knows the code. Dependencies are by task ID.
 | Server: retry | From FAILED, from QUEUED, and from DISPATCHING older than 15 minutes (but not younger); clears the lease; a new printer sets `agentId`, `printerName` and `printerSystemName`; a disabled printer is refused |
 | Server: board | Full versus delta; 5 s overlap; caps → full; left-active-set; jobs by `updatedAt` |
 | Server: ring | Body shape; awaited; one retry; never throws; coalesced per request; timeout → `ring_unknown`, HTTP error → `ring_failed` |
-| Server: guest | Cookie sign and verify, expiry, IP mismatch, tampering; config cache |
+| Server: guest | Cookie sign and verify, expiry, v1 compatibility (no IP check), tampering; config cache |
 | Desktop (Vitest) | Board merging (snapshot, delta, duplicates, moving out of active tabs); visible-only fetch with a dirty flag; stale-work nudge (queued job and paid unaccepted order); shop-time date parameters |
 | Agent (xUnit) | 10.6 |
 | Rules | 7.3 |

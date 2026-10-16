@@ -1,5 +1,6 @@
 import {
   ApiError,
+  UploadCancelledError,
   completeDocumentUpload,
   createDocumentIntent,
   deleteGuestDocument,
@@ -7,6 +8,31 @@ import {
   type GuestDocumentDto,
 } from "./cloud"
 import { cacheUploadedFile } from "./file-store"
+
+export { UploadCancelledError }
+
+export function isUploadCancelled(error: unknown) {
+  return error instanceof UploadCancelledError
+}
+
+/** Waits `ms`, or rejects at once when the upload is cancelled. */
+function pause(ms: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new UploadCancelledError())
+      return
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort)
+      resolve()
+    }, ms)
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(new UploadCancelledError())
+    }
+    signal?.addEventListener("abort", onAbort, { once: true })
+  })
+}
 
 /** Mirrors the server's per-order cap (MAX_GUEST_FILES). */
 export const MAX_DOCUMENTS_PER_ORDER = 10
@@ -109,14 +135,21 @@ async function prepareFileForUpload(file: File): Promise<{ file: File; mimeType:
   throw new Error("Unsupported format")
 }
 
-async function putWithRetry(uploadUrl: string, file: File, mimeType: string, onProgress: (percent: number) => void) {
+async function putWithRetry(
+  uploadUrl: string,
+  file: File,
+  mimeType: string,
+  onProgress: (percent: number) => void,
+  signal?: AbortSignal,
+) {
   try {
-    await uploadToPresignedUrl(uploadUrl, file, mimeType, onProgress)
-  } catch {
+    await uploadToPresignedUrl(uploadUrl, file, mimeType, onProgress, signal)
+  } catch (error) {
+    if (isUploadCancelled(error)) throw error
     // Mobile uplinks drop often; one retry covers most transient failures.
     onProgress(0)
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-    await uploadToPresignedUrl(uploadUrl, file, mimeType, onProgress)
+    await pause(1000, signal)
+    await uploadToPresignedUrl(uploadUrl, file, mimeType, onProgress, signal)
   }
 }
 
@@ -131,39 +164,51 @@ function isTransientFailure(error: unknown) {
  * a 429/5xx while instances scale, or a lost response is retried instead of discarding an upload
  * that already reached storage. A 400 means the file itself is unusable and is not retried.
  */
-async function completeWithRetry(docId: string) {
+async function completeWithRetry(docId: string, signal?: AbortSignal) {
   for (let attempt = 1; ; attempt += 1) {
     try {
       return await completeDocumentUpload(docId)
     } catch (error) {
       if (attempt >= COMPLETE_ATTEMPTS || !isTransientFailure(error)) throw error
-      await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** (attempt - 1)))
+      await pause(1000 * 2 ** (attempt - 1), signal)
     }
   }
 }
 
 /**
  * Uploads one file into the guest cart: intent -> storage PUT -> server inspection.
- * On failure the server-side intent is discarded so it does not hold a cart slot.
+ * On failure the server-side intent is discarded so it does not hold a cart slot. `signal`
+ * cancels it at any step, with `UploadCancelledError`: the PUT is aborted, and an intent that
+ * arrives after the cancel is deleted as soon as it does.
  */
 export async function uploadGuestFile(
   source: File,
   onProgress: (percent: number) => void,
+  signal?: AbortSignal,
 ): Promise<{ document: GuestDocumentDto; file: File }> {
+  const throwIfCancelled = () => {
+    if (signal?.aborted) throw new UploadCancelledError()
+  }
+  throwIfCancelled()
   const { file, mimeType } = await prepareFileForUpload(source)
+  throwIfCancelled()
   const intent = await createDocumentIntent({
     originalFilename: file.name,
     mimeType,
     fileSizeBytes: file.size,
   })
   try {
-    await putWithRetry(intent.uploadUrl, file, intent.document.mimeType, onProgress)
-    const document = await completeWithRetry(intent.document.id)
+    throwIfCancelled()
+    await putWithRetry(intent.uploadUrl, file, intent.document.mimeType, onProgress, signal)
+    throwIfCancelled()
+    const document = await completeWithRetry(intent.document.id, signal)
+    // Cancelled while the server checked the file: it is in the cart, but no longer wanted.
+    throwIfCancelled()
     cacheUploadedFile(document.id, file)
     return { document, file }
   } catch (error) {
     void deleteGuestDocument(intent.document.id).catch(() => undefined)
-    throw error
+    throw signal?.aborted ? new UploadCancelledError() : error
   }
 }
 

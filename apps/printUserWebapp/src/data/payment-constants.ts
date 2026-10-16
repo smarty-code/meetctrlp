@@ -20,6 +20,8 @@ export const PAYMENT_STATUS = {
 
 export const PAYMENT_STORAGE_KEYS = {
   ACTIVE_TRANSACTION: "ctrlp-active-payment-transaction",
+  /** The idempotency key of the checkout in progress, so a retried submit replays it. */
+  CHECKOUT_KEY: "ctrlp-checkout-key",
 } as const
 
 export const PAYMENT_TIMINGS = {
@@ -51,7 +53,9 @@ export const PAYMENT_COPY = {
   paymentSuccessNotice: "Payment successful! Finalizing your order...",
   paymentFailedTitle: "Payment couldn't be completed",
   paymentFailedDescription:
-    "The payment could not be processed. Don't worry, your money was not deducted. You can try again or choose to pay cash at the shop.",
+    "The payment could not be processed. Don't worry, your money was not deducted. Your order is saved: try the payment again, or cancel the order from its tracking page.",
+  /** Why cash is off once an online order has been placed and is waiting for its payment. */
+  onlineOrderPendingReason: "This order was placed for online payment",
   retryCTA: "Try Again",
   switchMethodCTA: "Choose Another Method",
   paymentPendingTitle: "Payment is being confirmed",

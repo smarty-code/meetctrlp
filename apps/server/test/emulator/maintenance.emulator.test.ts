@@ -12,6 +12,7 @@ import {
   clearFirestore,
   daysAgo,
   db,
+  minutesAgo,
   newShopId,
   readOrder,
   seedOrder,
@@ -93,7 +94,14 @@ describe("runDailyMaintenance", () => {
 
     const summary = await runDailyMaintenance();
 
-    assert.deepEqual(summary, { trackingCopies: 3, guestSessions: 2, guestFiles: 2, droppedOrderFiles: 2, more: false });
+    assert.deepEqual(summary, {
+      trackingCopies: 3,
+      guestSessions: 2,
+      guestFiles: 2,
+      unpaidOrdersCancelled: 0,
+      droppedOrderFiles: 2,
+      more: false,
+    });
 
     assert.equal(await exists("orderTracking/old-completed"), false);
     assert.equal(await exists("orderTracking/old-rejected"), false);
@@ -132,6 +140,35 @@ describe("runDailyMaintenance", () => {
     s3.failing.clear();
     assert.equal((await runDailyMaintenance()).droppedOrderFiles, 1);
     assert.ok((await readOrder(shopId, "rejected-3d")).documents[0].shreddedAt);
+  });
+
+  it("cancels online orders unpaid past the payment window and deletes their files, and only those", async () => {
+    const online = (status: string) => ({ method: "ONLINE", status });
+    const documents = (orderId: string) => [storedDocument(shopId, orderId, "doc-1")];
+    await seedOrder(shopId, "unpaid-old", { payment: online("PENDING"), createdAt: minutesAgo(45), documents: documents("unpaid-old") });
+    await seedOrder(shopId, "unpaid-new", { payment: online("PENDING"), createdAt: minutesAgo(10), documents: documents("unpaid-new") });
+    await seedOrder(shopId, "paid-old", { payment: online("PAID"), createdAt: minutesAgo(45), documents: documents("paid-old") });
+    await seedOrder(shopId, "cash-old", { createdAt: minutesAgo(45), documents: documents("cash-old") });
+    await seedOrder(shopId, "accepted-old", {
+      status: "SHOP_ACCEPTED",
+      payment: online("PENDING"),
+      createdAt: minutesAgo(45),
+      documents: documents("accepted-old"),
+    });
+
+    const summary = await runDailyMaintenance();
+
+    assert.equal(summary.unpaidOrdersCancelled, 1);
+    const cancelled = await readOrder(shopId, "unpaid-old");
+    assert.equal(cancelled.status, "CANCELLED");
+    assert.equal(cancelled.cancellation.reason, "PAYMENT_TIMEOUT");
+    assert.ok(cancelled.lifecycle.cancelledAt);
+    assert.ok(cancelled.documents[0].shreddedAt);
+    for (const orderId of ["unpaid-new", "paid-old", "cash-old"]) {
+      assert.equal((await readOrder(shopId, orderId)).status, "SUBMITTED", orderId);
+    }
+    assert.equal((await readOrder(shopId, "accepted-old")).status, "SHOP_ACCEPTED");
+    assert.deepEqual(s3.deleted, [`uploads/${shopId}/unpaid-old/doc-1.pdf`]);
   });
 
   it("removes an expired guest even when one of its files can't be deleted", async () => {

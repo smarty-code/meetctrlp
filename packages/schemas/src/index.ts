@@ -1,5 +1,6 @@
 export {
   assertOfferWithinHardware,
+  cancelPrintJobRequestSchema,
   defaultPrinterOffered,
   dispatchPrintJobRequestSchema,
   printerOfferedSchema,
@@ -12,6 +13,7 @@ export {
   syncPrintersRequestSchema,
   updatePrinterConfigRequestSchema,
   updatePrinterPresetRequestSchema,
+  type CancelPrintJobRequestInput,
   type DispatchPrintJobRequestInput,
   type PrinterOffered,
   type PrinterTelemetryRequestInput,
@@ -41,6 +43,9 @@ export {
   printUserSubmitOrderRequestSchema,
   printUserUploadIntentRequestSchema,
   type PrintUserBatchConfigurationInput,
+  type PrintUserCartErrorCode,
+  type PrintUserClearCartResponse,
+  type PrintUserDeleteDocumentResponse,
   type PrintUserMockConfirmRequestInput,
   type PrintUserPrintConfigurationInput,
   type PrintUserSubmitOrderRequestInput,
@@ -105,14 +110,17 @@ export {
   agentFinalJobStatusSchema,
   agentJobReportSchema,
   reportAgentJobsRequestSchema,
+  syncAgentRequestSchema,
   type AcceptOrderRequestInput,
   type AgentJobDownload,
   type AgentJobReportInput,
   type AgentJobReportResult,
   type ReportAgentJobsRequestInput,
   type ReportAgentJobsResponse,
+  type SyncAgentRequestInput,
   type SyncAgentResponse,
   type SyncClaimedJob,
+  type SyncRevokedLease,
 } from "./agent-sync";
 export {
   boardQuerySchema,
@@ -122,3 +130,4 @@ export {
   type OrderHistoryQueryInput,
   type OrderSearchQueryInput,
 } from "./board";
+export { formatPageRanges, parsePageSelection, type PageSelectionResult } from "./page-selection";

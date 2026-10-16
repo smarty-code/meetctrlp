@@ -160,6 +160,8 @@ export const dispatchPrintJobRequestSchema = z.object({
       colorMode: z.enum(["BW", "COLOR"]).optional(),
       copies: z.number().int().min(1).max(999).optional(),
       paperSize: z.enum(["A4", "A3"]).optional(),
+      /** The customer's choice; the printer's preset applies when it is left out. */
+      orientation: z.enum(["PORTRAIT", "LANDSCAPE"]).optional(),
       pageSelection: z.string().trim().min(1).max(200).optional(),
       inputTray: z.string().trim().min(1).max(40).optional(),
       duplex: z.boolean().optional(),
@@ -172,6 +174,14 @@ export const retryPrintJobRequestSchema = z.object({
   printerId: z.string().trim().min(8).max(64).optional(),
 });
 
+/** The operator stops a job: one waiting, one that failed, or one whose PC went quiet. */
+export const cancelPrintJobRequestSchema = z
+  .object({
+    reason: z.string().trim().min(1).max(200).optional(),
+  })
+  .default({});
+
+export type CancelPrintJobRequestInput = z.infer<typeof cancelPrintJobRequestSchema>;
 export type SyncPrintersRequestInput = z.infer<typeof syncPrintersRequestSchema>;
 export type PrinterTelemetryRequestInput = z.infer<typeof printerTelemetryRequestSchema>;
 export type RoutePrintJobRequestInput = z.infer<typeof routePrintJobRequestSchema>;

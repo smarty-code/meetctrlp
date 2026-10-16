@@ -39,6 +39,19 @@ export const printUserMockConfirmRequestSchema = z.object({
   idempotencyKey: z.string().uuid(),
 });
 
+/** `DELETE /public/session/documents/{docId}`. `removed` is false when it was already gone. */
+export type PrintUserDeleteDocumentResponse = { ok: true; removed: boolean };
+
+/** `DELETE /public/session/documents`: empties the cart. `removed` counts the entries taken out. */
+export type PrintUserClearCartResponse = { ok: true; removed: number };
+
+/**
+ * Cart errors the web app tells apart, sent as the response's `error`:
+ * - `ALREADY_ORDERED` (409): the document left the cart in the guest's order, so it can't be deleted.
+ * - `DOCUMENTS_STILL_UPLOADING` (409): submit refused while a cart file is still uploading.
+ */
+export type PrintUserCartErrorCode = "ALREADY_ORDERED" | "DOCUMENTS_STILL_UPLOADING";
+
 export type PrintUserUploadIntentRequestInput = z.infer<
   typeof printUserUploadIntentRequestSchema
 >;

@@ -3,8 +3,15 @@ const clientFileMap = new Map<string, { file: File; url: string }>()
 
 const DB_NAME = "ctrlp_files_store"
 const STORE_NAME = "uploaded_files"
+/**
+ * Files are kept for previews (customize, review, tracking) for as long as a guest session lasts,
+ * then pruned, so a shared phone does not hold on to someone's documents.
+ */
+const CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000
 
-function getDb(): Promise<IDBDatabase> {
+let dbPromise: Promise<IDBDatabase> | null = null
+
+function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     if (typeof window === "undefined" || typeof indexedDB === "undefined") {
       return reject(new Error("IndexedDB not supported"))
@@ -21,6 +28,43 @@ function getDb(): Promise<IDBDatabase> {
   })
 }
 
+/** One connection per page, pruned of expired files the first time it opens. */
+function getDb(): Promise<IDBDatabase> {
+  if (!dbPromise) {
+    dbPromise = openDb().then((db) => {
+      void pruneExpiredFiles(db)
+      return db
+    })
+    // A failed open (private mode, blocked storage) is tried again on the next call.
+    dbPromise.catch(() => {
+      dbPromise = null
+    })
+  }
+  return dbPromise
+}
+
+function pruneExpiredFiles(db: IDBDatabase) {
+  return new Promise<void>((resolve) => {
+    try {
+      const cutoff = Date.now() - CACHE_MAX_AGE_MS
+      const tx = db.transaction(STORE_NAME, "readwrite")
+      const cursorRequest = tx.objectStore(STORE_NAME).openCursor()
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result
+        if (!cursor) return
+        // Entries written before `cachedAt` existed have no age, so they go too.
+        const cachedAt = (cursor.value as { cachedAt?: number }).cachedAt
+        if (typeof cachedAt !== "number" || cachedAt < cutoff) cursor.delete()
+        cursor.continue()
+      }
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => resolve()
+    } catch {
+      resolve()
+    }
+  })
+}
+
 export async function persistFileToIndexedDB(
   id: string,
   file: File
@@ -33,6 +77,7 @@ export async function persistFileToIndexedDB(
       file,
       name: file.name,
       type: file.type,
+      cachedAt: Date.now(),
     })
   } catch (e) {
     console.warn("Could not persist file to IndexedDB:", e)
@@ -93,4 +138,30 @@ export async function restoreCachedFile(
     return item
   }
   return null
+}
+
+/** Drops removed documents' files from memory and IndexedDB. Best effort. */
+export async function removeCachedFiles(ids: string[]): Promise<void> {
+  for (const id of ids) {
+    const cached = clientFileMap.get(id)
+    if (cached?.url) {
+      try {
+        URL.revokeObjectURL(cached.url)
+      } catch {}
+    }
+    clientFileMap.delete(id)
+  }
+  if (ids.length === 0) return
+  try {
+    const db = await getDb()
+    const tx = db.transaction(STORE_NAME, "readwrite")
+    const store = tx.objectStore(STORE_NAME)
+    for (const id of ids) store.delete(id)
+  } catch (e) {
+    console.warn("Could not remove files from IndexedDB:", e)
+  }
+}
+
+export function removeCachedFile(id: string): Promise<void> {
+  return removeCachedFiles([id])
 }

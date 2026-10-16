@@ -11,20 +11,33 @@ export const acceptOrderRequestSchema = orderTransitionRequestSchema.extend({
 
 export const agentFinalJobStatusSchema = z.enum(["COMPLETED", "FAILED", "CANCELLED"]);
 
+/** Trimmed and cut to `max` characters, an empty one as null: a long Windows error never fails a report. */
+const reportText = (max: number) =>
+  z
+    .string()
+    .transform((value) => value.trim().slice(0, max) || null)
+    .nullable()
+    .optional();
+
 export const agentJobReportSchema = z.object({
   orderId: z.string().trim().min(1).max(80),
   jobId: z.string().trim().min(1).max(80),
   leaseId: z.string().trim().min(1).max(80),
   status: agentFinalJobStatusSchema,
-  pagesPrinted: z.number().int().min(0).max(100_000).optional(),
+  // The server clamps it to the job's own page total, so a large count is accepted, not refused.
+  pagesPrinted: z.number().int().min(0).optional(),
   spoolerJobId: z.number().int().positive().nullable().optional(),
-  errorCode: z.string().trim().min(1).max(80).nullable().optional(),
-  errorMessage: z.string().trim().min(1).max(500).nullable().optional(),
+  errorCode: reportText(80),
+  errorMessage: reportText(500),
 });
 
-/** `POST .../agents/{agentId}/jobs/report`: final reports only, at most 20 per request. */
+/**
+ * `POST .../agents/{agentId}/jobs/report`: final reports only, at most 20 per request. Each report
+ * is parsed on its own (`agentJobReportSchema`), so one the server can't read gets its own
+ * `invalid_state` result instead of failing the batch.
+ */
 export const reportAgentJobsRequestSchema = z.object({
-  reports: z.array(agentJobReportSchema).min(1).max(20),
+  reports: z.array(z.unknown()).min(1).max(20),
 });
 
 export type AcceptOrderRequestInput = z.infer<typeof acceptOrderRequestSchema>;
@@ -63,10 +76,48 @@ export type SyncClaimedJob = {
   download: AgentJobDownload | null;
 };
 
+/**
+ * `POST .../agents/{agentId}/sync` body. `held` lists the leases of cloud jobs the agent has queued
+ * or is printing and has not finished, so the server can say which of them are no longer its to
+ * print. An agent that sends nothing (`{}`) gets no `revoked`.
+ */
+export const syncAgentRequestSchema = z
+  .object({
+    held: z
+      .array(
+        z.object({
+          orderId: z.string().trim().min(1).max(80),
+          jobId: z.string().trim().min(1).max(80),
+          leaseId: z.string().trim().min(1).max(80),
+        }),
+      )
+      .max(100)
+      .default([]),
+  })
+  .default({});
+
+export type SyncAgentRequestInput = z.infer<typeof syncAgentRequestSchema>;
+
+/**
+ * A held lease the agent must drop without printing (and without reporting):
+ * - `CANCELLED`: the shop cancelled the job.
+ * - `RESCUED`: the operator re-queued it, or it now has another lease or another PC.
+ * - `FINISHED`: the server already has its final result.
+ * - `NOT_FOUND`: the job or its order is gone.
+ */
+export type SyncRevokedLease = {
+  orderId: string;
+  jobId: string;
+  leaseId: string;
+  reason: "NOT_FOUND" | "CANCELLED" | "RESCUED" | "FINISHED";
+};
+
 /** `POST .../agents/{agentId}/sync`. */
 export type SyncAgentResponse = {
   accepted: string[];
   claimed: SyncClaimedJob[];
+  /** Held leases that are no longer valid; apply these before queuing `claimed`. */
+  revoked: SyncRevokedLease[];
   /** True when a query hit its limit: call `sync` again straight away. */
   more: boolean;
 };

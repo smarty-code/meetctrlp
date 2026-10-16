@@ -4,13 +4,16 @@
 import { randomUUID } from "node:crypto";
 
 import { FieldValue, getFirebaseFirestore, type DocumentReference } from "@ctrlp/firebase/firestore";
+import { agentJobReportSchema } from "@ctrlp/schemas";
 import type {
   AgentJobReportInput,
   AgentJobReportResult,
   ReportAgentJobsRequestInput,
   ReportAgentJobsResponse,
+  SyncAgentRequestInput,
   SyncAgentResponse,
   SyncClaimedJob,
+  SyncRevokedLease,
 } from "@ctrlp/schemas";
 import type { ShopPrincipal } from "@ctrlp/types";
 
@@ -22,7 +25,7 @@ import {
   type StoredOrderDocument,
 } from "@/src/modules/documents/document.service";
 import { applyOrderChange } from "@/src/modules/orders/order.service";
-import { STUCK_JOB_MS, allDocumentsDone, decideReport } from "@/src/modules/printing/job-model";
+import { STUCK_JOB_MS, allDocumentsDone, decideReport, revokedReason } from "@/src/modules/printing/job-model";
 import { queueIncomingOrder } from "@/src/modules/printing/print-job.service";
 import { ringShop } from "@/src/modules/realtime/doorbell";
 import { getShopConfig } from "@/src/modules/shops/shop-config.service";
@@ -163,8 +166,9 @@ async function redeliverStuckJobs(principal: ShopPrincipal, agentId: string) {
     if (typeof leaseId !== "string" || !leaseId) {
       continue;
     }
-    // Refreshing claimedAt keeps a live agent's job from looking rescuable to the operator.
-    batch.update(job.ref, { claimedAt: FieldValue.serverTimestamp() });
+    // Refreshing claimedAt keeps a live agent's job from looking rescuable to the operator, and
+    // updatedAt carries that to the board's deltas, so it stops offering a Rescue that would 409.
+    batch.update(job.ref, { claimedAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
     claimed.push({ jobRef: job.ref, job: job.data(), leaseId, redelivered: true });
   }
   await batch.commit();
@@ -217,10 +221,43 @@ async function toSyncJobs(shopId: string, claimed: Claimed[], origin: string) {
 }
 
 /**
- * `POST .../agents/{agentId}/sync`: accept paid orders, claim this agent's queued jobs, and hand back
- * stuck ones, with download links. Call it again while `more` is true.
+ * Step 0: which of the leases the agent still holds it must drop. Read before claiming, so a job
+ * the operator re-queued onto this same PC is revoked under its old lease and claimed under a new one.
  */
-export async function syncAgent(principal: ShopPrincipal, agentId: string, origin: string): Promise<SyncAgentResponse> {
+async function findRevokedLeases(principal: ShopPrincipal, agentId: string, held: SyncAgentRequestInput["held"]) {
+  if (held.length === 0) {
+    return [] as SyncRevokedLease[];
+  }
+  const jobs = await db().getAll(
+    ...held.map((entry) => orderRef(principal.shopId, entry.orderId).collection("printJobs").doc(entry.jobId)),
+  );
+  return held.flatMap((entry, index): SyncRevokedLease[] => {
+    const job = jobs[index];
+    const reason = revokedReason(
+      {
+        exists: job.exists && job.get("shopId") === principal.shopId,
+        status: String(job.get("status") ?? ""),
+        leaseId: job.get("leaseId"),
+        agentId: job.get("agentId"),
+      },
+      entry,
+      agentId,
+    );
+    return reason ? [{ orderId: entry.orderId, jobId: entry.jobId, leaseId: entry.leaseId, reason }] : [];
+  });
+}
+
+/**
+ * `POST .../agents/{agentId}/sync`: say which held leases are revoked, accept paid orders, claim this
+ * agent's queued jobs, and hand back stuck ones, with download links. Call it again while `more` is true.
+ */
+export async function syncAgent(
+  principal: ShopPrincipal,
+  agentId: string,
+  origin: string,
+  input: SyncAgentRequestInput = { held: [] },
+): Promise<SyncAgentResponse> {
+  const revoked = await findRevokedLeases(principal, agentId, input.held);
   const accepting = await autoAcceptPaidOrders(principal, agentId);
   const claiming = await claimQueuedJobs(principal, agentId);
   const redelivering = await redeliverStuckJobs(principal, agentId);
@@ -240,6 +277,7 @@ export async function syncAgent(principal: ShopPrincipal, agentId: string, origi
   return {
     accepted: accepting.accepted,
     claimed,
+    revoked,
     more: accepting.full || claiming.full || redelivering.full,
   };
 }
@@ -313,9 +351,16 @@ async function shredIfUnused(shopId: string, orderId: string, jobId: string, doc
   return shredOrderDocument(shopId, orderId, documentId);
 }
 
+/** The job id of a report the server could not read, if it has one to answer to. */
+function unreadableReportJobId(raw: unknown) {
+  const jobId = raw && typeof raw === "object" ? (raw as { jobId?: unknown }).jobId : undefined;
+  return typeof jobId === "string" && jobId.trim() ? jobId.trim() : null;
+}
+
 /**
- * `POST .../agents/{agentId}/jobs/report`: final job results. Each report is its own transaction and
- * gets its own result, so one bad report never fails the batch.
+ * `POST .../agents/{agentId}/jobs/report`: final job results. Each report is parsed on its own and
+ * is its own transaction, with its own result, so one bad report never fails the batch. One the
+ * server can't read is answered `invalid_state`, which the agent treats as final (not retried).
  */
 export async function reportAgentJobs(
   principal: ShopPrincipal,
@@ -325,7 +370,17 @@ export async function reportAgentJobs(
   const results: ReportAgentJobsResponse["results"] = [];
   let changedOrder: string | undefined;
 
-  for (const report of input.reports) {
+  for (const raw of input.reports) {
+    const parsed = agentJobReportSchema.safeParse(raw);
+    if (!parsed.success) {
+      const jobId = unreadableReportJobId(raw);
+      console.error("Unreadable agent job report", agentId, jobId, parsed.error.issues[0]?.message);
+      if (jobId) {
+        results.push({ jobId, result: "invalid_state" });
+      }
+      continue;
+    }
+    const report = parsed.data;
     const outcome = await applyReport(principal, agentId, report);
     let result = outcome.result;
     if (outcome.shred && !(await shredIfUnused(principal.shopId, outcome.shred.orderId, report.jobId, outcome.shred.documentId))) {

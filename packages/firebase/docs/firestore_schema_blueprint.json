@@ -327,7 +327,7 @@
           "id": { "type": "string", "description": "Opaque guest session id" },
           "shopId": { "type": "string" },
           "shopSlug": { "type": "string" },
-          "ipAddress": { "type": "string", "description": "Client IP used to resume the session" },
+          "ipAddress": { "type": "string", "description": "Client IP at session start, kept for abuse logging. Never used to find or resume a session; the signed cookie identifies the guest" },
           "documents": {
             "type": "array",
             "description": "The guest cart: at most 10 live documents. Submitted documents are removed when the order is placed; FAILED and abandoned UPLOADING intents are pruned on the next upload.",

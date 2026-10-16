@@ -188,6 +188,41 @@ export async function submitOnlinePaidOrder(
 }
 
 /**
+ * The idempotency key for submitting this cart with this method. It stays the same until the
+ * cart's documents or the method change, so a submit retried after a lost response replays the
+ * order the server already placed instead of failing on the emptied cart.
+ */
+export function checkoutIdempotencyKey(order: OrderDraft, method: PaymentMethodItem["id"]): string {
+  const fingerprint = `${method}:${order.documents.map((doc) => doc.id).sort().join(",")}`
+  try {
+    const stored = JSON.parse(
+      window.sessionStorage.getItem(PAYMENT_STORAGE_KEYS.CHECKOUT_KEY) ?? "null",
+    ) as { fingerprint: string; key: string } | null
+    if (stored?.fingerprint === fingerprint) return stored.key
+  } catch {}
+  const key = `idemp_pay_${crypto.randomUUID()}`
+  try {
+    window.sessionStorage.setItem(PAYMENT_STORAGE_KEYS.CHECKOUT_KEY, JSON.stringify({ fingerprint, key }))
+  } catch {}
+  return key
+}
+
+/** Pays an order that was placed for online payment but not paid yet (a retry). */
+export async function payPlacedOrder(orderId: string): Promise<boolean> {
+  try {
+    await mockConfirmPayment(orderId, crypto.randomUUID())
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** The transaction belongs to an order the server already placed (not a price-check failure). */
+export function hasPlacedOrder(transaction: PaymentTransaction | null): transaction is PaymentTransaction {
+  return Boolean(transaction?.providerReference)
+}
+
+/**
  * Persists active payment transaction to sessionStorage
  */
 export function saveActiveTransaction(tx: PaymentTransaction): void {

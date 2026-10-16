@@ -68,8 +68,12 @@ describe("print-user helpers", () => {
   });
 
   it("requires ready documents before submit", () => {
-    assert.equal(canSubmitGuestDocuments([]).ok, false);
-    assert.equal(canSubmitGuestDocuments([{ status: "UPLOADING" }]).ok, false);
+    assert.deepEqual(canSubmitGuestDocuments([]), { ok: false, status: 400, reason: "upload at least one document" });
+    assert.deepEqual(canSubmitGuestDocuments([{ status: "READY" }, { status: "UPLOADING" }]), {
+      ok: false,
+      status: 409,
+      reason: "DOCUMENTS_STILL_UPLOADING",
+    });
     assert.equal(canSubmitGuestDocuments([{ status: "READY" }]).ok, true);
   });
 

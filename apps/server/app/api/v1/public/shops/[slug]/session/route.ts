@@ -38,9 +38,9 @@ export async function POST(request: Request, context: RouteContext) {
       shopId: shop.id,
       shopSlug: shop.slug,
       ipAddress: readClientIp(request),
-      cookiePrintUserId: (await readGuestPrincipal(request))?.id,
+      cookiePrintUserId: (await readGuestPrincipal())?.id,
     });
-    await writePrintUserCookie(session, request);
+    await writePrintUserCookie(session);
     return jsonResponse({ session: toPublicSession(session), shop, firebaseToken: await guestFirebaseToken(session.id) });
   } catch (error) {
     return authErrorResponse(error);
