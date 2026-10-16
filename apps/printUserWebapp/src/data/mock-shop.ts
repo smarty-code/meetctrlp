@@ -18,7 +18,6 @@ export const mockShop: ShopContext = {
     "Instant counter collection",
     "Encrypted document handling",
   ],
-  promoVideoUrl: "https://youtu.be/SdXTw3bt-hk?si=jd3mQe8RV-LRV1Oy",
 }
 
 export const faqList: FAQItem[] = [

@@ -1,117 +1,131 @@
 "use client"
 
-import React, { useState } from "react"
+import React, { useEffect, useRef, useState } from "react"
+import dynamic from "next/dynamic"
 import { Play } from "lucide-react"
+import { BIG_PLAY_BUTTON_CLASS, PROMO_VIDEO_URL, getVideoPoster, getVideoSrc } from "../lib/promo-video"
 
 interface VideoCardProps {
-  /** The video URL (YouTube, Vimeo, or direct MP4/MOV). Dynamic from shop or page context. */
+  /** A direct video file URL (MP4/WebM). Cloudinary URLs get a lighter rendition and a poster automatically. */
   videoUrl?: string
-  /** Optional caption or video title displayed below the frame (matches reference screenshot). */
+  /** Caption displayed below the frame. */
   caption?: string
   /** Additional custom container styling. */
   className?: string
-  /** Whether the video should autoplay muted in a loop (default: true). */
-  autoPlay?: boolean
 }
 
-/**
- * Extracts a YouTube embed URL from various YouTube link formats:
- * - youtu.be/<id>
- * - youtube.com/watch?v=<id>
- * - youtube.com/embed/<id>
- * - youtube.com/shorts/<id>
- */
-export function getEmbedUrl(url?: string): { isYouTube: boolean; embedUrl: string } {
-  if (!url) {
-    return { isYouTube: false, embedUrl: "" }
-  }
+/** Start loading this far before the card scrolls into view. */
+const NEAR_VIEWPORT_MARGIN = "300px"
 
-  // Handle youtu.be/<id>
-  const shortMatch = url.match(/youtu\.be\/([a-zA-Z0-9_-]+)/)
-  if (shortMatch?.[1]) {
-    const id = shortMatch[1]
-    return {
-      isYouTube: true,
-      embedUrl: `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&mute=1&loop=1&playlist=${id}&playsinline=1&controls=1&rel=0&modestbranding=1`,
+/** Shown before the player chunk loads; the play button sits exactly where the player's does. */
+const PlayerPlaceholder: React.FC<{ onPlay?: () => void; label: string }> = ({ onPlay, label }) => (
+  <button
+    type="button"
+    onClick={onPlay}
+    aria-label={`Play video: ${label}`}
+    className="flex h-full w-full cursor-pointer items-center justify-center bg-midnight"
+  >
+    <span className={BIG_PLAY_BUTTON_CLASS}>
+      <Play className="size-5 fill-paper" />
+    </span>
+  </button>
+)
+
+// The player's JS (and the video's metadata/poster requests) stays out of the initial load entirely.
+const VideoPlayer = dynamic(() => import("./video-player").then((m) => m.VideoPlayer), {
+  ssr: false,
+  loading: () => <PlayerPlaceholder label="loading" />,
+})
+
+/** Resolves once the window `load` event has fired and the main thread is idle. */
+function useAfterPageLoad(): boolean {
+  const [ready, setReady] = useState(false)
+
+  useEffect(() => {
+    let idleId: number | undefined
+    let timeoutId: number | undefined
+
+    const scheduleIdle = () => {
+      // Safari has no requestIdleCallback.
+      if (typeof window.requestIdleCallback === "function") {
+        idleId = window.requestIdleCallback(() => setReady(true), { timeout: 2000 })
+      } else {
+        timeoutId = window.setTimeout(() => setReady(true), 200)
+      }
     }
-  }
 
-  // Handle youtube.com/watch?v=<id> or shorts/<id> or embed/<id>
-  const longMatch = url.match(/(?:youtube\.com\/(?:watch\?.*v=|embed\/|shorts\/))([a-zA-Z0-9_-]+)/)
-  if (longMatch?.[1]) {
-    const id = longMatch[1]
-    return {
-      isYouTube: true,
-      embedUrl: `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&mute=1&loop=1&playlist=${id}&playsinline=1&controls=1&rel=0&modestbranding=1`,
+    if (document.readyState === "complete") scheduleIdle()
+    else window.addEventListener("load", scheduleIdle, { once: true })
+
+    return () => {
+      window.removeEventListener("load", scheduleIdle)
+      if (idleId !== undefined) window.cancelIdleCallback?.(idleId)
+      window.clearTimeout(timeoutId)
     }
-  }
+  }, [])
 
-  // Fallback for direct video URLs (e.g., .mp4, .mov, .webm)
-  return { isYouTube: false, embedUrl: url }
+  return ready
+}
+
+/** Flips to true (once) when the element comes within `rootMargin` of the viewport. */
+function useNearViewport<T extends Element>(ref: React.RefObject<T | null>, rootMargin: string): boolean {
+  const [near, setNear] = useState(false)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el || near) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setNear(true)
+          observer.disconnect()
+        }
+      },
+      { rootMargin }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [ref, rootMargin, near])
+
+  return near
 }
 
 export const VideoCard: React.FC<VideoCardProps> = ({
-  videoUrl,
+  videoUrl = PROMO_VIDEO_URL,
   caption,
   className = "",
-  autoPlay = true,
 }) => {
-  const [isPlaying, setIsPlaying] = useState(autoPlay)
-  const { isYouTube, embedUrl } = getEmbedUrl(videoUrl)
+  const frameRef = useRef<HTMLDivElement>(null)
+  const pageLoaded = useAfterPageLoad()
+  const nearViewport = useNearViewport(frameRef, NEAR_VIEWPORT_MARGIN)
+  // A tap before the deferred load kicks in should still play straight away.
+  const [playRequested, setPlayRequested] = useState(false)
 
-  if (!videoUrl || !embedUrl) {
-    return null
-  }
+  if (!videoUrl) return null
+
+  const title = caption || "Shop video demonstration"
+  const shouldMountPlayer = playRequested || (pageLoaded && nearViewport)
 
   return (
     <div className={`mx-auto mt-4 w-full max-w-xl px-4 sm:mt-6 sm:px-6 md:mt-8 md:max-w-2xl lg:max-w-3xl ${className}`}>
-      {/* Outer Card Frame following CtrlP Design System: Paper surface, 2px border, 16px/24px padding */}
-      <div className="w-full rounded-2xl border border-graphite/20 bg-paper p-3 sm:p-4">
-        {/* Responsive 16:9 Video Canvas Frame */}
-        <div className="relative aspect-video w-full overflow-hidden rounded-xl border border-graphite/10 bg-midnight">
-          {isYouTube ? (
-            <iframe
-              src={embedUrl}
-              title={caption || "Shop video demonstration"}
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-              allowFullScreen
-              loading="lazy"
-              className="h-full w-full border-0"
+      <div className="w-full rounded-xl border border-graphite/20 bg-paper p-3 sm:p-4">
+        {/* Fixed 16:9 frame so swapping placeholder → player never shifts layout. */}
+        <div ref={frameRef} className="relative aspect-video w-full overflow-hidden rounded-xl border border-graphite/10 bg-midnight">
+          {shouldMountPlayer ? (
+            <VideoPlayer
+              src={getVideoSrc(videoUrl)}
+              poster={getVideoPoster(videoUrl)}
+              title={title}
+              autoStart={playRequested}
             />
           ) : (
-            <video
-              src={embedUrl}
-              autoPlay={autoPlay}
-              loop
-              muted
-              playsInline
-              controls
-              className="h-full w-full object-cover"
-            />
-          )}
-
-          {/* Optional overlay play indicator when video is paused */}
-          {!isPlaying && (
-            <button
-              type="button"
-              onClick={() => setIsPlaying(true)}
-              className="absolute inset-0 flex items-center justify-center bg-midnight/30 transition-colors hover:bg-midnight/20"
-              aria-label="Play video"
-            >
-              <div className="flex items-center gap-2 rounded-full border border-paper/40 bg-midnight/60 px-4 py-2 text-caption font-bold text-paper backdrop-blur-sm transition-transform hover:scale-105 active:scale-95">
-                <Play className="size-4 fill-paper text-paper" />
-                <span>play video</span>
-              </div>
-            </button>
+            <PlayerPlaceholder label={title} onPlay={() => setPlayRequested(true)} />
           )}
         </div>
 
-        {/* Dynamic Caption below the frame (matches reference screenshot style) */}
         {caption && (
           <div className="mt-2.5 flex items-center justify-center text-center">
-            <p className="text-[12px] font-medium text-ash select-none sm:text-caption">
-              {caption}
-            </p>
+            <p className="text-[12px] font-medium text-ash select-none sm:text-caption">{caption}</p>
           </div>
         )}
       </div>

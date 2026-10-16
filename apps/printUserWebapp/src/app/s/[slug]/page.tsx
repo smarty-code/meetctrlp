@@ -314,7 +314,6 @@ export default function ShopUploadPage() {
           uploadingCount={roundFiles.length}
         />
         <VideoCard
-          videoUrl={shop.promoVideoUrl}
           caption={`Watch how printing works at ${shop.name}`}
         />
         <PromiseSection />
