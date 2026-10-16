@@ -3,8 +3,15 @@ import { Badge } from "@ctrlp/ui/badge"
 import { Button } from "@ctrlp/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ctrlp/ui/card"
 
-import { mergeQueue, type QueueEntry, isStuckCloudJob } from "../lib/dashboard"
+import { cancelTarget, isStuckCloudJob, mergeQueue, retryTarget, type QueueEntry } from "../lib/dashboard"
 import type { CloudPrintJob, PrintJob, Printer } from "../lib/protocol"
+
+/** Retry for a failed job, Rescue for one stuck on a PC that stopped syncing; never for an earlier attempt. */
+function canRetry(entry: QueueEntry) {
+  return (entry.state === "failed" || isStuckCloudJob(entry.cloud)) && retryTarget(entry) !== null
+}
+
+const SUPERSEDED_NOTE = "An earlier attempt. The shop has since sent this job again or cancelled it."
 
 export function PrintQueueScreen({
   jobs,
@@ -19,7 +26,7 @@ export function PrintQueueScreen({
   cloudJobs: CloudPrintJob[]
   printers: Printer[]
   busy: boolean
-  onCancel: (id: string) => void
+  onCancel: (entry: QueueEntry) => void
   onRetry: (entry: QueueEntry, printerId?: string) => void
   onReassign: (entry: QueueEntry, printerId: string) => void
 }) {
@@ -39,39 +46,36 @@ export function PrintQueueScreen({
           <CardContent className="pt-6 text-ash">The print queue is empty.</CardContent>
         </Card>
       ) : (
-        visible.map((entry) => {
-          const terminal = entry.state === "completed" || entry.state === "cancelled"
-          const printing = entry.state === "printing"
-          return (
-            <Card key={entry.key} className="rounded-[12px]">
-              <CardHeader className="flex-row items-start justify-between">
-                <button type="button" className="text-left" onClick={() => setSelected(entry)}>
-                  <CardTitle>{entry.documentName}</CardTitle>
-                  <CardDescription>
-                    {entry.printerName} · {entry.pagesPrinted ?? 0}/{entry.pagesTotal ?? 0} pages
-                  </CardDescription>
-                </button>
-                <Badge>{entry.state}</Badge>
-              </CardHeader>
-              <CardContent className="flex flex-wrap items-center gap-2">
-                {entry.error ? <p className="w-full text-caption text-destructive">{entry.error}</p> : null}
-                {entry.state === "failed" || isStuckCloudJob(entry.cloud) ? (
-                  <Button size="sm" className="rounded-[12px]" disabled={busy} onClick={() => onRetry(entry)}>
-                    {entry.state === "failed" ? "Retry" : "Rescue"}
-                  </Button>
-                ) : null}
-                {!terminal && !printing && entry.local ? (
-                  <Button size="sm" variant="outline" className="rounded-[12px]" disabled={busy} onClick={() => onCancel(entry.local!.id)}>
-                    Cancel
-                  </Button>
-                ) : null}
-                <Button size="sm" variant="outline" className="rounded-[12px]" onClick={() => setSelected(entry)}>
-                  Details
+        visible.map((entry) => (
+          <Card key={entry.key} className="rounded-[12px]">
+            <CardHeader className="flex-row items-start justify-between">
+              <button type="button" className="text-left" onClick={() => setSelected(entry)}>
+                <CardTitle>{entry.documentName}</CardTitle>
+                <CardDescription>
+                  {entry.printerName} · {entry.pagesPrinted ?? 0}/{entry.pagesTotal ?? 0} pages
+                </CardDescription>
+              </button>
+              <Badge>{entry.state}</Badge>
+            </CardHeader>
+            <CardContent className="flex flex-wrap items-center gap-2">
+              {entry.error ? <p className="w-full text-caption text-destructive">{entry.error}</p> : null}
+              {entry.superseded ? <p className="w-full text-caption text-ash">{SUPERSEDED_NOTE}</p> : null}
+              {canRetry(entry) ? (
+                <Button size="sm" className="rounded-[12px]" disabled={busy} onClick={() => onRetry(entry)}>
+                  {entry.state === "failed" ? "Retry" : "Rescue"}
                 </Button>
-              </CardContent>
-            </Card>
-          )
-        })
+              ) : null}
+              {cancelTarget(entry) ? (
+                <Button size="sm" variant="outline" className="rounded-[12px]" disabled={busy} onClick={() => onCancel(entry)}>
+                  Cancel
+                </Button>
+              ) : null}
+              <Button size="sm" variant="outline" className="rounded-[12px]" onClick={() => setSelected(entry)}>
+                Details
+              </Button>
+            </CardContent>
+          </Card>
+        ))
       )}
       {selected ? (
         <QueueDrawer
@@ -103,7 +107,7 @@ function QueueDrawer({
   onClose: () => void
   onRetry: (entry: QueueEntry, printerId?: string) => void
   onReassign: (entry: QueueEntry, printerId: string) => void
-  onCancel: (id: string) => void
+  onCancel: (entry: QueueEntry) => void
 }) {
   const [printerId, setPrinterId] = useState(entry.cloud?.printerId ?? printers.find((printer) => printer.enabled !== false)?.cloudId ?? "")
   const started = entry.local?.startedAt
@@ -130,12 +134,13 @@ function QueueDrawer({
           <p>Progress: {entry.pagesPrinted ?? 0}/{entry.pagesTotal ?? 0}</p>
           <p>Started: {started}</p>
           {entry.error ? <p className="text-destructive">{entry.error}</p> : null}
+          {entry.superseded ? <p className="text-caption text-ash">{SUPERSEDED_NOTE}</p> : null}
           {isStuckCloudJob(entry.cloud) ? (
             <p className="text-caption text-ash">
               Another PC took this job over 15 minutes ago and hasn't reported back. If that PC is off, send the job again here.
             </p>
           ) : null}
-          {entry.state === "failed" || isStuckCloudJob(entry.cloud) ? (
+          {canRetry(entry) ? (
             <div className="space-y-2">
               <select
                 value={printerId}
@@ -158,8 +163,8 @@ function QueueDrawer({
               </Button>
             </div>
           ) : null}
-          {entry.local && entry.state !== "printing" && entry.state !== "completed" && entry.state !== "cancelled" ? (
-            <Button variant="outline" className="w-full rounded-[12px]" disabled={busy} onClick={() => onCancel(entry.local!.id)}>
+          {cancelTarget(entry) ? (
+            <Button variant="outline" className="w-full rounded-[12px]" disabled={busy} onClick={() => onCancel(entry)}>
               Cancel
             </Button>
           ) : null}

@@ -277,6 +277,13 @@ internal sealed class JobsCancelHandler : RpcHandler<JobIdRequest, JobDto>
         }
 
         var job = _runtime.Jobs.Cancel(request.Id) ?? throw RpcException.JobNotFound(request.Id);
+        if (job.State != "cancelled")
+        {
+            // Printing can't be stopped mid-spool, and a failed or finished job has nothing left to cancel.
+            throw RpcException.InvalidJobState($"Only a job that hasn't started printing can be cancelled (this one is {job.State}).");
+        }
+
+        StagedDocument.TryDelete(job);
         // A cancelled cloud job owes the server a final report (implementation plan 10.5).
         _runtime.Cloud.Reports.Signal();
         return job;
@@ -298,7 +305,20 @@ internal sealed class JobsRetryHandler : RpcHandler<JobIdRequest, JobDto>
             throw RpcException.InvalidParams("id is required");
         }
 
-        return _runtime.Jobs.Retry(request.Id) ?? throw RpcException.JobNotFound(request.Id);
+        var existing = _runtime.Jobs.Get(request.Id) ?? throw RpcException.JobNotFound(request.Id);
+        if (existing.CloudJobId is not null)
+        {
+            // Its lease is spent; the shop's retry (POST .../orders/{orderId}/jobs/{jobId}/retry) issues a new one.
+            throw RpcException.InvalidJobState("Retry this order's job from the shop, not from this PC's queue.");
+        }
+
+        var job = _runtime.Jobs.Retry(request.Id) ?? throw RpcException.JobNotFound(request.Id);
+        if (job.State != "queued")
+        {
+            throw RpcException.InvalidJobState($"Only a failed job whose document is still on this PC can be retried (this one is {job.State}).");
+        }
+
+        return job;
     }
 }
 

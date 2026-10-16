@@ -41,6 +41,7 @@ public sealed class AgentSyncServiceTests : IDisposable
     private readonly InMemoryJobStore _jobs = new();
     private readonly AgentCloudContext _context = new();
     private readonly CountingReports _reports = new();
+    private readonly List<JobEventDto> _published = [];
     private readonly AgentSyncService _sync;
 
     public AgentSyncServiceTests()
@@ -49,7 +50,7 @@ public sealed class AgentSyncServiceTests : IDisposable
         _context.SetSession(new CloudSession("shop-1", "agent-1"));
         var status = new CloudStatus(new AgentNotifier());
         var client = new CloudApiClient(_context, new StaticTokens(), new HttpClient(_api));
-        _sync = new AgentSyncService(_jobs, _context, client, status, _reports, _staging, new HttpClient(_files));
+        _sync = new AgentSyncService(_jobs, _context, client, status, _reports, _staging, new HttpClient(_files), publish: _published.Add);
         _files.Responder = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Pdf) });
     }
 
@@ -61,7 +62,13 @@ public sealed class AgentSyncServiceTests : IDisposable
         }
     }
 
-    private static object Job(string jobId, string leaseId = "lease-1", string? hash = null, bool download = true) => new
+    private static object Job(
+        string jobId,
+        string leaseId = "lease-1",
+        string? hash = null,
+        bool download = true,
+        int? pagesTotal = 4,
+        int? pageCount = 2) => new
     {
         orderId = "order-1",
         orderNumber = "ORD-1",
@@ -73,15 +80,36 @@ public sealed class AgentSyncServiceTests : IDisposable
         printerId = "printer-1",
         printerSystemName = "HP LaserJet",
         printerName = "HP",
-        pagesTotal = 4,
+        pagesTotal,
         redelivered = false,
         download = download
-            ? new { url = $"https://files.test/{jobId}", sha256Hash = hash ?? PdfHash, mimeType = "application/pdf", pageCount = 2, expiresIn = 3600 }
+            ? new { url = $"https://files.test/{jobId}", sha256Hash = hash ?? PdfHash, mimeType = "application/pdf", pageCount, expiresIn = 3600 }
             : null,
     };
 
     private static HttpResponseMessage SyncResponse(bool more, params object[] claimed) =>
         TestTokens.Json(HttpStatusCode.OK, new { accepted = Array.Empty<string>(), claimed, more });
+
+    /// <summary>A server that checks held leases: <paramref name="revoked"/> are applied before <paramref name="claimed"/>.</summary>
+    private static HttpResponseMessage SyncResponse(object[] revoked, params object[] claimed) =>
+        TestTokens.Json(HttpStatusCode.OK, new { accepted = Array.Empty<string>(), claimed, revoked, more = false });
+
+    private static object Revoked(string jobId, string leaseId, string reason) => new { orderId = "order-1", jobId, leaseId, reason };
+
+    private static List<(string OrderId, string JobId, string LeaseId)> HeldIn(RecordedRequest request)
+    {
+        using var body = JsonDocument.Parse(request.Body!);
+        return body.RootElement.GetProperty("held").EnumerateArray()
+            .Select(entry => (entry.GetProperty("orderId").GetString()!, entry.GetProperty("jobId").GetString()!, entry.GetProperty("leaseId").GetString()!))
+            .ToList();
+    }
+
+    private async Task<JobDto> StageOne(string jobId = "job-1", string leaseId = "lease-1")
+    {
+        _api.Responder = (_, _) => Task.FromResult(SyncResponse(false, Job(jobId, leaseId)));
+        await _sync.SyncAsync(CancellationToken.None);
+        return _jobs.List().Single(job => job.CloudJobId == jobId && job.LeaseId == leaseId);
+    }
 
     [Fact]
     public async Task StagesVerifiesAndQueuesClaimedJobs()
@@ -125,7 +153,7 @@ public sealed class AgentSyncServiceTests : IDisposable
     {
         _api.Responder = (_, _) => Task.FromResult(SyncResponse(false, Job("job-1")));
         await _sync.SyncAsync(CancellationToken.None);
-        var printed = _jobs.ClaimNext()!;
+        var printed = _jobs.ClaimNext("shop-1", "agent-1")!;
         _jobs.Complete(printed.Id);
 
         // Re-delivered after a lost response: same lease, so it must not print again.
@@ -137,6 +165,166 @@ public sealed class AgentSyncServiceTests : IDisposable
         _api.Responder = (_, _) => Task.FromResult(SyncResponse(false, Job("job-1", leaseId: "lease-2")));
         Assert.Equal(1, await _sync.SyncAsync(CancellationToken.None));
         Assert.Equal(2, _jobs.List().Count);
+    }
+
+    [Fact]
+    public async Task SendsTheLeasesItHoldsAndNothingElse()
+    {
+        // Each claim below has exactly one candidate, so it takes the row meant.
+        _jobs.Enqueue(HeldRequest("job-printing"));
+        _jobs.ClaimNext("shop-1", "agent-1");
+        var done = _jobs.Enqueue(HeldRequest("job-done"));
+        _jobs.ClaimNext("shop-1", "agent-1");
+        _jobs.Complete(done.Id);
+        _jobs.Enqueue(HeldRequest("job-queued"));
+        _jobs.Enqueue(HeldRequest("job-other-shop") with { CloudShopId = "shop-2" });
+        _jobs.Enqueue(HeldRequest("job-long-lease") with { LeaseId = new string('x', 81) });
+        _jobs.Enqueue(new EnqueueJobRequest("printer-1", @"C:\staged\test.pdf", "test.pdf", IdempotencyKey: "local"));
+        _api.Responder = (_, _) => Task.FromResult(SyncResponse(false));
+
+        await _sync.SyncAsync(CancellationToken.None);
+
+        // Queued and printing for this shop and agent; not finished, other shops', local, or over the server's 80 characters.
+        var held = HeldIn(Assert.Single(_api.Requests)).OrderBy(entry => entry.JobId, StringComparer.Ordinal).ToList();
+        Assert.Equal([("order-1", "job-printing", "lease-job-printing"), ("order-1", "job-queued", "lease-job-queued")], held);
+    }
+
+    [Fact]
+    public async Task SendsAnEmptyHeldListWhenItHoldsNothing()
+    {
+        _api.Responder = (_, _) => Task.FromResult(SyncResponse(false));
+
+        await _sync.SyncAsync(CancellationToken.None);
+
+        Assert.Empty(HeldIn(Assert.Single(_api.Requests)));
+    }
+
+    [Fact]
+    public async Task ARevokedLeaseIsDroppedWithoutAReportAndItsFileDeleted()
+    {
+        var staged = await StageOne();
+        Assert.True(File.Exists(staged.DocumentPath));
+        _api.Responder = (_, _) => Task.FromResult(SyncResponse([Revoked("job-1", "lease-1", "CANCELLED")]));
+
+        await _sync.SyncAsync(CancellationToken.None);
+
+        Assert.Equal([("order-1", "job-1", "lease-1")], HeldIn(_api.Requests[^1]));
+        var dropped = _jobs.Get(staged.Id)!;
+        Assert.Equal("cancelled", dropped.State);
+        Assert.Equal(ReportStates.Revoked, dropped.ReportState);
+        Assert.Equal("The shop cancelled this job.", dropped.Error);
+        Assert.Equal(0, _jobs.CountPendingReports("shop-1", "agent-1"));
+        Assert.False(File.Exists(staged.DocumentPath));
+        Assert.Null(_jobs.ClaimNext("shop-1", "agent-1"));
+        var published = Assert.Single(_published);
+        Assert.Equal(RpcNotifications.JobCancelled, published.Type);
+        Assert.Equal(staged.Id, published.Job.Id);
+        // It no longer counts as held.
+        _api.Responder = (_, _) => Task.FromResult(SyncResponse(false));
+        await _sync.SyncAsync(CancellationToken.None);
+        Assert.Empty(HeldIn(_api.Requests[^1]));
+    }
+
+    [Fact]
+    public async Task ARevokeForAnotherLeaseKeepsTheJob()
+    {
+        var staged = await StageOne();
+        _api.Responder = (_, _) => Task.FromResult(SyncResponse([Revoked("job-1", "lease-old", "RESCUED")]));
+
+        await _sync.SyncAsync(CancellationToken.None);
+
+        var kept = _jobs.Get(staged.Id)!;
+        Assert.Equal("queued", kept.State);
+        Assert.Equal(ReportStates.None, kept.ReportState);
+        Assert.True(File.Exists(staged.DocumentPath));
+        Assert.Empty(_published);
+    }
+
+    [Fact]
+    public async Task ARevokedJobReclaimedUnderANewLeaseIsQueuedFresh()
+    {
+        var old = await StageOne();
+        // The operator rescued it back onto this PC: revoked under lease-1, claimed again under lease-2.
+        _api.Responder = (_, _) => Task.FromResult(SyncResponse([Revoked("job-1", "lease-1", "RESCUED")], Job("job-1", leaseId: "lease-2")));
+
+        Assert.Equal(1, await _sync.SyncAsync(CancellationToken.None));
+
+        Assert.Equal("cancelled", _jobs.Get(old.Id)!.State);
+        Assert.Equal(ReportStates.Revoked, _jobs.Get(old.Id)!.ReportState);
+        Assert.False(File.Exists(old.DocumentPath));
+        var fresh = _jobs.List().Single(job => job.LeaseId == "lease-2");
+        Assert.Equal("queued", fresh.State);
+        Assert.Equal(ReportStates.None, fresh.ReportState);
+        Assert.True(File.Exists(fresh.DocumentPath));
+        Assert.Equal(fresh.Id, _jobs.ClaimNext("shop-1", "agent-1")!.Id);
+    }
+
+    [Fact]
+    public async Task ARevokedJobAlreadyPrintingFinishesButIsNeverReported()
+    {
+        var staged = await StageOne();
+        _jobs.ClaimNext("shop-1", "agent-1");
+        _api.Responder = (_, _) => Task.FromResult(SyncResponse([Revoked("job-1", "lease-1", "RESCUED")]));
+
+        await _sync.SyncAsync(CancellationToken.None);
+
+        // The spooler can't be stopped: it keeps printing.
+        Assert.Equal("printing", _jobs.Get(staged.Id)!.State);
+        var finished = _jobs.Complete(staged.Id)!;
+        Assert.Equal(ReportStates.Revoked, finished.ReportState);
+        Assert.Equal(0, _jobs.CountPendingReports("shop-1", "agent-1"));
+        Assert.Empty(_published);
+    }
+
+    private static EnqueueJobRequest HeldRequest(string cloudJobId) => new(
+        "printer-1", @"C:\staged\document.pdf", "document.pdf", 1, cloudJobId, "abc", "{}", $"cloud-{cloudJobId}", 1,
+        "order-1", "doc-1", $"lease-{cloudJobId}", "shop-1", "agent-1");
+
+    [Fact]
+    public async Task StagesEachLeaseInItsOwnFolder()
+    {
+        _api.Responder = (_, _) => Task.FromResult(SyncResponse(false, Job("job-1")));
+        await _sync.SyncAsync(CancellationToken.None);
+        var first = Assert.Single(_jobs.List());
+        Assert.Equal(Path.Combine(_staging, "job-1", "lease-1", "document.pdf"), first.DocumentPath);
+
+        // The shop rescued it (new lease) while this PC still has the first attempt.
+        _api.Responder = (_, _) => Task.FromResult(SyncResponse(false, Job("job-1", leaseId: "lease-2")));
+        await _sync.SyncAsync(CancellationToken.None);
+        var second = _jobs.List().Single(job => job.LeaseId == "lease-2");
+        Assert.Equal(Path.Combine(_staging, "job-1", "lease-2", "document.pdf"), second.DocumentPath);
+
+        // The old attempt finishing deletes only its own file, never the rescued lease's.
+        StagedDocument.TryDelete(_jobs.Fail(first.Id, "paper jam")!);
+        Assert.False(File.Exists(first.DocumentPath));
+        Assert.False(Directory.Exists(Path.Combine(_staging, "job-1", "lease-1")));
+        Assert.True(File.Exists(second.DocumentPath));
+
+        StagedDocument.TryDelete(_jobs.Complete(second.Id)!);
+        Assert.False(Directory.Exists(Path.Combine(_staging, "job-1")));
+    }
+
+    [Fact]
+    public async Task ANullPagesTotalDefaultsToOneInsteadOfFailingTheSync()
+    {
+        _api.Responder = (_, _) => Task.FromResult(SyncResponse(false, Job("job-1", pagesTotal: null, pageCount: null), Job("job-2")));
+
+        Assert.Equal(2, await _sync.SyncAsync(CancellationToken.None));
+
+        Assert.Equal(1, _jobs.List().Single(job => job.CloudJobId == "job-1").PagesTotal);
+        Assert.Equal(4, _jobs.List().Single(job => job.CloudJobId == "job-2").PagesTotal);
+    }
+
+    [Fact]
+    public async Task RefusesALeaseIdThatWouldLeaveTheStagingFolder()
+    {
+        _api.Responder = (_, _) => Task.FromResult(SyncResponse(false, Job("job-1", leaseId: "../../outside")));
+
+        Assert.Equal(0, await _sync.SyncAsync(CancellationToken.None));
+
+        var job = Assert.Single(_jobs.List());
+        Assert.Equal("AGENT_STAGING_FAILED", job.ErrorCode);
+        Assert.Empty(_files.Requests);
     }
 
     [Fact]
@@ -156,7 +344,7 @@ public sealed class AgentSyncServiceTests : IDisposable
             Assert.Null(job.DocumentPath);
         });
         Assert.Equal(2, _reports.Signals);
-        Assert.Null(_jobs.ClaimNext());
+        Assert.Null(_jobs.ClaimNext("shop-1", "agent-1"));
     }
 
     [Fact]

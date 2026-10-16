@@ -51,6 +51,7 @@ public static class RpcNotifications
     public const string JobProgress = "job.progress";
     public const string JobCompleted = "job.completed";
     public const string JobFailed = "job.failed";
+    public const string JobCancelled = "job.cancelled";
     public const string QueueChanged = "queue.changed";
     public const string BoardChanged = "board.changed";
     public const string OrdersAttention = "orders.attention";
@@ -68,4 +69,5 @@ public static class RpcErrorCodes
     public const int NotReady = -32002;
     public const int PrinterNotFound = -32010;
     public const int JobNotFound = -32020;
+    public const int InvalidJobState = -32021;
 }

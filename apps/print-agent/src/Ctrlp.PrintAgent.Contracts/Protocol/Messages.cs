@@ -172,6 +172,9 @@ public static class ReportStates
     public const string Pending = "pending";
     public const string Acked = "acked";
     public const string Rejected = "rejected";
+
+    /// <summary>The server revoked the lease (sync's <c>revoked</c>): no report is owed, and none is sent.</summary>
+    public const string Revoked = "revoked";
 }
 
 public sealed record JobEventDto(

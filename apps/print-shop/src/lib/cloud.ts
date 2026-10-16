@@ -364,6 +364,17 @@ export function retryOrderPrintJob(shopId: string, orderId: string, jobId: strin
   })
 }
 
+/**
+ * Cancels a waiting, failed, or stuck (15 minutes) cloud job; a PC that holds it drops it on its next sync.
+ * Answers 409 PRINT_JOB_STILL_ACTIVE while a live PC holds it. The document can then be dispatched again.
+ */
+export function cancelOrderPrintJob(shopId: string, orderId: string, jobId: string, reason?: string) {
+  return request<CloudPrintJob>(`/api/v1/shops/${shopId}/orders/${orderId}/jobs/${jobId}/cancel`, {
+    method: "POST",
+    body: JSON.stringify(reason ? { reason } : {}),
+  })
+}
+
 export async function getDocumentDownloadUrl(shopId: string, orderId: string, docId: string) {
   return request<{ url: string; sha256Hash: string; mimeType?: string; pageCount: number; expiresIn: number }>(
     `/api/v1/shops/${shopId}/orders/${orderId}/documents/${docId}/download-url`

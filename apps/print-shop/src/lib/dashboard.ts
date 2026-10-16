@@ -1,6 +1,14 @@
 import { formatTime12h, minutesToTime, timeToMinutes } from "@ctrlp/schemas"
 
-import type { CloudPrintJob, PrintJob, Printer, ShopBusinessHour, ShopNotification, ShopOrder } from "./protocol"
+import type {
+  CloudPrintJob,
+  PrintJob,
+  Printer,
+  ShopBusinessHour,
+  ShopNotification,
+  ShopOrder,
+  ShopOrderQueueError,
+} from "./protocol"
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -120,21 +128,31 @@ export type QueueEntry = {
   createdAt: number
   pagesPrinted?: number
   pagesTotal?: number
+  /** A local row from an earlier lease of a job the shop has since retried, rescued or cancelled. History: no actions. */
+  superseded?: boolean
 }
 
 export function mergeQueue(localJobs: PrintJob[], cloudJobs: CloudPrintJob[]): QueueEntry[] {
   const used = new Set<string>()
   const entries: QueueEntry[] = []
   for (const local of localJobs) {
-    const cloud = local.cloudJobId ? cloudJobs.find((job) => job.id === local.cloudJobId) : undefined
+    const match = local.cloudJobId ? cloudJobs.find((job) => job.id === local.cloudJobId) : undefined
+    // The board has the job's current lease (null once it is retried or cancelled). A local row under another
+    // lease is an earlier attempt: it keeps its own state and leaves the job's status and actions to the
+    // current attempt, or to the job's own entry.
+    const superseded = Boolean(match && local.leaseId && match.leaseId !== undefined && match.leaseId !== local.leaseId)
+    const cloud = superseded ? undefined : match
     if (cloud) used.add(cloud.id)
     entries.push({
       key: local.id,
       local,
       cloud,
-      documentName: local.documentName ?? cloud?.documentId ?? "Queued document",
-      printerName: cloud?.printerName ?? local.printerId ?? "Unassigned printer",
-      state: cloud?.status?.toLowerCase() ?? local.state,
+      superseded,
+      documentName: local.documentName ?? match?.documentId ?? "Queued document",
+      printerName: match?.printerName ?? local.printerId ?? "Unassigned printer",
+      // The server hears from this PC only at the final report, so it says DISPATCHING while the page is
+      // on the printer. The local row knows better.
+      state: superseded || local.state === "printing" ? local.state : (cloud?.status?.toLowerCase() ?? local.state),
       error: local.error ?? cloud?.errorMessage,
       createdAt: local.createdAt,
       pagesPrinted: local.pagesPrinted ?? cloud?.pagesPrinted,
@@ -156,6 +174,102 @@ export function mergeQueue(localJobs: PrintJob[], cloudJobs: CloudPrintJob[]): Q
     })
   }
   return entries.sort((left, right) => right.createdAt - left.createdAt)
+}
+
+const notStarted = (job: PrintJob | undefined) => job?.state === "created" || job?.state === "queued"
+
+export type RetryTarget = { kind: "cloud"; orderId: string; jobId: string } | { kind: "local"; id: string }
+
+/**
+ * Where a retry goes. A cloud job is retried by the server, which issues a new lease; the agent refuses to
+ * re-queue it under the spent one. Only a job that never came from the cloud (a test page) retries locally.
+ */
+export function retryTarget(entry: QueueEntry): RetryTarget | null {
+  if (entry.superseded) return null
+  const jobId = entry.cloud?.id ?? entry.local?.cloudJobId
+  if (jobId) {
+    const orderId = entry.cloud?.orderId ?? entry.local?.cloudOrderId
+    return orderId ? { kind: "cloud", orderId, jobId } : null
+  }
+  return entry.local ? { kind: "local", id: entry.local.id } : null
+}
+
+/** The server cancels a cloud job that is waiting, failed, or stuck with a PC for 15 minutes. */
+export function canCancelCloudJob(job: CloudPrintJob | undefined, now = Date.now()) {
+  return job?.status === "QUEUED" || job?.status === "FAILED" || isStuckCloudJob(job, now)
+}
+
+/** `localId`: this PC holds the job's lease and hasn't started it, so it can also cancel it here. */
+export type CancelTarget =
+  | { kind: "cloud"; orderId: string; jobId: string; localId?: string }
+  | { kind: "local"; id: string }
+
+/**
+ * Where a cancel goes, or null when there is nothing to cancel. Printing can't be stopped at the spooler. A
+ * cloud job is cancelled by the server; a job that never came from the cloud (a test page) is cancelled here.
+ */
+export function cancelTarget(entry: QueueEntry, now = Date.now()): CancelTarget | null {
+  if (entry.superseded || entry.local?.state === "printing") return null
+  const jobId = entry.cloud?.id ?? entry.local?.cloudJobId
+  if (!jobId) {
+    return entry.local && notStarted(entry.local) ? { kind: "local", id: entry.local.id } : null
+  }
+  const orderId = entry.cloud?.orderId ?? entry.local?.cloudOrderId
+  const heldHere = notStarted(entry.local) && entry.local?.reportState !== "revoked"
+  if (!orderId || !(heldHere || canCancelCloudJob(entry.cloud, now))) return null
+  return heldHere ? { kind: "cloud", orderId, jobId, localId: entry.local!.id } : { kind: "cloud", orderId, jobId }
+}
+
+export type CancelActions = {
+  cancelCloud: (orderId: string, jobId: string) => Promise<CloudPrintJob>
+  cancelLocal: (id: string) => Promise<unknown>
+  /** Asks the agent to sync now, so a PC holding the job hears that its lease was revoked. */
+  requestSync: () => void
+}
+
+const cancelMessages: Record<string, string> = {
+  PRINT_JOB_STILL_ACTIVE: "Another PC is still printing this job. It can be cancelled once it has been stuck there for 15 minutes.",
+  PRINT_JOB_STATUS_CONFLICT: "This job has already finished, so there is nothing to cancel.",
+  PRINT_JOB_NOT_FOUND: "This job no longer exists.",
+}
+
+/**
+ * Runs a cancel and returns the server's updated job, if any. The server refuses a job a live PC holds
+ * (PRINT_JOB_STILL_ACTIVE); when that PC is this one and it hasn't started, the local cancel stops it and
+ * reports CANCELLED under its lease, which the server accepts.
+ */
+export async function cancelQueueEntry(target: CancelTarget, actions: CancelActions): Promise<CloudPrintJob | null> {
+  if (target.kind === "local") {
+    await actions.cancelLocal(target.id)
+    return null
+  }
+  let job: CloudPrintJob
+  try {
+    job = await actions.cancelCloud(target.orderId, target.jobId)
+  } catch (err) {
+    const code = err instanceof Error ? err.message : String(err)
+    if (target.localId && code === "PRINT_JOB_STILL_ACTIVE") {
+      await actions.cancelLocal(target.localId)
+      return null
+    }
+    throw new Error(cancelMessages[code] ?? code)
+  }
+  if (target.localId) {
+    // Stop it here at once rather than at the next sync; the sync's revoke then drops its report.
+    await actions.cancelLocal(target.localId).catch(() => undefined)
+  }
+  actions.requestSync()
+  return job
+}
+
+export type OrderQueueError = ShopOrderQueueError & { documentName: string }
+
+/** Documents of an accepted order the server couldn't queue, by name. A missing field (older server) is none. */
+export function orderQueueErrors(order: ShopOrder): OrderQueueError[] {
+  return (order.queueErrors ?? []).map((entry) => {
+    const document = order.documents.find((candidate) => (candidate.docId ?? candidate.id) === entry.documentId)
+    return { ...entry, documentName: document?.originalFilename ?? "A document" }
+  })
 }
 
 /** The shop-time calendar day (`YYYY-MM-DD`) of an instant. Shops are in India (Asia/Kolkata). */

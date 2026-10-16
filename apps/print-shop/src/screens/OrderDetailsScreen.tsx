@@ -3,7 +3,7 @@ import { Badge } from "@ctrlp/ui/badge"
 import { Button } from "@ctrlp/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ctrlp/ui/card"
 
-import { documentReadiness, isStuckCloudJob } from "../lib/dashboard"
+import { canCancelCloudJob, documentReadiness, isStuckCloudJob, orderQueueErrors } from "../lib/dashboard"
 import type { CloudPrintJob, Printer, ShopOrder } from "../lib/protocol"
 
 export function OrderDetailsScreen({
@@ -20,6 +20,7 @@ export function OrderDetailsScreen({
   onCollectCash,
   onPreview,
   onReassign,
+  onCancelJob,
 }: {
   order: ShopOrder
   jobs: CloudPrintJob[]
@@ -34,9 +35,11 @@ export function OrderDetailsScreen({
   onCollectCash: () => void
   onPreview: (documentId: string) => Promise<{ valid: boolean; message: string }>
   onReassign: (job: CloudPrintJob, printerId: string) => void
+  onCancelJob: (job: CloudPrintJob) => void
 }) {
   const [validation, setValidation] = useState<Record<string, string>>({})
   const readyPrinter = printers.find((printer) => printer.enabled !== false && printer.cloudId)
+  const queueErrors = orderQueueErrors(order)
 
   useEffect(() => {
     setValidation({})
@@ -81,12 +84,23 @@ export function OrderDetailsScreen({
               </Button>
             </>
           ) : null}
+          {queueErrors.length > 0 ? (
+            <div className="w-full space-y-1">
+              <p className="text-caption font-bold text-destructive">Couldn't start printing</p>
+              {queueErrors.map((entry) => (
+                <p key={entry.documentId} className="text-caption text-destructive">
+                  {entry.documentName}: {entry.message}
+                </p>
+              ))}
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
       {order.documents.map((document) => {
         const documentId = document.docId ?? document.id
         const documentJobs = jobs.filter((job) => job.documentId === documentId)
+        const queueError = queueErrors.find((entry) => entry.documentId === documentId)
         const readiness = documentReadiness(printers, {
           colorMode: document.config?.colorMode ?? document.colorMode,
           paperSize: document.config?.paperSize ?? document.paperSize,
@@ -106,6 +120,7 @@ export function OrderDetailsScreen({
                   ? `Ready to print on ${readiness.matches.map((printer) => printer.name).join(", ")}`
                   : readiness.reasons.join(". ")}
               </p>
+              {queueError ? <p className="text-caption text-destructive">Couldn't queue: {queueError.message}</p> : null}
               {document.shreddedAt ? <p className="text-caption text-ash">Remote copy marked shredded at {new Date(document.shreddedAt).toLocaleString()}.</p> : null}
               {validation[documentId] ? <p className="text-caption text-ash">{validation[documentId]}</p> : null}
               <div className="flex flex-wrap gap-2">
@@ -121,7 +136,7 @@ export function OrderDetailsScreen({
                 >
                   Validate & preview
                 </Button>
-                {(order.status === "SHOP_ACCEPTED" || order.status === "PRINTING") && documentJobs.length === 0 ? (
+                {(order.status === "SHOP_ACCEPTED" || order.status === "PRINTING") && documentJobs.every((job) => job.status === "CANCELLED") ? (
                   <Button
                     size="sm"
                     className="rounded-[12px]"
@@ -138,9 +153,10 @@ export function OrderDetailsScreen({
                     {job.printerName} · {job.status} · {job.pagesPrinted}/{job.pagesTotal}
                     {job.errorMessage ? ` · ${job.errorMessage}` : ""}
                   </p>
-                  {job.status === "FAILED" || isStuckCloudJob(job) ? (
+                  {/* Failed or stuck: reassign or cancel. Waiting in the queue: cancel. */}
+                  {canCancelCloudJob(job) ? (
                     <div className="flex flex-wrap gap-2">
-                      {readiness.matches.map((printer) => (
+                      {(job.status === "FAILED" || isStuckCloudJob(job) ? readiness.matches : []).map((printer) => (
                         <Button
                           key={printer.id}
                           size="sm"
@@ -152,6 +168,9 @@ export function OrderDetailsScreen({
                           Reassign to {printer.name}
                         </Button>
                       ))}
+                      <Button size="sm" variant="outline" className="rounded-[12px]" disabled={busy} onClick={() => onCancelJob(job)}>
+                        Cancel job
+                      </Button>
                     </div>
                   ) : null}
                 </div>

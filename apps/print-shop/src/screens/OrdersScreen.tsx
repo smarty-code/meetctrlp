@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ctrl
 import { Input } from "@ctrlp/ui/input"
 
 import type { OrderPage } from "../lib/cloud"
-import { filterOrders } from "../lib/dashboard"
+import { filterOrders, orderQueueErrors } from "../lib/dashboard"
 import type { ShopOrder, ShopOrderStatus } from "../lib/protocol"
 
 type TabId = "all" | "new" | "active" | "ready" | "completed"
@@ -186,6 +186,7 @@ function OrderCard({
   onReject: (order: ShopOrder) => void
 }) {
   const pages = order.documents.reduce((sum, document) => sum + document.pageCount * document.copies, 0)
+  const queueErrors = orderQueueErrors(order)
   return (
     <Card className="rounded-[12px]">
       <CardHeader className="flex-row items-start justify-between gap-3">
@@ -199,6 +200,11 @@ function OrderCard({
         <Badge variant={order.status === "SUBMITTED" ? "default" : "outline"}>{order.status}</Badge>
       </CardHeader>
       <CardContent className="flex flex-wrap items-center justify-between gap-3">
+        {queueErrors.map((entry) => (
+          <p key={entry.documentId} className="w-full text-caption text-destructive">
+            Couldn't queue {entry.documentName}: {entry.message}
+          </p>
+        ))}
         <p className="text-caption text-ash">
           {order.payment.method} · {order.payment.status} ·{" "}
           {order.documents.map((document) => document.originalFilename).join(", ") || "No documents"}

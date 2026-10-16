@@ -106,6 +106,10 @@ export type PrintJob = {
   cloudJobId?: string | null
   cloudOrderId?: string | null
   cloudDocumentId?: string | null
+  /** The cloud lease this row prints under; a row from an earlier lease is a superseded attempt. */
+  leaseId?: string | null
+  /** "revoked" when the server took the lease back: the row is never printed (if not started) or reported. */
+  reportState?: "none" | "pending" | "acked" | "rejected" | "revoked"
   pagesTotal?: number
   pagesPrinted?: number
   startedAt?: number | null
@@ -174,6 +178,15 @@ export type ShopOrderDocument = {
   }
 }
 
+export type ShopOrderQueueError = {
+  documentId: string
+  /** An upper-case code, or "QUEUE_FAILED". */
+  code: string
+  /** The server's text, e.g. "no compatible online printer is available". */
+  message: string
+  at: string
+}
+
 export type ShopOrder = {
   id: string
   orderNumber: string
@@ -184,6 +197,8 @@ export type ShopOrder = {
   amounts: { subtotalMinorUnits: number; taxMinorUnits: number; totalMinorUnits: number }
   payment: { method: "CASH" | "ONLINE"; status: "PENDING" | "PAID" }
   documents: ShopOrderDocument[]
+  /** Documents of an accepted order that couldn't be queued; cleared once they are. Older servers omit it. */
+  queueErrors?: ShopOrderQueueError[]
   rejection: { reason: string | null; category: string | null }
   lifecycle: {
     submittedAt: string | null

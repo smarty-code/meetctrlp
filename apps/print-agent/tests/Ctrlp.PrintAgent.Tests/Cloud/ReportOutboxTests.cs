@@ -35,7 +35,7 @@ public sealed class ReportOutboxTests
         var job = _jobs.Enqueue(new EnqueueJobRequest(
             "printer-1", @"C:\staged\document.pdf", "document.pdf", 1, cloudJobId, "abc", "{}", $"key-{cloudJobId}", 3,
             "order-1", "doc-1", $"lease-{cloudJobId}", shopId, "agent-1"));
-        _jobs.ClaimNext();
+        _jobs.ClaimNext(shopId, "agent-1");
         return state == "completed" ? _jobs.Complete(job.Id, 42)! : _jobs.Fail(job.Id, "paper jam")!;
     }
 
@@ -90,6 +90,79 @@ public sealed class ReportOutboxTests
     }
 
     [Fact]
+    public async Task ClampsPagesPrintedToTheServersLimit()
+    {
+        var job = _jobs.Enqueue(new EnqueueJobRequest(
+            "printer-1", @"C:\staged\document.pdf", "document.pdf", 1, "job-big", "abc", "{}", "key-big", 250_000,
+            "order-1", "doc-1", "lease-big", "shop-1", "agent-1"));
+        _jobs.ClaimNext("shop-1", "agent-1");
+        _jobs.Complete(job.Id);
+        _api.Responder = (_, _) => Task.FromResult(Results(("job-big", "ok")));
+
+        await _outbox.SendAsync(_jobs.DueReports("shop-1", "agent-1", long.MaxValue, 20), CancellationToken.None);
+
+        using var body = JsonDocument.Parse(Assert.Single(_api.Requests).Body!);
+        var report = Assert.Single(body.RootElement.GetProperty("reports").EnumerateArray());
+        Assert.Equal(ReportOutbox.MaxPagesPrinted, report.GetProperty("pagesPrinted").GetInt32());
+        Assert.Equal(ReportStates.Acked, _jobs.Get(job.Id)!.ReportState);
+    }
+
+    [Fact]
+    public async Task ABadReportIsRejectedAloneInsteadOfPoisoningItsBatch()
+    {
+        var good = Finished("job-good");
+        var bad = Finished("job-bad");
+        var alsoGood = Finished("job-also-good", state: "failed");
+        _api.Responder = (request, _) =>
+        {
+            using var body = JsonDocument.Parse(request.Body!);
+            var reports = body.RootElement.GetProperty("reports").EnumerateArray().ToList();
+            var jobId = reports[0].GetProperty("jobId").GetString()!;
+            // The server validates the whole batch: one bad report 400s all of them.
+            return Task.FromResult(reports.Count > 1 || jobId == "job-bad"
+                ? new HttpResponseMessage(HttpStatusCode.BadRequest)
+                : Results((jobId, "ok")));
+        };
+
+        var failure = await _outbox.SendAsync(_jobs.DueReports("shop-1", "agent-1", long.MaxValue, 20), CancellationToken.None);
+
+        Assert.Null(failure);
+        Assert.Equal(ReportStates.Acked, _jobs.Get(good.Id)!.ReportState);
+        Assert.Equal(ReportStates.Rejected, _jobs.Get(bad.Id)!.ReportState);
+        Assert.Equal(ReportStates.Acked, _jobs.Get(alsoGood.Id)!.ReportState);
+        Assert.Equal(4, _api.Requests.Count); // the batch, then one per report
+    }
+
+    [Fact]
+    public async Task AnOutageWhileResendingOneAtATimeKeepsTheRestPending()
+    {
+        var first = Finished("job-1");
+        var second = Finished("job-2");
+        var third = Finished("job-3");
+        var calls = 0;
+        _api.Responder = (request, _) =>
+        {
+            using var body = JsonDocument.Parse(request.Body!);
+            var reports = body.RootElement.GetProperty("reports").EnumerateArray().ToList();
+            return Task.FromResult(Interlocked.Increment(ref calls) switch
+            {
+                1 => new HttpResponseMessage(HttpStatusCode.BadRequest),
+                2 => Results((reports[0].GetProperty("jobId").GetString()!, "ok")),
+                _ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable),
+            });
+        };
+
+        var failure = await _outbox.SendAsync(_jobs.DueReports("shop-1", "agent-1", long.MaxValue, 20), CancellationToken.None);
+
+        Assert.NotNull(failure);
+        Assert.Equal(3, calls); // stops at the outage instead of hammering it
+        var states = new[] { first, second, third }.Select(job => _jobs.Get(job.Id)!.ReportState).ToList();
+        Assert.Equal(1, states.Count(state => state == ReportStates.Acked));
+        Assert.Equal(2, states.Count(state => state == ReportStates.Pending));
+        Assert.DoesNotContain(ReportStates.Rejected, states);
+    }
+
+    [Fact]
     public void BacksOffFromOneSecondToFiveMinutes()
     {
         Assert.Equal(TimeSpan.FromSeconds(1), _outbox.Backoff(1));
@@ -112,7 +185,7 @@ public sealed class ReportOutboxTests
     {
         var job = _jobs.Enqueue(new EnqueueJobRequest("printer-1", @"C:\x.pdf", "x.pdf", 1, "job-x", IdempotencyKey: "key-x",
             CloudShopId: "shop-1", CloudAgentId: "agent-1"));
-        _jobs.ClaimNext();
+        _jobs.ClaimNext("shop-1", "agent-1");
         _jobs.Complete(job.Id);
 
         var failure = await _outbox.SendAsync(_jobs.DueReports("shop-1", "agent-1", long.MaxValue, 20), CancellationToken.None);

@@ -58,6 +58,7 @@ import {
   rejectShopOrder,
   recordCashPayment,
   retryOrderPrintJob,
+  cancelOrderPrintJob,
   syncShopPrinters,
   transitionShopOrder,
   updateOrderAutomation,
@@ -66,7 +67,7 @@ import {
   updateShopPricing,
   updateShopProfile,
 } from "./lib/cloud"
-import { dashboardMetrics, isStuckCloudJob, rupees } from "./lib/dashboard"
+import { cancelQueueEntry, cancelTarget, dashboardMetrics, isStuckCloudJob, mergeQueue, retryTarget, rupees } from "./lib/dashboard"
 import { shopError, shopLog, shopWarn } from "./lib/debug"
 import { emptyOrderStore, notifyPrinterOffline, reduceOrderEvent, type OrderStore } from "./lib/orders"
 import {
@@ -124,6 +125,12 @@ function confirmRescue(job: CloudPrintJob | undefined) {
   // A job DISPATCHING for 15 minutes is usually on a PC that died, but a large job may still be printing.
   return !isStuckCloudJob(job) || window.confirm(
     "This job has been with another PC for over 15 minutes and may still be printing there. Send it again?"
+  )
+}
+
+function confirmCancel(job: CloudPrintJob | undefined) {
+  return !isStuckCloudJob(job) || window.confirm(
+    "This job has been with another PC for over 15 minutes and may still be printing there. Cancel it anyway?"
   )
 }
 
@@ -827,16 +834,37 @@ export default function App() {
     }
   }
 
-  async function handleCancelJob(id: string) {
+  async function handleCancelQueue(entry: import("./lib/dashboard").QueueEntry) {
+    const target = cancelTarget(entry)
+    const shopId = sessionRef.current.shopId
+    if (!target || (target.kind === "cloud" && !shopId) || !confirmCancel(entry.cloud)) {
+      return
+    }
     setBusy(true)
     setError(null)
     try {
-      await cancelJob(id)
+      // A cloud job is cancelled by the server; this PC drops its copy when the sync it asks for says so.
+      const cancelled = await cancelQueueEntry(target, {
+        cancelCloud: (orderId, jobId) => cancelOrderPrintJob(shopId!, orderId, jobId),
+        cancelLocal: (id) => cancelJob(id),
+        requestSync: () => void agentNotify({ method: "sync.request" }).catch((err) => shopWarn("queue", "sync.request failed", err)),
+      })
+      if (cancelled) {
+        setOrderStore((store) => reduceOrderEvent(store, { type: "PRINT_JOB_CHANGED", job: cancelled }))
+      }
       setJobs(await listJobs())
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function handleCancelOrderJob(job: CloudPrintJob) {
+    // The job's queue entry, so a copy waiting on this PC is cancelled here too.
+    const entry = mergeQueue(jobs.filter((local) => local.cloudJobId === job.id), [job]).find((candidate) => candidate.cloud?.id === job.id)
+    if (entry) {
+      await handleCancelQueue(entry)
     }
   }
 
@@ -848,12 +876,17 @@ export default function App() {
     setBusy(true)
     setError(null)
     try {
-      if (entry.cloud) {
+      // A cloud job always goes to the server, even before the board has loaded it: its local lease is spent.
+      const target = retryTarget(entry)
+      if (!target) {
+        throw new Error("This job is missing its order. Retry it from the order's page.")
+      }
+      if (target.kind === "cloud") {
         if (!current.shopId) return
-        const retried = await retryOrderPrintJob(current.shopId, entry.cloud.orderId, entry.cloud.id, printerId)
+        const retried = await retryOrderPrintJob(current.shopId, target.orderId, target.jobId, printerId)
         setOrderStore((store) => reduceOrderEvent(store, { type: "PRINT_JOB_CHANGED", job: retried }))
-      } else if (entry.local) {
-        await retryJob(entry.local.id)
+      } else {
+        await retryJob(target.id)
       }
       setJobs(await listJobs())
     } catch (err) {
@@ -1114,6 +1147,7 @@ export default function App() {
             onCollectCash={() => void handleCashPayment(selectedOrder)}
             onPreview={(documentId) => handlePreviewDocument(selectedOrder, documentId)}
             onReassign={(job, printerId) => void handleReassignOrderJob(job, printerId)}
+            onCancelJob={(job) => void handleCancelOrderJob(job)}
           />
         ) : null}
         {screen === "printers" ? (
@@ -1136,7 +1170,7 @@ export default function App() {
             cloudJobs={Object.values(orderStore.jobsByOrderId).flat()}
             printers={printers}
             busy={busy}
-            onCancel={(id) => void handleCancelJob(id)}
+            onCancel={(entry) => void handleCancelQueue(entry)}
             onRetry={(entry, printerId) => void handleRetryQueue(entry, printerId)}
             onReassign={(entry, printerId) => void handleReassignQueue(entry, printerId)}
           />
