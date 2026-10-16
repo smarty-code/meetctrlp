@@ -1,0 +1,78 @@
+:root {
+  /* Surfaces */
+  --color-bg: #F8F9F8;
+  --color-surface: #FFFFFF;
+  --color-surface-sunken: #EEF2EC;
+  --color-forest: #0F1A12;
+
+  /* Text */
+  --color-ink: #111611;
+  --color-ink-soft: #4A554A;
+  --color-ink-faint: #667166;
+  --color-ink-on-forest: #E9EFE6;
+
+  /* Lines */
+  --color-line: #DCE2DB;
+  --color-line-on-forest: #2A3A2E;
+
+  /* Accent: lime */
+  --color-lime: #B8E04A;
+  --color-lime-soft: #E7F4BE;
+  --color-lime-deep: #3F7A12;
+
+  /* Concept-UI status chips (soft background + dark text) */
+  --chip-paid-bg: #DFF3E4;
+  --chip-paid-fg: #1D5E34;
+  --chip-pending-bg: #FBEBCB;
+  --chip-pending-fg: #7A4A05;
+  --chip-error-bg: #FADADA;
+  --chip-error-fg: #8A1F1F;
+  --chip-info-bg: #E3ECF8;
+  --chip-info-fg: #1F4A7A;
+
+  /* Illustration only (never used in UI) */
+  --color-peach: #F4C7A8;
+
+  /* Elevation */
+  --shadow-card: 0 1px 2px rgba(17, 22, 17, 0.06), 0 12px 32px -12px rgba(17, 22, 17, 0.16);
+
+  /* Radius scale */
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-xl: 32px;
+  --radius-pill: 9999px;
+}
+
+@theme {
+  --color-bg: var(--color-bg);
+  --color-surface: var(--color-surface);
+  --color-surface-sunken: var(--color-surface-sunken);
+  --color-forest: var(--color-forest);
+
+  --color-ink: var(--color-ink);
+  --color-ink-soft: var(--color-ink-soft);
+  --color-ink-faint: var(--color-ink-faint);
+  --color-ink-on-forest: var(--color-ink-on-forest);
+
+  --color-line: var(--color-line);
+  --color-line-on-forest: var(--color-line-on-forest);
+
+  --color-lime: var(--color-lime);
+  --color-lime-soft: var(--color-lime-soft);
+  --color-lime-deep: var(--color-lime-deep);
+
+  --color-chip-paid-bg: var(--chip-paid-bg);
+  --color-chip-paid-fg: var(--chip-paid-fg);
+  --color-chip-pending-bg: var(--chip-pending-bg);
+  --color-chip-pending-fg: var(--chip-pending-fg);
+  --color-chip-error-bg: var(--chip-error-bg);
+  --color-chip-error-fg: var(--chip-error-fg);
+  --color-chip-info-bg: var(--chip-info-bg);
+  --color-chip-info-fg: var(--chip-info-fg);
+
+  --color-peach: var(--color-peach);
+
+  --font-display: var(--font-display), "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --font-body: var(--font-body), "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
