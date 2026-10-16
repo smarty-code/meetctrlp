@@ -55,10 +55,13 @@ export function DoorsSection() {
               <div className="mt-6">
                 <Link
                   href={doors.doorA.href}
-                  className="inline-flex items-center gap-2 px-5 py-3 rounded-full text-sm font-semibold border border-ink text-ink hover:bg-ink hover:text-bg active:scale-95 transition-all"
+                  className="group inline-flex items-center gap-2 px-5 py-3 rounded-full text-sm font-semibold border border-ink text-ink hover:bg-ink hover:text-bg active:scale-95 transition-all"
                   onClick={() => trackEvent({ name: "door_user_click" })}
                 >
-                  {doors.doorA.buttonLabel}
+                  <span>See how printing works</span>
+                  <span className="inline-block transition-transform duration-200 group-hover:translate-x-1" aria-hidden="true">
+                    →
+                  </span>
                 </Link>
               </div>
 
@@ -103,9 +106,12 @@ export function DoorsSection() {
 
                 <a
                   href={doors.doorB.textLink.href}
-                  className="text-sm font-semibold text-lime hover:underline"
+                  className="group inline-flex items-center gap-1.5 text-sm font-semibold text-lime hover:underline"
                 >
-                  {doors.doorB.textLink.label}
+                  <span>Talk to us</span>
+                  <span className="inline-block transition-transform duration-200 group-hover:translate-x-1" aria-hidden="true">
+                    →
+                  </span>
                 </a>
               </div>
             </div>

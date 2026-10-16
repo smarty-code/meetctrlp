@@ -109,15 +109,21 @@ export function HowItWorksSection() {
 
             {/* Closing Links */}
             <div className="pt-8 flex flex-col gap-3 text-sm font-semibold text-lime-deep">
-              {howItWorks.links.map((link) => (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  className="hover:underline flex items-center gap-1.5"
-                >
-                  {link.label}
-                </Link>
-              ))}
+              {howItWorks.links.map((link) => {
+                const textWithoutArrow = link.label.replace(" →", "")
+                return (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    className="group inline-flex items-center gap-1.5 hover:underline w-fit"
+                  >
+                    <span>{textWithoutArrow}</span>
+                    <span className="inline-block transition-transform duration-200 group-hover:translate-x-1" aria-hidden="true">
+                      →
+                    </span>
+                  </Link>
+                )
+              })}
             </div>
           </div>
 
@@ -187,11 +193,21 @@ export function HowItWorksSection() {
 
           {/* Mobile Closing Links */}
           <div className="pt-4 flex flex-col gap-2.5 text-sm font-semibold text-lime-deep">
-            {howItWorks.links.map((link) => (
-              <Link key={link.href} href={link.href} className="hover:underline">
-                {link.label}
-              </Link>
-            ))}
+            {howItWorks.links.map((link) => {
+              const textWithoutArrow = link.label.replace(" →", "")
+              return (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  className="group inline-flex items-center gap-1.5 hover:underline w-fit"
+                >
+                  <span>{textWithoutArrow}</span>
+                  <span className="inline-block transition-transform duration-200 group-hover:translate-x-1" aria-hidden="true">
+                    →
+                  </span>
+                </Link>
+              )
+            })}
           </div>
         </div>
       </div>

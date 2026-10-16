@@ -94,9 +94,12 @@ export function ContactSection() {
                 <div className="mt-2">
                   <a
                     href={mailtoUrl}
-                    className="text-sm font-semibold text-lime hover:underline inline-flex items-center gap-1.5"
+                    className="group text-sm font-semibold text-lime hover:underline inline-flex items-center gap-1.5"
                   >
-                    {contact.block2.contactLink}
+                    <span>Contact us</span>
+                    <span className="inline-block transition-transform duration-200 group-hover:translate-x-1" aria-hidden="true">
+                      →
+                    </span>
                   </a>
                 </div>
               </div>

@@ -52,9 +52,12 @@ export function FounderSection() {
               <div className="mt-6">
                 <Link
                   href={siteConfig.urls.journey}
-                  className="text-sm font-semibold text-lime-deep hover:underline inline-flex items-center gap-1"
+                  className="group text-sm font-semibold text-lime-deep hover:underline inline-flex items-center gap-1"
                 >
-                  {founder.journeyLinkText}
+                  <span>Follow our journey</span>
+                  <span className="inline-block transition-transform duration-200 group-hover:translate-x-1" aria-hidden="true">
+                    →
+                  </span>
                 </Link>
               </div>
             )}

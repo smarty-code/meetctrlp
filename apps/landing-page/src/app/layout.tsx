@@ -54,11 +54,24 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode
 }>) {
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    name: siteConfig.brand.name,
+    url: siteConfig.urls.base,
+  }
+
   return (
     <html
       lang="en-IN"
       className={`${instrumentSerif.variable} ${inter.variable} antialiased`}
     >
+      <head>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        />
+      </head>
       <body className="min-h-screen bg-bg text-ink font-sans selection:bg-lime-soft selection:text-ink">
         {children}
       </body>
