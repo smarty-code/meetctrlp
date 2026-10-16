@@ -11,19 +11,29 @@
   }
 
   html {
-    font-family: var(--font-din-round);
+    font-family: var(--font-din-round), ui-sans-serif, system-ui, sans-serif;
     scroll-behavior: smooth;
     -webkit-tap-highlight-color: transparent;
   }
+
+  h1, h2, h3, .font-heading {
+    font-family: var(--font-feather), var(--font-din-round), ui-sans-serif, sans-serif;
+    letter-spacing: -0.02em;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-macaw-blue);
+    outline-offset: 2px;
+  }
 }
 
-/* Tactile 3D pressable button effect */
+/* Tactile 3D pressable button effect adhering to CtrlP Design System */
 .btn-pressable-green {
   border-bottom: 4px solid #46a302;
-  transition: all 0.1s ease;
+  transition: transform 0.1s ease, filter 0.1s ease, border-bottom-width 0.1s ease;
 }
 .btn-pressable-green:hover {
-  filter: brightness(1.05);
+  filter: brightness(1.04);
 }
 .btn-pressable-green:active {
   border-bottom-width: 0;
@@ -33,7 +43,10 @@
 .btn-pressable-lime {
   border: 2px solid var(--color-lingot-lime);
   border-bottom: 4px solid #7bc544;
-  transition: all 0.1s ease;
+  transition: transform 0.1s ease, background-color 0.1s ease, border-bottom-width 0.1s ease;
+}
+.btn-pressable-lime:hover {
+  background-color: rgba(215, 255, 184, 0.25);
 }
 .btn-pressable-lime:active {
   border-bottom-width: 2px;
@@ -43,9 +56,34 @@
 .btn-pressable-blue {
   border: 2px solid var(--color-macaw-blue);
   border-bottom: 4px solid #168ecc;
-  transition: all 0.1s ease;
+  transition: transform 0.1s ease, background-color 0.1s ease, border-bottom-width 0.1s ease;
+}
+.btn-pressable-blue:hover {
+  background-color: rgba(28, 176, 246, 0.08);
 }
 .btn-pressable-blue:active {
   border-bottom-width: 2px;
   transform: translateY(2px);
+}
+
+.btn-pressable-dark {
+  border-bottom: 4px solid #00021c;
+  transition: transform 0.1s ease, filter 0.1s ease, border-bottom-width 0.1s ease;
+}
+.btn-pressable-dark:hover {
+  filter: brightness(1.15);
+}
+.btn-pressable-dark:active {
+  border-bottom-width: 0;
+  transform: translateY(4px);
+}
+
+/* Accessible reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
