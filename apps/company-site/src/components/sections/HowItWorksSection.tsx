@@ -53,7 +53,7 @@ export function HowItWorksSection() {
       aria-label="How CtrlP works"
     >
       {/* Section Header */}
-      <div className="px-4 sm:px-6 lg:px-10 py-12 sm:py-16">
+      <div className="px-6 sm:px-8 lg:px-12 py-12 sm:py-16">
         <div className="max-w-2xl">
           <span className="text-xs font-semibold tracking-[0.14em] uppercase text-ink-faint">
             {howItWorks.eyebrow}
@@ -70,11 +70,11 @@ export function HowItWorksSection() {
       </div>
 
       {/* DESKTOP LAYOUT (>= 1024px): Two Columns with Sticky Concept Panel */}
-      <div className="hidden lg:grid grid-cols-12 divide-x divide-neutral-200/80 items-stretch">
+      <div className="hidden lg:grid grid-cols-12 gap-12 px-6 sm:px-8 lg:px-12 py-16 items-start relative">
         {/* Left Column: Numbered Steps (Cols 1-5) */}
-        <div className="col-span-5 relative pl-12 pr-8 py-16 space-y-36">
+        <div className="col-span-5 relative pl-8 py-4 space-y-36">
           {/* Vertical Progress Line */}
-          <div className="absolute left-6 top-16 bottom-16 w-0.5 bg-neutral-200/80 rounded-full">
+          <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-neutral-200/80 rounded-full">
             <div
               className="w-full bg-lime transition-all duration-300 rounded-full"
               style={{
@@ -129,8 +129,8 @@ export function HowItWorksSection() {
         </div>
 
         {/* Right Column: Sticky Concept Visual (Cols 7-12) */}
-        <div className="col-span-7 p-8 lg:p-12 bg-surface-sunken/20 relative">
-          <div className="sticky top-24 h-[72vh] max-h-[640px] rounded-3xl bg-surface-sunken border border-neutral-200/80 overflow-hidden p-8 flex items-center justify-center shadow-xs">
+        <div className="col-span-7 relative">
+          <div className="sticky top-[12vh] h-[76vh] max-h-[680px] rounded-3xl bg-surface-sunken border border-neutral-200/80 overflow-hidden p-8 flex items-center justify-center shadow-card">
             <ConceptTag />
             <Hills variant="panel" />
 
@@ -158,12 +158,12 @@ export function HowItWorksSection() {
         </div>
       </div>
 
-      {/* MOBILE & TABLET LAYOUT (< 1024px): Stacked Vertical Blocks separated by hairline dividers */}
-      <div className="lg:hidden divide-y divide-neutral-200/80">
+      {/* MOBILE & TABLET LAYOUT (< 1024px): Stacked Vertical Blocks */}
+      <div className="lg:hidden px-4 sm:px-6 py-12 space-y-16">
         {howItWorks.steps.map((step, idx) => (
-          <div key={step.number} className="p-4 sm:p-6 space-y-6">
+          <div key={step.number} className="flex flex-col gap-6">
             {/* Concept Card */}
-            <div className="relative w-full aspect-[4/5] max-h-[420px] rounded-2xl bg-surface-sunken border border-neutral-200/80 overflow-hidden p-6 flex items-center justify-center shadow-xs">
+            <div className="relative w-full aspect-[4/5] max-h-[440px] rounded-2xl bg-surface-sunken border border-neutral-200/80 overflow-hidden p-6 flex items-center justify-center shadow-xs">
               <ConceptTag />
               <Hills variant="panel" />
 
@@ -193,7 +193,7 @@ export function HowItWorksSection() {
         ))}
 
         {/* Mobile Closing Links */}
-        <div className="p-4 sm:p-6 flex flex-col gap-2.5 text-sm font-semibold text-lime-deep">
+        <div className="pt-4 flex flex-col gap-2.5 text-sm font-semibold text-lime-deep">
           {howItWorks.links.map((link) => {
             const textWithoutArrow = link.label.replace(" →", "")
             return (

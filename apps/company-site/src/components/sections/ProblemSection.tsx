@@ -31,12 +31,13 @@ export function ProblemSection() {
     <section
       id="problem"
       ref={sectionRef}
-      className="relative w-full bg-bg overflow-hidden"
+      className="relative w-full bg-bg overflow-hidden py-16 sm:py-20 lg:py-28"
       aria-label="Problem to solution"
     >
-      <div className="w-full grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-neutral-200/80 items-stretch">
-        {/* Left Text Block (Cols 1-5) */}
-        <div className="lg:col-span-5 px-4 sm:px-6 lg:px-10 py-12 sm:py-16 lg:py-20 flex flex-col justify-center items-start">
+      <div className="w-full px-6 sm:px-8 lg:px-12">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
+          {/* Left Text Block (Cols 1-5) */}
+          <div className="lg:col-span-5 flex flex-col items-start">
           <span className="text-xs font-semibold tracking-[0.14em] uppercase text-ink-faint">
             {problem.eyebrow}
           </span>
@@ -76,8 +77,8 @@ export function ProblemSection() {
         </div>
 
         {/* Right Transition Visual (Cols 7-12) */}
-        <div className="lg:col-span-7 px-4 sm:px-6 lg:px-10 py-12 sm:py-16 lg:py-20 flex flex-col items-center justify-center bg-surface-sunken/30">
-          <div className="relative w-full max-w-[500px] h-[380px] sm:h-[460px] bg-surface-sunken rounded-2xl border border-neutral-200/80 p-6 sm:p-8 flex items-center justify-center overflow-hidden">
+        <div className="lg:col-span-7 flex flex-col items-center">
+          <div className="relative w-full h-[400px] sm:h-[480px] bg-surface-sunken rounded-3xl p-6 sm:p-8 flex items-center justify-center overflow-hidden border border-neutral-200/80">
             <ConceptTag />
 
               {/* State 1: Messy chat bubbles & scattered files */}
@@ -181,12 +182,13 @@ export function ProblemSection() {
           </div>
         </div>
 
-      {/* Closing Line below the grid as a full-width ruled band */}
-      <div className="border-t border-neutral-200/80 px-4 sm:px-6 lg:px-8 py-12 sm:py-16 text-center">
-        <p className="font-display text-[clamp(1.75rem,3.2vw,2.75rem)] text-ink leading-[1.08] tracking-[-0.02em] max-w-2xl mx-auto">
-          {problem.closingStart}
-          <span className="italic text-lime-deep">{problem.closingEmphasis}</span>
-        </p>
+        {/* Closing Line below the grid */}
+        <div className="mt-16 sm:mt-24 text-center max-w-2xl mx-auto">
+          <p className="font-display text-[clamp(1.75rem,3.2vw,2.75rem)] text-ink leading-[1.08] tracking-[-0.02em]">
+            {problem.closingStart}
+            <span className="italic text-lime-deep">{problem.closingEmphasis}</span>
+          </p>
+        </div>
       </div>
     </section>
   )

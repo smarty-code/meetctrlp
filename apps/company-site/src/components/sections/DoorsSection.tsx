@@ -19,7 +19,7 @@ export function DoorsSection() {
       aria-label="Two doors: user and print shop entrances"
     >
       {/* Section Heading */}
-      <div className="px-4 sm:px-6 lg:px-10 py-12 sm:py-16">
+      <div className="px-6 sm:px-8 lg:px-12 py-12 sm:py-16">
         <div className="max-w-2xl">
           <span className="text-xs font-semibold tracking-[0.14em] uppercase text-ink-faint">
             {doors.eyebrow}

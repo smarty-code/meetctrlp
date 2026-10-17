@@ -17,9 +17,9 @@ export function TrustSection() {
       className="relative w-full bg-surface-sunken/40"
       aria-label="Trust and document control"
     >
-      <div className="w-full grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-neutral-200/80 items-stretch">
+      <div className="w-full px-6 sm:px-8 lg:px-12 py-16 sm:py-20 lg:py-24 grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16 items-start">
         {/* Left Block (Cols 1-5) */}
-        <div className="lg:col-span-5 px-4 sm:px-6 lg:px-10 py-12 sm:py-16 lg:py-20 flex flex-col items-start justify-center">
+        <div className="lg:col-span-5 flex flex-col items-start">
           <span className="text-xs font-semibold tracking-[0.14em] uppercase text-ink-faint">
             {trust.eyebrow}
           </span>
@@ -31,10 +31,10 @@ export function TrustSection() {
           </h2>
         </div>
 
-        {/* Right Stacked List of Verified Rows (Cols 7-12) */}
-        <div className="lg:col-span-7 divide-y divide-neutral-200/80">
+        {/* Right Stacked List of Verified Rows (Cols 6-12) */}
+        <div className="lg:col-span-7 divide-y divide-neutral-200/80 border-y border-neutral-200/80">
           {verifiedRows.map((row) => (
-            <div key={row.number} className="px-4 sm:px-6 lg:px-8 py-6 sm:py-8 flex items-start gap-4 sm:gap-6">
+            <div key={row.number} className="py-6 sm:py-8 flex items-start gap-4 sm:gap-6">
               <span className="font-mono text-xs font-bold text-ink-faint w-8 shrink-0 pt-1">
                 {row.number}
               </span>

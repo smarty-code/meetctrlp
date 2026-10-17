@@ -9,9 +9,9 @@ export function Footer() {
   return (
     <footer className="w-full bg-bg text-ink border-t border-neutral-200/80">
       {/* Top Grid: Brand block on left, 3 link columns on right */}
-      <div className="w-full grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-neutral-200/80 items-stretch">
+      <div className="w-full px-6 sm:px-8 lg:px-12 py-12 sm:py-16 grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16 items-start">
         {/* Brand Block (Cols 1-5) */}
-        <div className="lg:col-span-5 px-4 sm:px-6 lg:px-8 py-10 sm:py-12 flex flex-col justify-between">
+        <div className="lg:col-span-5 flex flex-col justify-between">
           <div>
             <Link href="/" className="font-display text-2xl text-ink tracking-tight">
               {footer.brand}
@@ -23,9 +23,9 @@ export function Footer() {
         </div>
 
         {/* Three Link Columns (Cols 6-12) */}
-        <div className="lg:col-span-7 grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-neutral-200/80 text-sm">
+        <div className="lg:col-span-7 grid grid-cols-2 sm:grid-cols-3 gap-8 sm:gap-10 text-sm">
           {/* Product Column */}
-          <div className="p-6 sm:p-8 flex flex-col gap-3">
+          <div className="flex flex-col gap-3">
             <span className="font-semibold text-xs tracking-wider uppercase text-ink-faint">
               {footer.colProduct.title}
             </span>
@@ -49,7 +49,7 @@ export function Footer() {
           </div>
 
           {/* Company Column */}
-          <div className="p-6 sm:p-8 flex flex-col gap-3">
+          <div className="flex flex-col gap-3">
             <span className="font-semibold text-xs tracking-wider uppercase text-ink-faint">
               {footer.colCompany.title}
             </span>
@@ -78,7 +78,7 @@ export function Footer() {
           </div>
 
           {/* Legal Column */}
-          <div className="p-6 sm:p-8 flex flex-col gap-3">
+          <div className="flex flex-col gap-3">
             <span className="font-semibold text-xs tracking-wider uppercase text-ink-faint">
               {footer.colLegal.title}
             </span>
@@ -99,7 +99,7 @@ export function Footer() {
       </div>
 
       {/* Bottom Bar with Hairline */}
-      <div className="border-t border-neutral-200/80 px-4 sm:px-6 lg:px-8 py-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-ink-faint">
+      <div className="border-t border-neutral-200/80 px-6 sm:px-8 lg:px-12 py-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-ink-faint">
         <p>{footer.bottomLine}</p>
         <p>meetctrlp.in</p>
       </div>

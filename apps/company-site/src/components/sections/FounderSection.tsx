@@ -14,14 +14,14 @@ export function FounderSection() {
       className="relative w-full bg-bg overflow-hidden"
       aria-label="Why we are building this"
     >
-      <div className="w-full grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-neutral-200/80 items-stretch">
+      <div className="w-full px-6 sm:px-8 lg:px-12 py-16 sm:py-20 lg:py-24 grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16 items-center">
         {/* Left Column: Hand-drawn Illustration (Cols 1-5) */}
-        <div className="lg:col-span-5 px-4 sm:px-6 lg:px-10 py-12 sm:py-16 lg:py-20 flex items-center justify-center bg-surface-sunken/20">
+        <div className="lg:col-span-5 flex items-center justify-center">
           <FounderIllustration />
         </div>
 
-        {/* Right Column: Founder Note Content (Cols 7-12) */}
-        <div className="lg:col-span-7 px-4 sm:px-6 lg:px-10 py-12 sm:py-16 lg:py-20 flex flex-col items-start justify-center">
+        {/* Right Column: Founder Note Content (Cols 6-12) */}
+        <div className="lg:col-span-7 flex flex-col items-start justify-center">
           <span className="text-xs font-semibold tracking-[0.14em] uppercase text-ink-faint">
             {founder.eyebrow}
           </span>

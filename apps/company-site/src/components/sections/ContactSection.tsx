@@ -24,9 +24,9 @@ export function ContactSection() {
         {/* Subtle Dark Sky Hills Background */}
         <Hills variant="sky" isDark={true} />
 
-        <div className="relative z-10 w-full grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-line-on-forest items-stretch">
+        <div className="relative z-10 w-full px-6 sm:px-8 lg:px-12 py-16 sm:py-20 lg:py-24 grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16 items-start">
           {/* Left Column (Cols 1-6) */}
-          <div className="lg:col-span-6 px-4 sm:px-6 lg:px-10 py-16 sm:py-20 flex flex-col justify-center items-start">
+          <div className="lg:col-span-6 flex flex-col justify-center items-start">
             <span className="text-xs font-semibold tracking-[0.14em] uppercase text-ink-on-forest/60">
               {contact.bracket}
             </span>
@@ -44,9 +44,9 @@ export function ContactSection() {
           </div>
 
           {/* Right Column: Two Stacked Action Blocks (Cols 7-12) */}
-          <div className="lg:col-span-6 divide-y divide-line-on-forest flex flex-col justify-center">
+          <div className="lg:col-span-6 flex flex-col gap-6 justify-center">
             {/* Block 1: For Print Shop Owners */}
-            <div className="p-6 sm:p-8 lg:p-10 flex flex-col gap-4">
+            <div className="p-6 sm:p-8 rounded-2xl bg-forest/60 border border-line-on-forest flex flex-col gap-4">
               <span className="text-xs font-bold tracking-[0.12em] uppercase text-lime">
                 {contact.block1.label}
               </span>
@@ -80,7 +80,7 @@ export function ContactSection() {
             </div>
 
             {/* Block 2: For General Enquiries */}
-            <div className="p-6 sm:p-8 lg:p-10 flex flex-col gap-2">
+            <div className="p-6 sm:p-8 rounded-2xl bg-forest/40 border border-line-on-forest/60 flex flex-col gap-2">
               <span className="text-xs font-bold tracking-[0.12em] uppercase text-ink-on-forest/60">
                 {contact.block2.label}
               </span>
