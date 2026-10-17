@@ -26,7 +26,7 @@ export function FactStrip() {
     <section
       id="facts"
       aria-label="Product facts"
-      className="relative w-full border-y border-line bg-surface overflow-hidden py-4 sm:py-5"
+      className="relative w-full bg-surface overflow-hidden py-4 sm:py-5"
     >
       {/* 64px Mask Gradient on Edges for Desktop / Tablet */}
       <div className="absolute inset-y-0 left-0 w-12 sm:w-20 bg-gradient-to-r from-surface to-transparent z-10 pointer-events-none" />
@@ -34,7 +34,7 @@ export function FactStrip() {
 
       {isReducedMotion ? (
         /* Reduced motion: Static wrapped list */
-        <div className="max-w-[1200px] mx-auto px-6">
+        <div className="w-full px-4 sm:px-6 lg:px-8">
           <ul className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm sm:text-base font-medium text-ink-soft">
             {displayItems.map((item, index) => (
               <li key={index} className="flex items-center gap-2">

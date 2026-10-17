@@ -14,42 +14,40 @@ export function TrustSection() {
   return (
     <section
       id="trust"
-      className="py-20 sm:py-28 bg-surface-sunken border-y border-line"
+      className="relative w-full bg-surface-sunken/40"
       aria-label="Trust and document control"
     >
-      <div className="max-w-[1200px] mx-auto px-6 sm:px-8 lg:px-12">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-start">
-          {/* Left Block (Cols 1-5) */}
-          <div className="lg:col-span-5 flex flex-col items-start">
-            <span className="text-xs font-semibold tracking-[0.14em] uppercase text-ink-faint">
-              {trust.eyebrow}
+      <div className="w-full grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-neutral-200/80 items-stretch">
+        {/* Left Block (Cols 1-5) */}
+        <div className="lg:col-span-5 px-4 sm:px-6 lg:px-10 py-12 sm:py-16 lg:py-20 flex flex-col items-start justify-center">
+          <span className="text-xs font-semibold tracking-[0.14em] uppercase text-ink-faint">
+            {trust.eyebrow}
+          </span>
+          <h2 className="mt-4 font-display text-[clamp(2.25rem,4.5vw,3.75rem)] leading-[1.02] tracking-[-0.025em] text-ink">
+            {trust.h2Start}
+            <span className="italic text-lime-deep block sm:inline">
+              {trust.h2Emphasis}
             </span>
-            <h2 className="mt-4 font-display text-[clamp(2.25rem,4.5vw,3.75rem)] leading-[1.02] tracking-[-0.025em] text-ink">
-              {trust.h2Start}
-              <span className="italic text-lime-deep block sm:inline">
-                {trust.h2Emphasis}
-              </span>
-            </h2>
-          </div>
+          </h2>
+        </div>
 
-          {/* Right Stacked List of Verified Rows (Cols 7-12) */}
-          <div className="lg:col-span-7 divide-y divide-line">
-            {verifiedRows.map((row) => (
-              <div key={row.number} className="py-8 first:pt-0 last:pb-0 flex items-start gap-6">
-                <span className="font-mono text-xs font-bold text-ink-faint w-8 shrink-0 pt-1">
-                  {row.number}
-                </span>
-                <div>
-                  <h3 className="text-lg sm:text-xl font-bold text-ink">
-                    {row.title}
-                  </h3>
-                  <p className="mt-2 text-sm sm:text-base text-ink-soft leading-[1.6]">
-                    {row.text}
-                  </p>
-                </div>
+        {/* Right Stacked List of Verified Rows (Cols 7-12) */}
+        <div className="lg:col-span-7 divide-y divide-neutral-200/80">
+          {verifiedRows.map((row) => (
+            <div key={row.number} className="px-4 sm:px-6 lg:px-8 py-6 sm:py-8 flex items-start gap-4 sm:gap-6">
+              <span className="font-mono text-xs font-bold text-ink-faint w-8 shrink-0 pt-1">
+                {row.number}
+              </span>
+              <div>
+                <h3 className="text-lg sm:text-xl font-bold text-ink">
+                  {row.title}
+                </h3>
+                <p className="mt-2 text-sm sm:text-base text-ink-soft leading-[1.6]">
+                  {row.text}
+                </p>
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
       </div>
     </section>

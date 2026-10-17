@@ -14,6 +14,7 @@
   /* Lines */
   --color-line: #DCE2DB;
   --color-line-on-forest: #2A3A2E;
+  --color-border: rgba(229, 229, 229, 0.8);
 
   /* Accent: lime */
   --color-lime: #B8E04A;
@@ -60,6 +61,7 @@
 
   --color-line: var(--color-line);
   --color-line-on-forest: var(--color-line-on-forest);
+  --color-border: var(--color-border);
 
   --color-lime: var(--color-lime);
   --color-lime-soft: var(--color-lime-soft);

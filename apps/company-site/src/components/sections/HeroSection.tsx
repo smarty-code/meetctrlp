@@ -54,22 +54,19 @@ export function HeroSection() {
     <section
       id="hero"
       ref={heroRef}
-      className="relative min-h-[min(100svh,920px)] flex flex-col justify-center bg-bg overflow-hidden pt-12 pb-16 sm:py-20"
+      className="relative w-full bg-bg overflow-hidden"
       aria-label="Hero"
     >
-      {/* Background Hills */}
-      <Hills variant="bottom" />
-
-      <div className="relative z-10 max-w-[1200px] w-full mx-auto px-6 sm:px-8 lg:px-12 grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
+      <div className="relative z-10 w-full grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-neutral-200/80 items-stretch">
         {/* Left Column: Typography & CTAs (Cols 1-6) */}
-        <div className="lg:col-span-6 flex flex-col items-start max-w-xl">
+        <div className="lg:col-span-6 px-4 sm:px-6 lg:px-10 py-12 sm:py-16 lg:py-20 flex flex-col justify-center items-start">
           {/* Bracket Label */}
           <span className="text-xs font-semibold tracking-[0.14em] uppercase text-ink-faint">
             {hero.bracket}
           </span>
 
           {/* H1 Headline */}
-          <h1 className="mt-6 font-display text-[clamp(3.25rem,7vw,6.5rem)] leading-[0.95] tracking-[-0.035em] text-ink font-normal">
+          <h1 className="mt-6 font-display text-[clamp(2.75rem,6vw,5.5rem)] leading-[0.95] tracking-[-0.035em] text-ink font-normal">
             {hero.headlineStart}
             <span className="italic text-lime-deep block sm:inline">
               {hero.headlineEmphasis}
@@ -77,7 +74,7 @@ export function HeroSection() {
           </h1>
 
           {/* Subhead */}
-          <p className="mt-6 text-base sm:text-lg lg:text-[1.25rem] text-ink-soft leading-[1.55] max-w-[52ch]">
+          <p className="mt-6 text-base sm:text-lg lg:text-[1.2rem] text-ink-soft leading-[1.55] max-w-[50ch]">
             {hero.subhead}
           </p>
 
@@ -111,13 +108,16 @@ export function HeroSection() {
         </div>
 
         {/* Right Column: Composition Container (Cols 7-12) */}
-        <div className="lg:col-span-6 flex justify-center lg:justify-end relative">
-          <div className="relative w-full max-w-[560px] h-[480px] sm:h-[580px] flex items-center justify-center">
+        <div className="lg:col-span-6 px-4 sm:px-6 lg:px-8 py-10 sm:py-16 flex items-center justify-center relative overflow-hidden bg-surface-sunken/20">
+          {/* Background Hills */}
+          <Hills variant="bottom" />
+
+          <div className="relative z-10 w-full max-w-[520px] h-[440px] sm:h-[520px] flex items-center justify-center">
             {/* Concept Tag */}
             <ConceptTag />
 
             {/* Desktop Concept in Background */}
-            <div className="absolute top-2 right-0 sm:right-2 w-[85%] sm:w-[480px] lg:w-[500px]">
+            <div className="absolute top-2 right-0 sm:right-2 w-[85%] sm:w-[440px] lg:w-[460px]">
               <DesktopConcept
                 screen="queue"
                 newOrderIncoming={currentStep >= 2}
@@ -125,7 +125,7 @@ export function HeroSection() {
             </div>
 
             {/* Phone Concept in Foreground with 3 deg counter-tilt */}
-            <div className="absolute bottom-2 left-2 sm:left-4 z-10 -rotate-3 hover:rotate-0 transition-transform duration-300 scale-[0.82] sm:scale-90 origin-bottom-left">
+            <div className="absolute bottom-2 left-2 sm:left-4 z-10 -rotate-3 hover:rotate-0 transition-transform duration-300 scale-[0.78] sm:scale-85 origin-bottom-left">
               <PhoneConcept
                 screen="review"
                 isPressed={currentStep === 1}
