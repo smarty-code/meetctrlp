@@ -248,9 +248,13 @@ The Firebase web `apiKey` and `appId` are public by design (every visitor's brow
 
 ## 3. Shop desktop (`apps/print-shop`)
 
-Vite builds these into the app. For `pnpm desktop:dev` use `apps/print-shop/.env`; for the installer (`pnpm desktop:build`) use `apps/print-shop/.env.production`, which a production build reads on top of `.env`.
+Vite builds these into the app.
+- **`pnpm desktop:dev`** reads `apps/print-shop/.env.development`.
+- **The installer** (`pnpm desktop:build`) and `pnpm desktop:prod` read `apps/print-shop/.env.production`.
 
-`apps/print-shop/.env` (local API):
+If the dev file is missing, the agent starts with no API key and no doorbell URL. The agent log then shows `cloud.configure … database=(none) apiKey=missing`, and the desktop shows the shop cloud as **Offline**, even though sign-in works. The API also needs `FIREBASE_DATABASE_URL` (section 1) or it never rings the doorbell.
+
+`apps/print-shop/.env.development` (local API):
 
 ```dotenv
 VITE_SERVER_BASE_URL=http://localhost:3000
