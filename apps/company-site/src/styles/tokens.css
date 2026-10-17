@@ -32,6 +32,9 @@
 
   /* Illustration only (never used in UI) */
   --color-peach: #F4C7A8;
+  --color-hills-mid: #CFE79A;
+  --color-hills-dark-1: #1E3322;
+  --color-hills-dark-2: #2A4A30;
 
   /* Elevation */
   --shadow-card: 0 1px 2px rgba(17, 22, 17, 0.06), 0 12px 32px -12px rgba(17, 22, 17, 0.16);

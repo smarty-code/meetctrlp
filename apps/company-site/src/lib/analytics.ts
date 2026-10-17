@@ -16,9 +16,11 @@ export type AnalyticsEvent =
   | { name: "request_call_submit" }
   | { name: "section_view"; properties: { id: string } }
 
+import { isDev } from "@/config/env"
+
 export function trackEvent(event: AnalyticsEvent): void {
   // In development, log cleanly
-  if (process.env.NODE_ENV === "development") {
+  if (isDev) {
     console.debug("[Analytics Event]", event.name, "properties" in event ? event.properties : {})
   }
 
