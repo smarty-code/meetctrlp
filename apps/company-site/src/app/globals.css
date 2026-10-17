@@ -48,3 +48,76 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ---------- Editorial pages (/pricing, /vision) ---------- */
+
+/* Fade-up entrance; stagger with style={{ "--delay": "120ms" }} */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+}
+
+.rise-in {
+  animation: rise-in 700ms var(--ease-editorial) both;
+  animation-delay: var(--delay, 0ms);
+}
+
+/* Split-character reveal for display headings */
+@keyframes char-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.35em);
+  }
+}
+
+.char-in {
+  display: inline-block;
+  animation: char-in 500ms var(--ease-editorial) both;
+  animation-delay: var(--delay, 0ms);
+}
+
+/* Slow drift for decorative framing art */
+@keyframes drift {
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+.drift {
+  animation: drift 9s ease-in-out infinite;
+}
+
+/* Dot-matrix substrate that fades into the page at every edge */
+.halftone {
+  background-image: radial-gradient(var(--halftone-color) var(--halftone-dot), transparent var(--halftone-dot));
+  background-size: var(--halftone-gap) var(--halftone-gap);
+  mask-image: radial-gradient(ellipse 80% 70% at 50% 35%, black 30%, transparent 100%);
+}
+
+/* Perforated ticket: scalloped tear-off strip under a card.
+   `round` fits a whole number of notches across any width. */
+.ticket-edge {
+  height: var(--ticket-edge);
+  mask-image: radial-gradient(
+    circle at 50% 100%,
+    transparent var(--ticket-notch),
+    black calc(var(--ticket-notch) + 0.5px)
+  );
+  mask-size: var(--ticket-pitch) var(--ticket-edge);
+  mask-repeat: round no-repeat;
+}
+
+/* Shadow on the ticket wrapper, so it follows the notches */
+.ticket-shadow {
+  filter: drop-shadow(var(--ticket-shadow));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise-in,
+  .char-in,
+  .drift {
+    animation: none !important;
+  }
+}

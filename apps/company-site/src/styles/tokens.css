@@ -46,6 +46,20 @@
   --radius-lg: 24px;
   --radius-xl: 32px;
   --radius-pill: 9999px;
+
+  /* Perforated ticket card (pricing, vision): notch radius, notch pitch, strip depth, shadow */
+  --ticket-notch: 0.5rem;
+  --ticket-pitch: 1.5rem;
+  --ticket-edge: 0.75rem;
+  --ticket-shadow: 0 24px 30px rgba(17, 22, 17, 0.08);
+
+  /* Halftone dot-matrix backdrop */
+  --halftone-color: rgba(17, 22, 17, 0.16);
+  --halftone-dot: 1px;
+  --halftone-gap: 16px;
+
+  /* Editorial entrance motion */
+  --ease-editorial: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @theme {

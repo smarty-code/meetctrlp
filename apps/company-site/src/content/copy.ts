@@ -10,11 +10,13 @@ export const siteCopy = {
   header: {
     wordmark: "MeetCtrlP",
     navItems: [
-      { label: "Product", href: "#how-it-works" },
+      { label: "Product", href: "/#how-it-works" },
       { label: "For Print Shops", href: "/print-shops" },
+      { label: "Pricing", href: "/pricing" },
+      { label: "Vision", href: "/vision" },
     ],
     journeyItem: { label: "Journey", href: "/journey" },
-    primaryCta: { label: "Explore CtrlP", href: "#how-it-works" },
+    primaryCta: { label: "Explore CtrlP", href: "/#how-it-works" },
     mobileMenu: {
       openLabel: "Open navigation menu",
       closeLabel: "Close navigation menu",
@@ -183,16 +185,18 @@ export const siteCopy = {
     colProduct: {
       title: "Product",
       links: [
-        { label: "CtrlP", href: "#how-it-works" },
+        { label: "CtrlP", href: "/#how-it-works" },
         { label: "Print User", href: "/print" },
         { label: "For Print Shops", href: "/print-shops" },
+        { label: "Pricing", href: "/pricing" },
       ],
       userNote: "Printing starts at a participating shop's QR code.",
     },
     colCompany: {
       title: "Company",
       links: [
-        { label: "Contact", href: "#contact" },
+        { label: "Vision", href: "/vision" },
+        { label: "Contact", href: "/#contact" },
       ],
       journeyLink: { label: "Our Journey", href: "/journey" },
     },

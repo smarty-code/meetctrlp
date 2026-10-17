@@ -2,13 +2,16 @@
 
 import React, { useState, useEffect } from "react"
 import Link from "next/link"
+import { usePathname } from "next/navigation"
 import { siteConfig } from "@/content/site-config"
+import { RollText } from "@/components/editorial/RollText"
 import { siteCopy } from "@/content/copy"
 import { trackEvent } from "@/lib/analytics"
 
 export function Header() {
   const [isScrolled, setIsScrolled] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const pathname = usePathname()
   const { header } = siteCopy
 
   useEffect(() => {
@@ -66,16 +69,24 @@ export function Header() {
 
           {/* Desktop Navigation (lg breakpoint >= 1024px) */}
           <nav className="hidden lg:flex items-center gap-8 text-sm font-medium text-ink-soft">
-            {header.navItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className="hover:text-ink transition-colors"
-                onClick={() => trackEvent({ name: "nav_click", properties: { label: item.label } })}
-              >
-                {item.label}
-              </Link>
-            ))}
+            {header.navItems.map((item) => {
+              const active = pathname === item.href
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  aria-current={active ? "page" : undefined}
+                  className={`group relative hover:text-ink transition-colors ${
+                    active
+                      ? "text-ink after:absolute after:-bottom-1.5 after:left-0 after:right-0 after:h-px after:bg-lime-deep"
+                      : ""
+                  }`}
+                  onClick={() => trackEvent({ name: "nav_click", properties: { label: item.label } })}
+                >
+                  <RollText label={item.label} />
+                </Link>
+              )
+            })}
 
             {/* Flagged Journey Link */}
             {siteConfig.features.showJourney && (
@@ -95,12 +106,12 @@ export function Header() {
           <div className="flex items-center gap-3">
             <Link
               href={header.primaryCta.href}
-              className="hidden sm:inline-flex px-4 py-2 sm:px-5 sm:py-2.5 rounded-full text-xs sm:text-sm font-semibold bg-lime text-ink hover:brightness-95 active:scale-95 transition-all shadow-xs"
+              className="group hidden sm:inline-flex px-4 py-2 sm:px-5 sm:py-2.5 rounded-full text-xs sm:text-sm font-semibold bg-lime text-ink hover:brightness-95 active:scale-95 transition-all shadow-xs"
               onClick={() =>
                 trackEvent({ name: "cta_explore_click", properties: { location: "header" } })
               }
             >
-              {header.primaryCta.label}
+              <RollText label={header.primaryCta.label} />
             </Link>
 
             {/* Circular Bordered Hamburger Trigger (<1024px) */}
@@ -151,7 +162,10 @@ export function Header() {
               <Link
                 key={item.href}
                 href={item.href}
-                className="py-4 hover:text-lime-deep transition-colors"
+                aria-current={pathname === item.href ? "page" : undefined}
+                className={`py-4 hover:text-lime-deep transition-colors ${
+                  pathname === item.href ? "italic text-lime-deep" : ""
+                }`}
                 onClick={() => {
                   trackEvent({ name: "nav_click", properties: { label: item.label } })
                   setMobileMenuOpen(false)

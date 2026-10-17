@@ -2,7 +2,7 @@ import type { MetadataRoute } from "next"
 import { siteConfig } from "@/content/site-config"
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const routes = ["", "/print", "/print-shops", "/privacy", "/terms"]
+  const routes = ["", "/pricing", "/vision", "/print", "/print-shops", "/privacy", "/terms"]
 
   if (siteConfig.features.showJourney) {
     routes.push("/journey")
