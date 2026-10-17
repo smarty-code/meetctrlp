@@ -16,6 +16,8 @@
 5. Anything marked **[VERIFY]** is a factual claim about the product that must be controlled through the claims registry (Section 6.2). It renders only when its `verified` flag is `true`.
 6. When something is ambiguous, choose the simpler option and leave a short `TODO(owner)` comment in code. Do not stop to ask.
 
+**Engineering rules are mandatory.** The site is built with Next.js, TypeScript and Tailwind CSS, must be fully responsive, and must contain no hardcoded values. Read Section 9 before writing any code. Where a pixel value, colour, string or link appears in this PRD, it describes intent; implement it through tokens, content modules and config as Section 9 requires.
+
 ---
 
 ## 1. Product context
@@ -206,6 +208,8 @@ Fonts (default pair, load via `next/font` with `display: swap`, subset to Latin)
 4. Max line length: 62ch for body, 18ch to 22ch for display headlines.
 
 ### 4.5 Layout, spacing, shape
+
+All pixel values below describe design intent. Implement them as tokens in `rem` or fluid expressions (Section 9.4), never as literals in components.
 
 - **Container:** max width 1200 px, horizontal padding 24 px (mobile), 32 px (≥640), 48 px (≥1024). Full-bleed backgrounds are allowed; content stays in the container.
 - **Grid:** 12 columns, 24 px gap (≥1024); 8 columns, 20 px gap (640 to 1023); 4 columns, 16 px gap (<640).
@@ -618,22 +622,188 @@ Use a privacy-friendly tool (Plausible, PostHog with cookieless mode, or similar
 
 ---
 
-## 9. Technical requirements
+## 9. Engineering requirements (mandatory)
 
-- **Stack (recommended):** Next.js (App Router) with TypeScript, Tailwind CSS driven by the CSS variables in Section 4, deployed on Vercel. A comparable stack is acceptable if it meets the budgets in 7.3.
-- **Structure:**
-  - `src/app/page.tsx` composes sections in order.
-  - `src/components/sections/*` one file per section (Hero, FactStrip, Problem, HowItWorks, Doors, Trust, Founder, Contact, Footer).
-  - `src/components/concepts/*` PhoneConcept, DesktopConcept, ConceptTag, Hills.
-  - `src/content/copy.ts` all copy as typed constants; `src/content/claims.ts` the registry.
-  - `src/styles/tokens.css` all tokens from Section 4.
-  - `src/app/api/request-call/route.ts` form handler.
-- **Environment variables:** `NEXT_PUBLIC_WHATSAPP_NUMBER`, `NEXT_PUBLIC_CONTACT_EMAIL`, `NEXT_PUBLIC_SHOW_JOURNEY`, plus keys for the lead delivery method chosen.
-- **No** localStorage dependence for core behaviour; the page must render fully without client-side storage.
-- **Security:** CSP headers; no inline scripts except the analytics snippet via nonce; sanitise and validate all form input server-side; rate limit the API route.
-- **Out of scope for v1:** CMS, login, dark mode, internationalisation, blog.
+These rules override convenience. If a design value, copy line or link in this PRD conflicts with a rule here, keep the PRD's intent and implement it the way this section requires.
 
----
+### 9.1 Stack
+
+| Layer | Requirement |
+|---|---|
+| Framework | **Next.js**, App Router, latest stable release. Server Components by default. Pages are statically generated. |
+| Language | **TypeScript** in strict mode (see 9.6). |
+| Styling | **Tailwind CSS**, latest stable major, mobile-first, driven only by design tokens (see 9.4 and 9.7). |
+| Runtime and tooling | Node LTS (pin in `.nvmrc`), pnpm, ESLint, Prettier, Husky with lint-staged. |
+| Hosting | Vercel. |
+| Allowed helpers | `clsx` with `tailwind-merge` (a single `cn()` helper), `class-variance-authority`, `zod`, `framer-motion` (optional, lazy-loaded), the chosen analytics client. |
+| Not allowed without owner approval | Component kits that bring their own theme (MUI, Chakra, Ant), CSS-in-JS runtimes, jQuery, moment, large icon packs, any UI library that duplicates what Tailwind and the components here already do. |
+
+### 9.2 Rule 1: the site is fully responsive
+
+1. **Mobile first.** Write base styles for the smallest screen, then layer up with `sm`, `md`, `lg`, `xl`. Start designing at 360 px width.
+2. **Fluid, not fixed.** Use `rem`, `%`, `fr`, `minmax()`, `clamp()`, `min()`, `max()`, `aspect-ratio`, `gap` and flex or grid. No fixed pixel widths or heights on layout containers. Fixed sizes are allowed only for hairlines and for the intrinsic size of an icon or device frame, and even then through a token (9.4).
+3. **Fluid type and spacing.** Type sizes and section padding come from `clamp()` tokens, so text scales smoothly between breakpoints without jumps.
+4. **Container queries for components.** Concept devices, bento tiles, cards and the journey panel respond to the width of their container (`@container`), not only the viewport, so they work wherever they are placed.
+5. **Modern viewport units.** Use `svh`, `dvh` and `lvh` instead of `vh` so mobile browser toolbars do not break full-height sections. Respect safe areas (`env(safe-area-inset-*)`) for sticky headers and bottom elements.
+6. **No horizontal scroll** at any width from 320 px to 2560 px. Long words, tables and code wrap or scroll inside their own container.
+7. **Images and art** scale to their container, declare intrinsic dimensions (or `aspect-ratio`) to avoid layout shift, and use `next/image` with accurate `sizes` for any raster file. SVG art scales with `viewBox`.
+8. **Touch and pointer.** Tap targets are at least 44 × 44 px. Hover-only behaviour has a touch equivalent. Use the `hover` variant only where `(hover: hover)` applies.
+9. **Resilience.** The layout survives 200% browser zoom, user font-size increases, landscape phones, tablets in both orientations, and very wide desktop screens (content stays in its container; backgrounds may go full-bleed).
+10. **Responsive behaviour is defined once.** Breakpoints live in a single configuration (see 9.3). Components never invent their own breakpoint values.
+
+### 9.3 Rule 2: nothing is hardcoded
+
+Every value has exactly one home. Components read from it. Changing the value in its home changes the site everywhere with **no component edits**.
+
+| Kind of value | Single source of truth | How components use it |
+|---|---|---|
+| Colours | CSS variables in `src/styles/tokens.css`, mapped into the Tailwind theme | Semantic classes such as `bg-bg`, `text-ink`, `bg-lime`. **No** hex, rgb or hsl values in TSX or in any CSS file except `tokens.css`. **No** default Tailwind palette (`bg-green-500`) and **no** arbitrary colour (`bg-[#B8E04A]`). |
+| Typography | Font variables and fluid `clamp()` size tokens in the theme | Classes such as `text-display-xl`, `text-body`. No inline font sizes. |
+| Spacing, radius, shadow, durations, easings, z-index layers, container width | Theme tokens | Theme classes only. **No arbitrary values** such as `w-[537px]`, `mt-[13px]`, `rounded-[18px]`, `z-[9999]`. |
+| Breakpoints | One `breakpoints` object in the Tailwind theme, imported wherever JavaScript needs it | Tailwind prefixes in CSS; a shared constant in JS (prefer CSS-only responsiveness so JS rarely needs it). |
+| Text and microcopy (including `aria-label`, alt text, button labels, error messages) | Typed modules in `src/content/` | Components receive text through props or import it from `src/content`. **No string literals of visible or accessible text in JSX.** |
+| Lists of things (nav links, journey steps, bento tiles, FAQ items, footer links, fact items) | Typed arrays of objects in `src/content/` | Rendered with `.map()`. Adding, removing or reordering an item requires **zero component changes**. |
+| Links, routes and external URLs | `src/config/routes.ts` and `src/config/site.ts` (URLs built from env values) | Helper functions such as `whatsappLink(message)` and `mailtoLink()`. No URL strings inside components. |
+| Business values (WhatsApp number, contact email, domain, app URL, plan data, sample data for concept screens) | Environment variables and typed config modules; private data in a `server-only` module | Imported through the config layer. Sample orders, rupee amounts and printer names live in one `sampleData` module. |
+| Feature flags | `src/config/flags.ts`, read from env and validated | Components check a flag; they never read `process.env` directly. |
+| Product claims | The claims registry (`src/content/claims.ts`) | Components render a claim or its fallback through one helper. |
+| Analytics event names and properties | `src/config/analytics.ts` (a constant object) | A single `track(event, props)` wrapper. No event name strings in components. |
+| Images and art | A typed asset manifest (path, alt key, intrinsic size) | `next/image` or the art components read from the manifest. |
+| Year, dates, number and currency formatting | Computed at render with `Intl` (`en-IN` locale) from a `format` helper | No typed-in years or formatted amounts. |
+
+**Allowed literals:** `0`, `1`, `100%`, array indexes, CSS keywords, HTML or ARIA semantic attribute values, and design-system hairlines expressed through a token (`--hairline`).
+
+**"Dynamic" here means** single source of truth and configuration-driven rendering. It does not mean fetching everything from a server at runtime. Pages stay statically generated.
+
+**CMS-ready, not CMS-built.** Access all content through a thin layer (`getContent()` or equivalent) so a CMS can replace the files later without changing any component.
+
+**Environment variables** are validated at build and start by a `zod` schema in `src/config/env.ts`. A missing or malformed required value fails the build. Only non-secret values use the `NEXT_PUBLIC_` prefix. Secrets and private business data stay server-only (use the `server-only` package).
+
+**Enforcement (the build must fail on violations):**
+- ESLint: `react/jsx-no-literals` (strict, allowing only whitespace and punctuation), `eslint-plugin-tailwindcss` with `no-arbitrary-value` and `no-custom-classname`, `no-restricted-syntax` rules that ban hex colour literals and numeric pixel values in `style` props, `jsx-a11y`, and `@typescript-eslint` strict rules.
+- A script `pnpm audit:hardcoded` (run in CI) that scans `src/` and fails on: colour literals outside `tokens.css`; arbitrary Tailwind values; `http(s)://` URLs outside `src/config`; phone-number or email patterns outside config; `₹` amounts outside the `sampleData` module; `process.env` access outside `src/config`.
+
+### 9.4 Design tokens implementation
+
+- `src/styles/tokens.css` holds every token from Section 4 as CSS variables. It is the only file that may contain raw colour, size or timing values.
+- The Tailwind theme maps those variables to semantic names (colours, fluid type, spacing, radius, shadows, durations, easings, z-index layers, breakpoints, container widths). Use the theme mechanism of the Tailwind major version in use (`@theme` in CSS for v4, `theme.extend` for v3).
+- Token names are semantic (`ink`, `bg`, `surface`, `lime`, `chip-paid-bg`), never descriptive of a value (`green-light`).
+- Every pixel figure written in this PRD describes **design intent**. Implement it as a token in `rem` or a fluid expression, not as a literal in a component.
+- Example mapping (illustrative):
+
+```css
+/* tokens.css (only place raw values may appear) */
+:root {
+  --color-bg: #F8F9F8;
+  --color-ink: #111611;
+  --space-section: clamp(4.5rem, 11vw, 9.5rem);
+  --radius-xl: 2rem;
+  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --duration-standard: 320ms;
+}
+```
+
+```css
+/* Tailwind v4 theme mapping (adapt for v3) */
+@theme {
+  --color-bg: var(--color-bg);
+  --color-ink: var(--color-ink);
+  --spacing-section: var(--space-section);
+  --radius-xl: var(--radius-xl);
+  --ease-standard: var(--ease-standard);
+}
+```
+
+### 9.5 Project structure and code organisation
+
+```
+src/
+  app/                 layout.tsx, page.tsx, api/, privacy/, terms/, sitemap.ts, robots.ts, manifest.ts,
+                       error.tsx, not-found.tsx, loading.tsx
+  components/
+    ui/                Button, Chip, ConceptTag, Accordion, Tabs, Modal, Marquee (generic, reusable)
+    layout/            Header, Footer, Container, Section
+    sections/          one file per page section, named after it (Hero.tsx, Journey.tsx, ...)
+    concepts/          PhoneConcept, DesktopConcept, Hills (presentational, data-driven)
+  content/             copy, claims, nav, faq, steps, tiles, sampleData (typed, no JSX)
+  config/              env.ts, site.ts, routes.ts, flags.ts, analytics.ts
+  lib/                 cn.ts, links.ts, format.ts (Intl en-IN), validation.ts (zod), hooks/
+  styles/              tokens.css, globals.css
+  types/               shared types
+tests/                 unit and e2e
+scripts/               audit-hardcoded.ts
+```
+
+- Server Components by default. Add `"use client"` only to interactive leaves (mobile menu, tabs, accordion, journey scroll scene, call form, looping hero scene).
+- One component per file, named exports (default exports only for Next.js pages and layouts), absolute imports with the `@/` alias, no deep relative paths.
+- Keep components under about 200 lines. Split by responsibility. No business logic in JSX; move it to `lib/`.
+- Sections are **data-driven**: a section component takes typed content as props (or imports one content module) and renders it with `.map()`.
+- Variants use discriminated unions or `cva`, not boolean prop piles. Use `as const` and `satisfies` for config objects.
+- Compose small components instead of long prop lists. Avoid prop drilling beyond two levels; use composition.
+- No dead code, commented-out code or `console.log` in committed code.
+
+### 9.6 TypeScript rules
+
+- `tsconfig`: `strict: true`, `noUncheckedIndexedAccess: true`, `exactOptionalPropertyTypes: true`, `noImplicitOverride: true`, `noFallthroughCasesInSwitch: true`.
+- No `any`. No `@ts-ignore`; if a suppression is unavoidable use `@ts-expect-error` with a written reason.
+- Use `import type` for type-only imports. Prefer `type` aliases and `const` objects over `enum`.
+- Define every external boundary with a `zod` schema (env, form input, API request and response) and infer types from the schema.
+- Public component props are explicitly typed and documented with short TSDoc where the intent is not obvious.
+
+### 9.7 Tailwind rules
+
+- Mobile-first utilities only; add `sm:`, `md:`, `lg:`, `xl:` to enhance.
+- Use only theme-backed utilities (9.3). Arbitrary values are forbidden except for genuinely one-off CSS properties that have no token, and then only with a code comment justifying it and owner-visible in review.
+- Conditional classes through `cn()`. Repeated class patterns become components or `cva` variants, not `@apply` chains.
+- Order classes automatically with `prettier-plugin-tailwindcss`.
+- Prefer logical properties (`ms-`, `me-`, `ps-`, `pe-`) where direction could matter later.
+- Use `motion-safe:` and `motion-reduce:` variants, `focus-visible:` for focus rings, `min-h-dvh` and friends for viewport sizing, and container-query utilities for component-level responsiveness.
+- Dark mode is disabled for v1 (`color-scheme: light`).
+
+### 9.8 Next.js practices
+
+- Use the Metadata API (`generateMetadata` or the `metadata` export) fed from `src/config/site.ts` and `src/content`. Do not hand-write `<head>` tags.
+- Fonts through `next/font` (self-hosted, subset, `display: swap`, size-adjusted fallbacks). Images through `next/image` with accurate `sizes`; set `priority` only on a real LCP image.
+- Analytics through `next/script` with `afterInteractive`, loaded behind one wrapper.
+- Lazy-load heavy, below-the-fold client components with `next/dynamic`. Use `ssr: false` only when truly required.
+- Route handlers: validate input with `zod`, apply rate limiting and a honeypot, return typed JSON with correct status codes, never leak internals in errors.
+- Provide `error.tsx`, `not-found.tsx` and `loading.tsx` with on-brand, accessible fallbacks.
+- `next.config`: `reactStrictMode: true`, `poweredByHeader: false`, security headers (CSP with nonce via middleware, `Referrer-Policy`, `X-Content-Type-Options`, `Permissions-Policy`, HSTS), and the bundle analyzer behind an env switch.
+- Generate `sitemap.xml`, `robots.txt` and the web manifest from code (`sitemap.ts`, `robots.ts`, `manifest.ts`) using config values.
+- No secrets in client bundles. Private config uses `server-only`.
+
+### 9.9 State, forms, i18n readiness
+
+- No global state library. Local state and URL state only (for example, the FAQ tab lives in the URL hash).
+- Forms: native elements with `zod` validation on both client and server, accessible error messaging, progressive enhancement (the form works without JavaScript through a standard POST to the route handler where practical).
+- Make copy **i18n-ready** even though v1 ships in English: content modules are keyed objects, numbers and currency use `Intl.NumberFormat("en-IN")`, and no sentence is built by concatenating fragments.
+
+### 9.10 Accessibility and performance practices (supplements Section 7)
+
+- `eslint-plugin-jsx-a11y` enabled. `axe-core` runs inside the end-to-end tests.
+- A `useReducedMotion` hook (or CSS-only equivalent) gates all animation. Looping scenes pause off-screen through IntersectionObserver.
+- Reserve space for every image, device frame and embed to prevent layout shift. Below-the-fold sections may use `content-visibility: auto` with an intrinsic size hint.
+- Keep client JavaScript small: prefer CSS for animation and layout, split routes and components, and check the bundle analyzer before release.
+
+### 9.11 Quality gates and tooling
+
+- **Scripts (all must exist):** `dev`, `build`, `start`, `lint`, `typecheck`, `format`, `test`, `test:e2e`, `audit:hardcoded`, `analyze`.
+- **Pre-commit:** Husky and lint-staged run ESLint, Prettier and type checks on changed files. Commit messages follow Conventional Commits (commitlint).
+- **CI (GitHub Actions or equivalent) runs on every pull request:** install, `typecheck`, `lint`, `audit:hardcoded`, `test`, `build`, Playwright e2e, and Lighthouse CI against the budgets in Section 7.3. Any failure blocks the merge.
+- **Unit tests (Vitest and Testing Library):** claims registry and fallback rendering; link builders (WhatsApp, mailto); phone and form validation schemas; FAQ items with missing placeholder answers are not rendered; gated data (for example prices, when its flag is off) is absent from rendered output; `format` helpers for `en-IN`.
+- **End-to-end tests (Playwright) at 360, 768 and 1280 px widths:** no horizontal overflow, primary CTA visible above the fold, full keyboard navigation of the menu, tabs, accordion and modal, reduced-motion behaviour, form success and error states, axe violations equal zero.
+- **Dependencies:** pin versions, enable Dependabot or Renovate, review additions against the "not allowed" list in 9.1.
+- **Repository hygiene:** `.env.example` listing every variable (no values), `.nvmrc`, `.editorconfig`, and a `README` that explains setup, scripts, how to edit content, how to flip flags and claims, and how to add a new section.
+
+### 9.12 Environment variables
+
+`NEXT_PUBLIC_WHATSAPP_NUMBER`, `NEXT_PUBLIC_CONTACT_EMAIL`, `NEXT_PUBLIC_SHOW_JOURNEY` (default `false`), plus the lead delivery keys (server-only).
+
+All variables are documented in `.env.example` and validated in `src/config/env.ts`.
+
+### 9.13 Out of scope for v1
+
+CMS integration (the content layer must stay CMS-ready), login, dark mode, a language toggle (copy stays i18n-ready), a blog and a live chat widget.
 
 ## 10. Build order, QA and launch
 
@@ -650,6 +820,9 @@ Use a privacy-friendly tool (Plausible, PostHog with cookieless mode, or similar
 
 ### 10.2 Definition of done
 
+- `pnpm typecheck`, `pnpm lint`, `pnpm audit:hardcoded`, `pnpm test`, `pnpm test:e2e` and `pnpm build` all pass with zero violations.
+- Dragging the viewport from 320 px to 2560 px shows no broken layout and no horizontal scroll.
+- Spot checks need no component edits: change the accent colour token, a nav label, the WhatsApp number and a claim flag, and see each update everywhere it is used.
 - Every section matches its layout, copy and acceptance criteria.
 - Zero unverified claims render (all `claims` flags default to `false` and the page still reads well without them).
 - Every concept visual shows the Concept tag.

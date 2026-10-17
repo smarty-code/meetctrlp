@@ -4,11 +4,21 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "landing:dev": "pnpm --filter landing-page dev",
-    "landing:build": "pnpm --filter landing-page build",
-    "landing:start": "pnpm --filter landing-page start",
-    "landing:lint": "pnpm --filter landing-page lint",
-    "landing:typecheck": "pnpm --filter landing-page typecheck",
+    "company:dev": "pnpm --filter company-site dev",
+    "company:build": "pnpm --filter company-site build",
+    "company:start": "pnpm --filter company-site start",
+    "company:lint": "pnpm --filter company-site lint",
+    "company:typecheck": "pnpm --filter company-site typecheck",
+    "product:dev": "pnpm --filter product-landing dev",
+    "product:build": "pnpm --filter product-landing build",
+    "product:start": "pnpm --filter product-landing start",
+    "product:lint": "pnpm --filter product-landing lint",
+    "product:typecheck": "pnpm --filter product-landing typecheck",
+    "landing:dev": "pnpm --filter company-site dev",
+    "landing:build": "pnpm --filter company-site build",
+    "landing:start": "pnpm --filter company-site start",
+    "landing:lint": "pnpm --filter company-site lint",
+    "landing:typecheck": "pnpm --filter company-site typecheck",
     "webapp:dev": "pnpm --filter printUserWebapp dev",
     "webapp:build": "pnpm --filter printUserWebapp build",
     "webapp:start": "pnpm --filter printUserWebapp start",
@@ -75,4 +85,5 @@
     "firebase-tools": "15.32.1",
     "turbo": "^2.10.12"
   }
+  
 }
