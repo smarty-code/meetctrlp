@@ -167,7 +167,7 @@ export function HowItWorksSection() {
               <ConceptTag />
               <Hills variant="panel" />
 
-              <div className="relative z-10 scale-[0.78] sm:scale-85">
+              <div className="relative z-10 scale-[0.66] xs:scale-[0.7] sm:scale-[0.8] origin-center">
                 {idx === 0 && <PhoneConcept screen="upload" />}
                 {idx === 1 && <DesktopConcept screen="job" isAccepted={true} className="max-w-[340px]" />}
                 {idx === 2 && <PhoneConcept screen="track" />}
