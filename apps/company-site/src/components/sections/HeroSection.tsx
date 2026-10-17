@@ -125,7 +125,7 @@ export function HeroSection() {
             </div>
 
             {/* Phone Concept in Foreground with 3 deg counter-tilt */}
-            <div className="absolute bottom-2 left-2 sm:left-4 z-10 -rotate-3 hover:rotate-0 transition-transform duration-300 scale-[0.82] sm:scale-90 origin-bottom-left">
+            <div className="absolute bottom-2 left-2 sm:left-4 z-10 -rotate-3 hover:rotate-0 transition-transform duration-300 scale-[0.68] sm:scale-90 origin-bottom-left">
               <PhoneConcept
                 screen="review"
                 isPressed={currentStep === 1}

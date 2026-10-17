@@ -35,7 +35,7 @@ export function DoorsSection() {
       {/* Two Doors Matrix: 2-column grid on desktop with internal vertical divider, stacking on mobile with horizontal divider */}
       <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-neutral-200/80 items-stretch">
         {/* DOOR A: FOR PEOPLE PRINTING */}
-        <div className="group relative min-h-[500px] sm:min-h-[560px] bg-surface p-6 sm:p-10 lg:p-12 flex flex-col justify-between overflow-hidden">
+        <div className="group relative min-h-[480px] lg:min-h-[540px] bg-surface p-6 sm:p-8 lg:p-10 pb-8 sm:pb-8 lg:pb-10 flex flex-col justify-between overflow-hidden">
           <ConceptTag />
           <Hills variant="panel" />
 
@@ -72,14 +72,18 @@ export function DoorsSection() {
             </p>
           </div>
 
-          {/* Cropped Phone Concept rising from bottom */}
-          <div className="absolute right-4 sm:right-8 -bottom-16 sm:-bottom-12 z-10 pointer-events-none transition-transform duration-300 group-hover:-translate-y-2 scale-75 sm:scale-[0.82] origin-bottom-right">
-            <PhoneConcept screen="upload" />
+          {/* Visual Stage: Phone Concept fully visible with exact container dimensions */}
+          <div className="relative z-10 mt-6 sm:mt-8 flex justify-center items-end w-full pointer-events-none">
+            <div className="relative w-[174px] h-[354px] sm:w-[182px] sm:h-[370px] lg:w-[190px] lg:h-[388px] shrink-0 transition-transform duration-300 group-hover:-translate-y-1">
+              <div className="w-[280px] h-[570px] origin-top-left scale-[0.62] sm:scale-[0.65] lg:scale-[0.68]">
+                <PhoneConcept screen="upload" />
+              </div>
+            </div>
           </div>
         </div>
 
         {/* DOOR B: FOR PRINT SHOPS (Forest Dark Panel) */}
-        <div className="group relative min-h-[500px] sm:min-h-[560px] bg-forest p-6 sm:p-10 lg:p-12 flex flex-col justify-between overflow-hidden text-ink-on-forest">
+        <div className="group relative min-h-[480px] lg:min-h-[540px] bg-forest p-6 sm:p-8 lg:p-10 pb-8 sm:pb-8 lg:pb-10 flex flex-col justify-between overflow-hidden text-ink-on-forest">
           <ConceptTag variant="forest" />
 
           {/* Top Text Content */}
@@ -117,9 +121,11 @@ export function DoorsSection() {
             </div>
           </div>
 
-          {/* Cropped Desktop Concept rising from bottom */}
-          <div className="absolute right-2 sm:right-6 -bottom-10 sm:-bottom-8 z-10 pointer-events-none transition-transform duration-300 group-hover:-translate-y-2 w-[85%] sm:w-[380px]">
-            <DesktopConcept screen="queue" />
+          {/* Visual Stage: Desktop Concept card fully visible within forest canvas */}
+          <div className="relative z-10 mt-6 sm:mt-8 flex justify-center items-end w-full pointer-events-none">
+            <div className="transition-transform duration-300 group-hover:-translate-y-1 w-full max-w-[320px] sm:max-w-[380px] lg:max-w-[420px]">
+              <DesktopConcept screen="queue" />
+            </div>
           </div>
         </div>
       </div>

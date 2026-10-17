@@ -7,7 +7,7 @@ interface FounderIllustrationProps {
 export function FounderIllustration({ className = "" }: FounderIllustrationProps) {
   return (
     <figure
-      className={`relative w-full max-w-[360px] aspect-[4/5] rounded-3xl bg-lime-soft/60 border border-line overflow-hidden shadow-card flex items-center justify-center p-4 ${className}`}
+      className={`relative w-full max-w-[280px] sm:max-w-[320px] lg:max-w-[360px] aspect-[4/5] rounded-3xl bg-lime-soft/60 border border-line overflow-hidden shadow-card flex items-center justify-center p-4 ${className}`}
       aria-label="Illustration of a person working at a desk with a laptop and a small printer."
     >
       <figcaption className="sr-only">
