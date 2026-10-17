@@ -13,19 +13,51 @@ export function HowItWorksSection() {
   const { howItWorks } = siteCopy
   const [activeStep, setActiveStep] = useState<number>(0)
   const stepElementsRef = useRef<(HTMLDivElement | null)[]>([])
+  const desktopTrackRef = useRef<HTMLDivElement>(null)
+  const activeStepRef = useRef(0)
 
   useEffect(() => {
-    const handleScroll = () => {
-      const viewportCenter = window.innerHeight / 2
+    const isDesktop = () => window.matchMedia("(min-width: 1024px)").matches
+
+    const syncActiveStep = () => {
+      if (!isDesktop()) return
+
+      const track = desktopTrackRef.current
+      const steps = stepElementsRef.current.filter(
+        (el): el is HTMLDivElement => el !== null
+      )
+      if (!track || steps.length === 0) return
+
+      const trackRect = track.getBoundingClientRect()
+      const viewportHeight = window.innerHeight
+      const focusLine = viewportHeight * 0.5
+
+      // Step track not engaged yet — keep the first showcase frame
+      if (trackRect.top > focusLine) {
+        if (activeStepRef.current !== 0) {
+          activeStepRef.current = 0
+          setActiveStep(0)
+        }
+        return
+      }
+
+      // Past the step track — keep the final frame
+      if (trackRect.bottom < focusLine) {
+        const lastIndex = steps.length - 1
+        if (activeStepRef.current !== lastIndex) {
+          activeStepRef.current = lastIndex
+          setActiveStep(lastIndex)
+        }
+        return
+      }
 
       let closestIndex = 0
       let closestDistance = Infinity
 
-      stepElementsRef.current.forEach((el, index) => {
-        if (!el) return
+      steps.forEach((el, index) => {
         const rect = el.getBoundingClientRect()
         const elementCenter = rect.top + rect.height / 2
-        const distance = Math.abs(elementCenter - viewportCenter)
+        const distance = Math.abs(elementCenter - focusLine)
 
         if (distance < closestDistance) {
           closestDistance = distance
@@ -33,7 +65,14 @@ export function HowItWorksSection() {
         }
       })
 
-      if (closestIndex !== activeStep) {
+      // Don't advance past step 01 until its copy has scrolled into the focus band
+      const stepOneTop = steps[0].getBoundingClientRect().top
+      if (stepOneTop > focusLine) {
+        closestIndex = 0
+      }
+
+      if (closestIndex !== activeStepRef.current) {
+        activeStepRef.current = closestIndex
         setActiveStep(closestIndex)
         trackEvent({
           name: "how_it_works_step_view",
@@ -42,9 +81,14 @@ export function HowItWorksSection() {
       }
     }
 
-    window.addEventListener("scroll", handleScroll, { passive: true })
-    return () => window.removeEventListener("scroll", handleScroll)
-  }, [activeStep])
+    syncActiveStep()
+    window.addEventListener("scroll", syncActiveStep, { passive: true })
+    window.addEventListener("resize", syncActiveStep)
+    return () => {
+      window.removeEventListener("scroll", syncActiveStep)
+      window.removeEventListener("resize", syncActiveStep)
+    }
+  }, [])
 
   return (
     <section
@@ -70,7 +114,10 @@ export function HowItWorksSection() {
       </div>
 
       {/* DESKTOP LAYOUT (>= 1024px): Two Columns with Sticky Concept Panel */}
-      <div className="hidden lg:grid grid-cols-12 gap-12 px-6 sm:px-8 lg:px-12 py-16 items-start relative">
+      <div
+        ref={desktopTrackRef}
+        className="hidden lg:grid grid-cols-12 gap-12 px-6 sm:px-8 lg:px-12 py-16 items-stretch relative"
+      >
         {/* Left Column: Numbered Steps (Cols 1-5) */}
         <div className="col-span-5 relative pl-8 py-4 space-y-36">
           {/* Vertical Progress Line */}
@@ -129,30 +176,45 @@ export function HowItWorksSection() {
         </div>
 
         {/* Right Column: Sticky Concept Visual (Cols 7-12) */}
-        <div className="col-span-7 relative">
-          <div className="sticky top-[12vh] h-[76vh] max-h-[680px] rounded-3xl bg-surface-sunken border border-neutral-200/80 overflow-hidden p-8 flex items-center justify-center shadow-card">
+        <div className="col-span-7 relative self-stretch">
+          <div className="sticky top-[12vh] h-[76vh] max-h-[680px] self-start w-full rounded-3xl bg-surface-sunken border border-neutral-200/80 overflow-hidden p-8 flex items-center justify-center shadow-card">
             <ConceptTag />
             <Hills variant="panel" />
 
             {/* Crossfading Screens */}
-            <div className="relative z-10 w-full h-full flex items-center justify-center">
-              {activeStep === 0 && (
-                <div className="animate-in fade-in duration-300 scale-90">
+            <div className="relative z-10 w-full h-full">
+              <div
+                className={`absolute inset-0 flex items-center justify-center transition-opacity duration-300 ${
+                  activeStep === 0 ? "opacity-100" : "opacity-0 pointer-events-none"
+                }`}
+                aria-hidden={activeStep !== 0}
+              >
+                <div className="scale-90">
                   <PhoneConcept screen="upload" />
                 </div>
-              )}
+              </div>
 
-              {activeStep === 1 && (
-                <div className="animate-in fade-in duration-300 w-full max-w-[480px]">
+              <div
+                className={`absolute inset-0 flex items-center justify-center transition-opacity duration-300 ${
+                  activeStep === 1 ? "opacity-100" : "opacity-0 pointer-events-none"
+                }`}
+                aria-hidden={activeStep !== 1}
+              >
+                <div className="w-full max-w-[480px]">
                   <DesktopConcept screen="job" isAccepted={true} />
                 </div>
-              )}
+              </div>
 
-              {activeStep === 2 && (
-                <div className="animate-in fade-in duration-300 scale-90">
+              <div
+                className={`absolute inset-0 flex items-center justify-center transition-opacity duration-300 ${
+                  activeStep === 2 ? "opacity-100" : "opacity-0 pointer-events-none"
+                }`}
+                aria-hidden={activeStep !== 2}
+              >
+                <div className="scale-90">
                   <PhoneConcept screen="track" />
                 </div>
-              )}
+              </div>
             </div>
           </div>
         </div>
