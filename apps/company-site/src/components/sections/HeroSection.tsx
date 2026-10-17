@@ -54,13 +54,13 @@ export function HeroSection() {
     <section
       id="hero"
       ref={heroRef}
-      className="relative min-h-[min(100svh,920px)] flex flex-col justify-center bg-bg overflow-hidden pt-12 pb-16 sm:py-20"
+      className="relative w-full bg-bg overflow-hidden py-12 sm:py-16 lg:py-20"
       aria-label="Hero"
     >
-      {/* Background Hills */}
+      {/* Background Hills flowing across hero */}
       <Hills variant="bottom" />
 
-      <div className="relative z-10 max-w-[1200px] w-full mx-auto px-6 sm:px-8 lg:px-12 grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
+      <div className="relative z-10 w-full px-6 sm:px-8 lg:px-12 grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
         {/* Left Column: Typography & CTAs (Cols 1-6) */}
         <div className="lg:col-span-6 flex flex-col items-start max-w-xl">
           {/* Bracket Label */}

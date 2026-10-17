@@ -31,55 +31,55 @@ export function ProblemSection() {
     <section
       id="problem"
       ref={sectionRef}
-      className="py-20 sm:py-28 lg:py-36 bg-bg overflow-hidden"
+      className="relative w-full bg-bg overflow-hidden py-16 sm:py-20 lg:py-28"
       aria-label="Problem to solution"
     >
-      <div className="max-w-[1200px] mx-auto px-6 sm:px-8 lg:px-12">
+      <div className="w-full px-6 sm:px-8 lg:px-12">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
           {/* Left Text Block (Cols 1-5) */}
           <div className="lg:col-span-5 flex flex-col items-start">
-            <span className="text-xs font-semibold tracking-[0.14em] uppercase text-ink-faint">
-              {problem.eyebrow}
+          <span className="text-xs font-semibold tracking-[0.14em] uppercase text-ink-faint">
+            {problem.eyebrow}
+          </span>
+
+          <h2 className="mt-4 font-display text-[clamp(2.25rem,4.5vw,3.75rem)] leading-[1.02] tracking-[-0.025em] text-ink">
+            {problem.h2Start}
+            <span className="italic text-lime-deep block sm:inline">
+              {problem.h2Emphasis}
             </span>
+          </h2>
 
-            <h2 className="mt-4 font-display text-[clamp(2.25rem,4.5vw,3.75rem)] leading-[1.02] tracking-[-0.025em] text-ink">
-              {problem.h2Start}
-              <span className="italic text-lime-deep block sm:inline">
-                {problem.h2Emphasis}
-              </span>
-            </h2>
+          <p className="mt-6 text-base sm:text-lg text-ink-soft leading-[1.6]">
+            {problem.body}
+          </p>
 
-            <p className="mt-6 text-base sm:text-lg text-ink-soft leading-[1.6]">
-              {problem.body}
-            </p>
-
-            {/* Interactive Toggle Pill */}
-            <div className="mt-6 flex items-center gap-2 p-1 rounded-full bg-surface-sunken border border-line text-xs font-semibold text-ink-soft">
-              <button
-                type="button"
-                onClick={() => setShowClean(false)}
-                className={`px-3 py-1 rounded-full transition-all ${
-                  !showClean ? "bg-surface text-ink shadow-xs" : "hover:text-ink"
-                }`}
-              >
-                Today&apos;s Messages
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowClean(true)}
-                className={`px-3 py-1 rounded-full transition-all ${
-                  showClean ? "bg-lime text-ink shadow-xs" : "hover:text-ink"
-                }`}
-              >
-                With CtrlP
-              </button>
-            </div>
+          {/* Interactive Toggle Pill */}
+          <div className="mt-6 flex items-center gap-2 p-1 rounded-full bg-surface-sunken border border-neutral-200/80 text-xs font-semibold text-ink-soft">
+            <button
+              type="button"
+              onClick={() => setShowClean(false)}
+              className={`px-3 py-1 rounded-full transition-all ${
+                !showClean ? "bg-surface text-ink shadow-xs" : "hover:text-ink"
+              }`}
+            >
+              Today&apos;s Messages
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowClean(true)}
+              className={`px-3 py-1 rounded-full transition-all ${
+                showClean ? "bg-lime text-ink shadow-xs" : "hover:text-ink"
+              }`}
+            >
+              With CtrlP
+            </button>
           </div>
+        </div>
 
-          {/* Right Transition Visual (Cols 7-12) */}
-          <div className="lg:col-span-7 flex flex-col items-center">
-            <div className="relative w-full h-[400px] sm:h-[480px] bg-surface-sunken rounded-3xl p-6 sm:p-8 flex items-center justify-center overflow-hidden">
-              <ConceptTag />
+        {/* Right Transition Visual (Cols 7-12) */}
+        <div className="lg:col-span-7 flex flex-col items-center">
+          <div className="relative w-full h-[400px] sm:h-[480px] bg-surface-sunken rounded-3xl p-6 sm:p-8 flex items-center justify-center overflow-hidden border border-neutral-200/80">
+            <ConceptTag />
 
               {/* State 1: Messy chat bubbles & scattered files */}
               <div
@@ -182,8 +182,8 @@ export function ProblemSection() {
           </div>
         </div>
 
-        {/* Closing Line below the band */}
-        <div className="mt-20 sm:mt-28 text-center max-w-2xl mx-auto">
+        {/* Closing Line below the grid */}
+        <div className="mt-16 sm:mt-24 text-center max-w-2xl mx-auto">
           <p className="font-display text-[clamp(1.75rem,3.2vw,2.75rem)] text-ink leading-[1.08] tracking-[-0.02em]">
             {problem.closingStart}
             <span className="italic text-lime-deep">{problem.closingEmphasis}</span>

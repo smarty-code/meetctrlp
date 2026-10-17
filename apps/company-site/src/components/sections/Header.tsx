@@ -48,15 +48,13 @@ export function Header() {
         {header.skipToContent}
       </a>
 
-      {/* Main Sticky Header */}
+      {/* Main Sticky Header with persistent hairline border */}
       <header
-        className={`sticky top-0 z-50 transition-all duration-300 ${
-          isScrolled
-            ? "bg-bg/85 backdrop-blur-md border-b border-line shadow-xs"
-            : "bg-transparent border-b border-transparent"
+        className={`sticky top-0 z-50 w-full bg-bg/90 backdrop-blur-md border-b border-neutral-200/80 transition-shadow duration-200 ${
+          isScrolled ? "shadow-xs" : ""
         }`}
       >
-        <div className="max-w-[1200px] mx-auto px-6 sm:px-8 lg:px-12 h-16 sm:h-[72px] flex items-center justify-between">
+        <div className="w-full px-4 sm:px-6 lg:px-8 h-16 sm:h-[72px] flex items-center justify-between">
           {/* Logo Wordmark */}
           <Link
             href="/"
@@ -66,8 +64,8 @@ export function Header() {
             {header.wordmark}
           </Link>
 
-          {/* Desktop Navigation */}
-          <nav className="hidden md:flex items-center gap-8 text-sm font-medium text-ink-soft">
+          {/* Desktop Navigation (lg breakpoint >= 1024px) */}
+          <nav className="hidden lg:flex items-center gap-8 text-sm font-medium text-ink-soft">
             {header.navItems.map((item) => (
               <Link
                 key={item.href}
@@ -93,11 +91,11 @@ export function Header() {
             )}
           </nav>
 
-          {/* Action CTAs & Mobile Hamburger */}
+          {/* Action CTAs & Round Mobile Hamburger */}
           <div className="flex items-center gap-3">
             <Link
               href={header.primaryCta.href}
-              className="px-4 py-2 sm:px-5 sm:py-2.5 rounded-full text-xs sm:text-sm font-semibold bg-lime text-ink hover:brightness-95 active:scale-95 transition-all shadow-xs"
+              className="hidden sm:inline-flex px-4 py-2 sm:px-5 sm:py-2.5 rounded-full text-xs sm:text-sm font-semibold bg-lime text-ink hover:brightness-95 active:scale-95 transition-all shadow-xs"
               onClick={() =>
                 trackEvent({ name: "cta_explore_click", properties: { location: "header" } })
               }
@@ -105,15 +103,15 @@ export function Header() {
               {header.primaryCta.label}
             </Link>
 
-            {/* Mobile Menu Button */}
+            {/* Circular Bordered Hamburger Trigger (<1024px) */}
             <button
               type="button"
-              className="md:hidden p-2 rounded-lg text-ink hover:bg-surface-sunken transition-colors"
+              className="lg:hidden w-9 h-9 rounded-full border border-neutral-200/80 flex items-center justify-center text-ink hover:bg-surface-sunken active:scale-95 transition-all"
               onClick={() => setMobileMenuOpen(true)}
               aria-label={header.mobileMenu.openLabel}
               aria-expanded={mobileMenuOpen}
             >
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <line x1="3" y1="6" x2="21" y2="6" strokeLinecap="round" />
                 <line x1="3" y1="12" x2="21" y2="12" strokeLinecap="round" />
                 <line x1="3" y1="18" x2="21" y2="18" strokeLinecap="round" />
@@ -131,29 +129,29 @@ export function Header() {
           aria-label="Navigation Menu"
           className="fixed inset-0 z-[100] bg-bg flex flex-col justify-between p-6 sm:p-8 animate-in fade-in duration-200"
         >
-          {/* Header inside Sheet */}
-          <div className="flex items-center justify-between border-b border-line pb-4">
+          {/* Header inside Sheet with Hairline Border */}
+          <div className="flex items-center justify-between border-b border-neutral-200/80 pb-4">
             <span className="text-xl font-display text-ink">{header.wordmark}</span>
             <button
               type="button"
-              className="p-2 rounded-lg text-ink hover:bg-surface-sunken"
+              className="w-9 h-9 rounded-full border border-neutral-200/80 flex items-center justify-center text-ink hover:bg-surface-sunken active:scale-95 transition-all"
               onClick={() => setMobileMenuOpen(false)}
               aria-label={header.mobileMenu.closeLabel}
             >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <line x1="18" y1="6" x2="6" y2="18" strokeLinecap="round" />
                 <line x1="6" y1="6" x2="18" y2="18" strokeLinecap="round" />
               </svg>
             </button>
           </div>
 
-          {/* Links list */}
-          <div className="flex flex-col gap-6 my-auto text-2xl font-display text-ink">
+          {/* Links list with Hairline Dividers */}
+          <div className="flex flex-col divide-y divide-neutral-200/80 border-y border-neutral-200/80 my-auto text-xl sm:text-2xl font-display text-ink">
             {header.navItems.map((item) => (
               <Link
                 key={item.href}
                 href={item.href}
-                className="hover:text-lime-deep transition-colors"
+                className="py-4 hover:text-lime-deep transition-colors"
                 onClick={() => {
                   trackEvent({ name: "nav_click", properties: { label: item.label } })
                   setMobileMenuOpen(false)
@@ -166,7 +164,7 @@ export function Header() {
             {siteConfig.features.showJourney && (
               <Link
                 href={header.journeyItem.href}
-                className="hover:text-lime-deep transition-colors"
+                className="py-4 hover:text-lime-deep transition-colors"
                 onClick={() => {
                   trackEvent({ name: "nav_click", properties: { label: header.journeyItem.label } })
                   setMobileMenuOpen(false)
@@ -178,7 +176,7 @@ export function Header() {
           </div>
 
           {/* Sheet Footer with Primary CTA */}
-          <div className="pt-6 border-t border-line flex flex-col gap-3">
+          <div className="pt-6 border-t border-neutral-200/80 flex flex-col gap-3">
             <Link
               href={header.primaryCta.href}
               className="w-full py-3.5 rounded-full text-center font-semibold bg-lime text-ink text-base shadow-xs"
