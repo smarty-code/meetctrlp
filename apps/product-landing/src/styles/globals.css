@@ -1,0 +1,313 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
+@layer base {
+  html {
+    font-family: var(--font-body);
+    color: var(--color-ink);
+    background-color: var(--color-bg);
+    scroll-behavior: smooth;
+    scroll-padding-top: var(--spacing-header-lg);
+    -webkit-tap-highlight-color: transparent;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    overflow-x: clip;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-ink);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+}
+
+/* ---------- Concept frames: everything inside scales with the frame's container ---------- */
+
+@utility concept-phone {
+  --spacing: var(--concept-unit-phone);
+}
+
+@utility concept-desktop {
+  --spacing: var(--concept-unit-desktop);
+}
+
+@utility concept-panel {
+  --spacing: var(--concept-unit-panel);
+}
+
+@utility text-ui-3xs {
+  font-size: calc(var(--spacing) * 2.25);
+  line-height: 1.3;
+}
+
+@utility text-ui-2xs {
+  font-size: calc(var(--spacing) * 2.5);
+  line-height: 1.35;
+}
+
+@utility text-ui-xs {
+  font-size: calc(var(--spacing) * 2.75);
+  line-height: 1.35;
+}
+
+@utility text-ui-sm {
+  font-size: calc(var(--spacing) * 3.25);
+  line-height: 1.35;
+}
+
+@utility text-ui-base {
+  font-size: calc(var(--spacing) * 3.75);
+  line-height: 1.3;
+}
+
+@utility text-ui-lg {
+  font-size: calc(var(--spacing) * 4.5);
+  line-height: 1.2;
+}
+
+/* ---------- Motion utilities ---------- */
+
+@utility duration-micro {
+  transition-duration: var(--duration-micro);
+}
+
+@utility duration-standard {
+  transition-duration: var(--duration-standard);
+}
+
+@utility duration-scene {
+  transition-duration: var(--duration-scene);
+}
+
+@utility tilt {
+  rotate: var(--art-tilt);
+}
+
+@utility header-scrolled {
+  background-color: color-mix(
+    in srgb,
+    var(--color-bg) var(--header-scrolled-opacity),
+    transparent
+  );
+  backdrop-filter: blur(var(--header-blur));
+}
+
+@utility safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@utility fade-bottom {
+  mask-image: linear-gradient(to bottom, black 70%, transparent);
+}
+
+@utility below-fold {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 50rem;
+}
+
+/* ---------- Keyframes ---------- */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(var(--entrance-distance));
+  }
+}
+
+@keyframes travel-x {
+  from {
+    left: 0;
+  }
+  to {
+    left: 100%;
+  }
+}
+
+@keyframes travel-y {
+  from {
+    top: 0;
+  }
+  to {
+    top: 100%;
+  }
+}
+
+@keyframes indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
+@keyframes soft-pulse {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+/* Hero H1 + supporting copy reveal on load. */
+.rise {
+  animation: rise var(--duration-scene) var(--ease-standard) both;
+  animation-delay: calc(var(--i, 0) * var(--stagger));
+}
+
+/* Entrance on scroll: <Reveal> sets data-inview once 20% is visible.
+   Hidden only when scripting is on, so content never disappears without JS. */
+@media (scripting: enabled) {
+  [data-reveal]:not([data-inview]) > * {
+    opacity: 0;
+    transform: translateY(var(--entrance-distance));
+  }
+}
+
+[data-reveal] > * {
+  transition:
+    opacity var(--duration-scene) var(--ease-standard),
+    transform var(--duration-scene) var(--ease-standard);
+  transition-delay: calc(var(--i, 0) * var(--stagger));
+}
+
+.travel-x {
+  animation: travel-x var(--duration-dot) linear infinite;
+  animation-delay: calc(var(--i, 0) * var(--duration-dot) / -3);
+}
+
+.travel-y {
+  animation: travel-y var(--duration-dot) linear infinite;
+  animation-delay: calc(var(--i, 0) * var(--duration-dot) / -3);
+}
+
+.indeterminate {
+  animation: indeterminate var(--duration-progress) var(--ease-standard)
+    infinite;
+}
+
+.soft-pulse {
+  animation: soft-pulse var(--duration-pulse) ease-in-out infinite;
+}
+
+/* Problem section: messy chats collapse into one clean order, once. */
+.problem-bubble {
+  transition:
+    opacity var(--duration-scene) var(--ease-standard),
+    transform var(--duration-scene) var(--ease-standard);
+  transition-delay: calc(var(--i, 0) * var(--stagger));
+}
+
+.problem-card {
+  transition:
+    opacity var(--duration-scene) var(--ease-standard),
+    transform var(--duration-scene) var(--ease-standard);
+}
+
+@media (scripting: enabled) {
+  [data-scene]:not([data-played]) .problem-card {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+[data-scene][data-played] .problem-bubble {
+  opacity: 0;
+  transform: translate(var(--to-x, 0), var(--to-y, 0)) scale(0.4);
+  pointer-events: none;
+}
+
+[data-scene][data-played] .problem-card {
+  transition-delay: calc(var(--stagger) * 4);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
+  }
+
+  [data-reveal] > * {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  .problem-bubble {
+    display: none;
+  }
+
+  .problem-card {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
+
+/* ---------- Concept radii, in concept units so they scale with the frame ---------- */
+
+@utility rounded-phone {
+  border-radius: calc(var(--spacing) * 10);
+}
+
+@utility rounded-phone-screen {
+  border-radius: calc(var(--spacing) * 8);
+}
+
+@utility rounded-desktop {
+  border-radius: calc(var(--spacing) * 4);
+}
+
+@utility rounded-ui {
+  border-radius: calc(var(--spacing) * 2);
+}
+
+@utility rounded-ui-lg {
+  border-radius: calc(var(--spacing) * 3);
+}
+
+/* ---------- Hero loop chip (PRD 5.1): x and y ease differently, so the path curves ---------- */
+
+.hero-chip {
+  left: var(--hero-chip-from-x);
+  top: var(--hero-chip-from-y);
+  opacity: 0;
+  transform: translate(-50%, -50%);
+}
+
+.hero-chip[data-state="start"] {
+  opacity: 1;
+  transition: opacity var(--duration-micro) linear;
+}
+
+.hero-chip[data-state="travel"] {
+  left: var(--hero-chip-to-x);
+  top: var(--hero-chip-to-y);
+  opacity: 1;
+  transition:
+    left var(--duration-scene) linear,
+    top var(--duration-scene) var(--ease-standard),
+    opacity var(--duration-micro) linear;
+}
+
+/* ---------- FAQ accordion: height animates via grid rows (PRD 5.11) ---------- */
+
+.accordion-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--duration-standard) var(--ease-standard);
+}
+
+.accordion-panel[data-open] {
+  grid-template-rows: 1fr;
+}

@@ -1,0 +1,195 @@
+/*
+ * Design tokens (PRD Section 4, implemented per 9.4).
+ * This is the only file in src/ that may contain raw colour, size or timing values.
+ * Everything in @theme becomes a Tailwind utility (bg-ink, text-display-l, rounded-xl, ...).
+ */
+
+@theme {
+  /* Colour: surfaces */
+  --color-bg: #f8f9f8;
+  --color-surface: #ffffff;
+  --color-surface-sunken: #eef2ec;
+  --color-forest: #0f1a12;
+
+  /* Colour: text */
+  --color-ink: #111611;
+  --color-ink-soft: #4a554a;
+  --color-ink-faint: #667166;
+  --color-ink-on-forest: #e9efe6;
+
+  /* Colour: lines */
+  --color-line: #dce2db;
+  --color-line-on-forest: #2a3a2e;
+
+  /* Colour: lime accent */
+  --color-lime: #b8e04a;
+  --color-lime-hover: #a9d03c;
+  --color-lime-soft: #e7f4be;
+  --color-lime-deep: #3f7a12;
+
+  /* Colour: concept-UI status chips */
+  --color-chip-paid-bg: #dff3e4;
+  --color-chip-paid-fg: #1d5e34;
+  --color-chip-pending-bg: #fbebcb;
+  --color-chip-pending-fg: #7a4a05;
+  --color-chip-error-bg: #fadada;
+  --color-chip-error-fg: #8a1f1f;
+  --color-chip-info-bg: #e3ecf8;
+  --color-chip-info-fg: #1f4a7a;
+
+  /* Colour: illustration only */
+  --color-peach: #f4c7a8;
+  --color-hills-mid: #cfe79a;
+  --color-hills-forest-1: #1e3322;
+  --color-hills-forest-2: #2a4a30;
+  --color-grain: #000000;
+
+  /* Typography: families (next/font injects the self-hosted faces) */
+  --font-display:
+    var(--font-instrument-serif), "Iowan Old Style", Georgia, serif;
+  --font-body:
+    var(--font-inter), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* Typography: fluid scale (PRD 4.4) */
+  --text-display-xl: clamp(3rem, 8.5vw, 7.5rem);
+  --text-display-xl--line-height: 0.95;
+  --text-display-xl--letter-spacing: -0.035em;
+  --text-display-xl--font-weight: 400;
+
+  --text-display-l: clamp(2.25rem, 5vw, 4rem);
+  --text-display-l--line-height: 1.02;
+  --text-display-l--letter-spacing: -0.025em;
+  --text-display-l--font-weight: 400;
+
+  --text-display-m: clamp(1.75rem, 3.2vw, 2.75rem);
+  --text-display-m--line-height: 1.08;
+  --text-display-m--letter-spacing: -0.02em;
+  --text-display-m--font-weight: 400;
+
+  --text-stat: clamp(5rem, 16vw, 12rem);
+  --text-stat--line-height: 0.9;
+  --text-stat--letter-spacing: -0.04em;
+  --text-stat--font-weight: 400;
+
+  --text-step-number: 3rem;
+  --text-step-number--line-height: 1;
+
+  --text-h3: clamp(1.25rem, 1.8vw, 1.5rem);
+  --text-h3--line-height: 1.25;
+  --text-h3--letter-spacing: -0.01em;
+
+  --text-body-l: 1.25rem;
+  --text-body-l--line-height: 1.55;
+
+  --text-body: 1.0625rem;
+  --text-body--line-height: 1.6;
+
+  --text-small: 0.875rem;
+  --text-small--line-height: 1.5;
+
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1.4;
+  --text-caption--letter-spacing: 0.01em;
+  --text-caption--font-weight: 500;
+
+  --text-eyebrow: 0.75rem;
+  --text-eyebrow--line-height: 1.2;
+  --text-eyebrow--letter-spacing: 0.14em;
+  --text-eyebrow--font-weight: 600;
+
+  /* Layout */
+  --breakpoint-sm: 40rem;
+  --breakpoint-md: 48rem;
+  --breakpoint-lg: 64rem;
+  --breakpoint-xl: 80rem;
+
+  --container-site: 75rem;
+  --container-prose: 62ch;
+  --container-subhead: 50ch;
+  --container-headline: 22ch;
+  --container-faq: 51.25rem;
+  --container-plans: 60rem;
+  --container-hero-art: 36.25rem;
+  --container-phone: 17.5rem;
+  --container-phone-sm: 13.75rem;
+  --container-desktop: 33.75rem;
+
+  /* Spacing tokens (named; the numeric 4px scale stays Tailwind's default) */
+  --spacing-gutter: 1.25rem;
+  --spacing-gutter-md: 2rem;
+  --spacing-gutter-lg: 3rem;
+  --spacing-section: clamp(4.5rem, 11vw, 9.375rem);
+  --spacing-header: 4rem;
+  --spacing-header-lg: 4.5rem;
+  --spacing-tap: 2.75rem;
+  --spacing-tag: 1.75rem;
+  --spacing-hero-min: min(100svh, 56.25rem);
+  --spacing-journey-gap: 35svh;
+  --spacing-journey-step: 70svh;
+  --spacing-sticky-top: 12svh;
+  --spacing-sticky-panel: 76svh;
+  --spacing-panel: 28.75rem;
+  --spacing-panel-sm: 23.75rem;
+  --spacing-problem-panel: 30rem;
+  --spacing-problem-panel-sm: 22.5rem;
+  --spacing-bento-crop: 12.5rem;
+  --spacing-hairline: 1px;
+
+  /* Shape */
+  --radius-sm: 0.625rem;
+  --radius-md: 1rem;
+  --radius-lg: 1.5rem;
+  --radius-xl: 2rem;
+  --radius-pill: 999px;
+
+  /* Elevation */
+  --shadow-card:
+    0 1px 2px rgb(17 22 17 / 0.06), 0 12px 32px -12px rgb(17 22 17 / 0.16);
+
+  /* Aspect ratios */
+  --aspect-phone: 280 / 570;
+  --aspect-desktop: 16 / 10;
+  --aspect-hero-art: 580 / 620;
+  --aspect-journey-mobile: 4 / 5;
+  --aspect-thumb: 4 / 3;
+
+  /* Motion */
+  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+:root {
+  color-scheme: light;
+
+  /* Motion durations (PRD 4.7) */
+  --duration-micro: 160ms;
+  --duration-standard: 320ms;
+  --duration-scene: 600ms;
+  --stagger: 80ms;
+  --entrance-distance: 1.5rem;
+  --hero-loop: 6s;
+
+  /* Hero loop: the order chip travels from the phone pay button to the desktop queue (PRD 5.1). */
+  --hero-chip-from-x: 17%;
+  --hero-chip-from-y: 88%;
+  --hero-chip-to-x: 30%;
+  --hero-chip-to-y: 14%;
+  --duration-dot: 2.4s;
+  --duration-progress: 1.4s;
+  --duration-pulse: 1.6s;
+
+  /* Header behaviour (PRD 3.3) */
+  --header-scrolled-opacity: 85%;
+  --header-blur: 12px;
+
+  /* Concept frames: one spacing unit (4px at design width) in container-query units,
+     so a concept scales as a whole with the width of its container. */
+  --concept-unit-phone: 1.4286cqw;
+  --concept-unit-desktop: 0.7407cqw;
+  --concept-unit-panel: 1.25cqw;
+
+  /* Art */
+  --grain-opacity: 0.06;
+  --hills-soft-opacity: 0.9;
+  --hills-lime-opacity: 0.4;
+  --art-tilt: -3deg;
+}
